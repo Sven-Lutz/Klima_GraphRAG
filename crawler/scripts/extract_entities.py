@@ -1,25 +1,27 @@
+# analyze_finances.py
+from __future__ import annotations
+
 import sqlite3
 import re
 import textwrap
+import csv # NEU: Für den Datenexport
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple, Optional
 
-
-# ---------- ANSI colors (optional) ----------
-COLOR_MONEY = "\033[92m"
-COLOR_ORG = "\033[96m"
+# ---------- ANSI colors ----------
+COLOR_MONEY = "\033[92m" # Grün für Geld
+COLOR_ORG = "\033[96m"   # Cyan für Orgs & Keywords
 COLOR_RESET = "\033[0m"
 
-
 # ---------- Patterns ----------
-# Money: "12.500 €", "12.500,00 Euro", "2 Mio €", "3,5 Mrd Euro", "800 Tsd."
+# Money: "12.500 €", "2 Mio €", "3,5 Mrd Euro", "800 Tsd.", "50 TEUR" (Sehr wichtig in Haushalten!)
 MONEY_RE = re.compile(
     r"""
     (?:
-        \b\d{1,3}(?:\.\d{3})*(?:,\d+)?\s*(?:€|euro)\b
+        \b\d{1,3}(?:\.\d{3})*(?:,\d+)?\s*(?:€|euro|teur)\b
         |
-        \b\d+(?:[.,]\d+)?\s*(?:mio|mio\.|tsd|tsd\.|mrd|mrd\.)\s*(?:€|euro)?\b
+        \b\d+(?:[.,]\d+)?\s*(?:mio|mio\.|tsd|tsd\.|mrd|mrd\.|teur)\s*(?:€|euro)?\b
     )
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -31,12 +33,11 @@ FINANCE_TRIGGERS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Actor/org hints (very rough, just for highlighting)
+# Actor/org hints
 ORG_RE = re.compile(
     r"\b(gmbh|ag|e\.v\.|verein|genossenschaft|stiftung|stadtwerk\w*|landkreis|gemeinde|ministerium|bund|freistaat)\b",
     re.IGNORECASE,
 )
-
 
 @dataclass(frozen=True)
 class Candidate:
@@ -47,33 +48,24 @@ class Candidate:
     impact_score: int
     text: str
 
-
 def highlight_text(text: str, *, use_color: bool = True) -> str:
     if not use_color:
         return text
 
     text = MONEY_RE.sub(lambda m: f"{COLOR_MONEY}{m.group(0)}{COLOR_RESET}", text)
     text = ORG_RE.sub(lambda m: f"{COLOR_ORG}{m.group(0)}{COLOR_RESET}", text)
-    # highlight finance triggers too (same color as org)
     text = FINANCE_TRIGGERS_RE.sub(lambda m: f"{COLOR_ORG}{m.group(0)}{COLOR_RESET}", text)
     return text
-
 
 def fetch_finance_candidates(
     conn: sqlite3.Connection,
     *,
-    limit: int = 20,
+    limit: int = 1000, # Limit erhöht, da wir jetzt exportieren
     min_len: int = 160,
     min_score: int = 15,
     per_doc: int = 2,
 ) -> List[Candidate]:
-    """
-    Uses the crawler-scored fields:
-      - segments.impact_score
-      - segments.is_negative
-    plus finance triggers (regex-ish via LIKE / cheap prefilter).
-    """
-    # Fast SQL prefilter (cheap), final highlighting is regex on Python side.
+    # SQL Vorfilter nutzt nun auch 'TEUR'
     query = """
     WITH ranked AS (
       SELECT
@@ -92,14 +84,15 @@ def fetch_finance_candidates(
       WHERE length(s.text) >= ?
         AND COALESCE(s.is_negative, 0) = 0
         AND COALESCE(s.impact_score, 0) >= ?
-        -- cheap finance prefilter (avoid regex in SQL)
         AND (
-          s.text LIKE '%€%' OR s.text LIKE '%Euro%' OR s.text LIKE '%Mio%' OR s.text LIKE '%Mrd%' OR s.text LIKE '%Tsd%'
+          s.text LIKE '%€%' OR s.text LIKE '%Euro%' OR s.text LIKE '%Mio%' OR 
+          s.text LIKE '%Mrd%' OR s.text LIKE '%Tsd%' OR s.text LIKE '%TEUR%'
         )
         AND (
-          s.text LIKE '%Förder%' OR s.text LIKE '%Zuschuss%' OR s.text LIKE '%Invest%' OR s.text LIKE '%Haushalt%' OR
-          s.text LIKE '%KfW%' OR s.text LIKE '%BAFA%' OR s.text LIKE '%EFRE%' OR s.text LIKE '%ELER%' OR
-          s.text LIKE '%EU%' OR s.text LIKE '%Bund%' OR s.text LIKE '%Land%'
+          s.text LIKE '%Förder%' OR s.text LIKE '%Zuschuss%' OR s.text LIKE '%Invest%' OR 
+          s.text LIKE '%Haushalt%' OR s.text LIKE '%KfW%' OR s.text LIKE '%BAFA%' OR 
+          s.text LIKE '%EFRE%' OR s.text LIKE '%ELER%' OR s.text LIKE '%EU%' OR 
+          s.text LIKE '%Bund%' OR s.text LIKE '%Land%'
         )
     )
     SELECT municipality_id, document_id, url_final, segment_rowid, impact_score, text
@@ -127,16 +120,16 @@ def fetch_finance_candidates(
         )
     return out
 
-
 def analyze_finances(
     *,
     db_path: Path = Path("crawler/data/db/crawl.sqlite"),
-    limit: int = 15,
+    limit: int = 100, 
     min_len: int = 160,
     min_score: int = 15,
     per_doc: int = 2,
     wrap_width: int = 100,
     use_color: bool = True,
+    export_csv: bool = True, # NEU: CSV Export für den HPC
 ) -> None:
     if not db_path.exists():
         print(f"❌ Datenbank nicht gefunden unter: {db_path}")
@@ -145,9 +138,6 @@ def analyze_finances(
     conn = sqlite3.connect(str(db_path), timeout=60.0, isolation_level=None)
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=60000;")
-
         cands = fetch_finance_candidates(
             conn,
             limit=limit,
@@ -159,23 +149,37 @@ def analyze_finances(
         conn.close()
 
     print("\n" + "=" * 90)
-    print(f"💰 FINANZ-EXPLORER: {len(cands)} Kandidaten (score≥{min_score}, len≥{min_len}, per_doc={per_doc})")
+    print(f"💰 FINANZ-EXPLORER: {len(cands)} Kandidaten gefunden.")
     print("=" * 90 + "\n")
 
     if not cands:
-        print("Keine Kandidaten gefunden. Entweder fehlen Scores (Crawler nicht gepatcht) oder thresholds zu hart.")
+        print("Keine Kandidaten gefunden.")
         return
 
-    for c in cands:
-        print(f"📍 muni={c.municipality_id}  doc={c.document_id}  rowid={c.segment_rowid}  score={c.impact_score}")
-        print(f"🔗 Quelle: {c.url_final}")
-        print("-" * 90)
+    # CSV Export Logik
+    if export_csv:
+        out_file = Path("finance_claims.csv")
+        with open(out_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["municipality_id", "document_id", "impact_score", "url", "text"])
+            for c in cands:
+                writer.writerow([c.municipality_id, c.document_id, c.impact_score, c.url_final, c.text])
+        print(f"💾 {len(cands)} Finanz-Segmente für GraphRAG exportiert nach: {out_file}\n")
 
+    # Print Logik (auf 15 limitiert, damit das Terminal nicht überläuft)
+    for c in cands[:15]:
+        print(f"📍 muni={c.municipality_id}  doc={c.document_id}  score={c.impact_score}")
+        print(f"🔗 {c.url_final}")
+        print("-" * 90)
+        
+        # WICHTIGER FIX: Erst den Text umbrechen, DANN färben!
         clean_text = " ".join(c.text.split())
-        highlighted = highlight_text(clean_text, use_color=use_color)
-        print(textwrap.fill(highlighted, width=wrap_width))
+        wrapped_text = textwrap.fill(clean_text, width=wrap_width)
+        highlighted = highlight_text(wrapped_text, use_color=use_color)
+        
+        print(highlighted)
         print("\n" + "=" * 90 + "\n")
 
-
 if __name__ == "__main__":
-    analyze_finances(limit=15, min_len=160, min_score=15, per_doc=2, wrap_width=110, use_color=True)
+    # Hole bis zu 500 gute Finanz-Claims für das GraphRAG und drucke die Top 15 ins Terminal
+    analyze_finances(limit=500, min_score=15, per_doc=3)
