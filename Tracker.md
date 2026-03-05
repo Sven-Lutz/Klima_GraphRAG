@@ -8,7 +8,7 @@
 | :----- | :------ | :------------- |
 | pkg_01 | ⏳ Frei | Sven           |
 | pkg_02 | ⏳ Frei | SanneStallmann |
-| pkg_03 | ⏳ Frei | Matteo         |
+| pkg_03 | ⏳ Frei | INT         |
 | pkg_04 | ⏳ Frei | Sven           |
 | pkg_05 | ⏳ Frei |                |
 | pkg_06 | ⏳ Frei |                |
