@@ -323,6 +323,9 @@ class Engine:
         max_pages = int(self.limits.max_pages_per_muni)
         lim_bytes = int(self.limits.max_file_size_mb) * 1024 * 1024
 
+        pages_since_last_pdf = 0
+        autostop_threshold = 300
+
         for muni_id, url in seeds:
             muni_id = str(muni_id)
             self._pages_by_muni.setdefault(muni_id, 0)
@@ -341,6 +344,10 @@ class Engine:
 
         while self.scheduler.has_next():
             task = self.scheduler.next()
+
+            if pages_since_last_pdf >= autostop_threshold:
+                print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} Seiten kein PDF. Breche Kommune ab.", flush=True)
+                break
 
             if task.depth > max_depth:
                 continue
@@ -372,6 +379,12 @@ class Engine:
                 print(f"[fetch] depth={task.depth} muni={task.municipality_id} url={task.url}", flush=True)
 
                 fr = self.fetch(task.url)
+                
+                if self._looks_like_pdf(task.url, fr.content_type):
+                    pages_since_last_pdf = 0
+                else:
+                    pages_since_last_pdf += 1
+
                 status = int(fr.status_code)
 
                 if not self._is_allowed(task.municipality_id, fr.url_final):
