@@ -1,4 +1,3 @@
-# analyze_topics.py
 from __future__ import annotations
 
 import sqlite3
@@ -27,10 +26,10 @@ GERMAN_STOP_WORDS = [
 
 def load_scored_segments(
     db_path: Path,
-    limit: int = 100_000,
+    limit: int = 60_000,
     min_len: int = 150,
     min_score: int = 15,
-    per_doc: int = 6,
+    per_doc: int = 4,
 ) -> pd.DataFrame:
     """
     Lädt nur die relevantesten Segmente mithilfe der Crawler-Scores.
@@ -60,7 +59,6 @@ def load_scored_segments(
     ORDER BY impact_score DESC
     LIMIT ?;
     """
-
     with sqlite3.connect(str(db_path)) as conn:
         df = pd.read_sql_query(query, conn, params=(min_len, min_score, per_doc, limit))
 
@@ -111,7 +109,7 @@ def main():
     batch_size = 256 if device in ["cuda", "mps"] else 64
     embeddings = embedding_model.encode(
         docs,
-        batch_size=batch_size,
+        batch_size=256 if device == "cuda" else 64,
         show_progress_bar=True,
         convert_to_numpy=True,
         normalize_embeddings=True,
@@ -127,7 +125,6 @@ def main():
         max_features=120_000,
         token_pattern=r"(?u)\b[\wäöüÄÖÜß]{3,}\b", # Mindestens 3 Buchstaben pro Wort
     )
-    representation_model = KeyBERTInspired()
 
     print("Starte BERTopic Analyse...")
     topic_model = BERTopic(
@@ -138,22 +135,20 @@ def main():
         calculate_probabilities=False, 
         nr_topics="auto",
         min_topic_size=25,
+        calculate_probabilities=False,
         verbose=True,
     )
 
-    topics, probs = topic_model.fit_transform(docs, embeddings=embeddings)
+    topics, _ = topic_model.fit_transform(docs, embeddings=embeddings)
 
     # ---- Save outputs ----
     print("Speichere Ergebnisse...")
     info = topic_model.get_topic_info()
     info.to_csv(OUT_DIR / "topic_info.csv", index=False)
 
-    assignments = df.copy()
-    assignments["topic"] = topics
-    assignments.to_parquet(OUT_DIR / "doc_segments_topics.parquet", index=False)
-    assignments[["document_id", "municipality_id", "impact_score", "topic"]].to_csv(
-        OUT_DIR / "doc_segments_topics.csv", index=False
-    )
+    out = df.copy()
+    out["topic"] = topics
+    out.to_parquet(OUT_DIR / "segment_topics.parquet", index=False)
 
     topic_model.visualize_topics().write_html(str(OUT_DIR / "topic_map.html"))
     topic_model.visualize_barchart(top_n_topics=15).write_html(str(OUT_DIR / "topic_bar_chart.html"))
