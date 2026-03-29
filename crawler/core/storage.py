@@ -66,12 +66,12 @@ class Storage:
             VALUES (?, ?)
         """
 
-        # NOTE: extended with impact_score/hit_count/is_negative (nullable)
+        # NOTE: extended with impact_score/hit_count/is_negative/heading_context (nullable)
         self._sql_insert_segment = """
             INSERT OR IGNORE INTO segments (
                 segment_id, document_id, order_index, segment_type, text, segment_hash, page_ref,
-                impact_score, hit_count, is_negative
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                impact_score, hit_count, is_negative, heading_context
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         self._sql_mark_visited = """
@@ -194,6 +194,7 @@ class Storage:
             self._ensure_column("segments", "impact_score", "INTEGER")
             self._ensure_column("segments", "hit_count", "INTEGER")
             self._ensure_column("segments", "is_negative", "INTEGER")
+            self._ensure_column("segments", "heading_context", "TEXT")
         except Exception:
             pass
 
@@ -207,6 +208,65 @@ class Storage:
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_segments_negative ON segments(is_negative)"
+            )
+        except Exception:
+            pass
+
+        # --- graph_triplets: index for fast per-municipality graph queries ---
+        try:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS graph_triplets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    municipality_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    segment_rowid INTEGER NOT NULL,
+                    segment_hash TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    graph_json TEXT NOT NULL,
+                    entity_count INTEGER NOT NULL DEFAULT 0,
+                    relationship_count INTEGER NOT NULL DEFAULT 0,
+                    extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg ON graph_triplets(segment_rowid)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni ON graph_triplets(municipality_id)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_doc ON graph_triplets(document_id)"
+            )
+        except Exception:
+            pass
+
+        # --- document_summaries: LLM-generated per-document summary for GraphRAG ---
+        try:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id TEXT NOT NULL,
+                    municipality_id TEXT NOT NULL,
+                    url_canonical TEXT,
+                    model_name TEXT NOT NULL,
+                    summary_text TEXT NOT NULL,
+                    document_type TEXT,
+                    key_topics TEXT,
+                    key_entities TEXT,
+                    year_range TEXT,
+                    action_count INTEGER DEFAULT 0,
+                    summarized_at TEXT NOT NULL
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_doc_summaries ON document_summaries(document_id)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doc_summaries_muni ON document_summaries(municipality_id)"
             )
         except Exception:
             pass
@@ -342,6 +402,7 @@ class Storage:
                     int(impact_score) if impact_score is not None else None,
                     int(hit_count) if hit_count is not None else None,
                     int(is_negative) if is_negative is not None else None,
+                    getattr(seg, "heading_context", None),
                 )
             )
 
@@ -496,6 +557,7 @@ class Storage:
                     int(score),
                     int(hits),
                     int(neg),
+                    getattr(seg, "heading_context", None),
                 )
             )
 
