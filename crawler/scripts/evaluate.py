@@ -35,8 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-DB_PATH      = Path("crawler/data/db/crawl.sqlite")
-OLLAMA_MODEL = "llama3.1:8b"
+from crawler.core.config import DB_PATH, OLLAMA_URL, OLLAMA_MODEL
+
 OPENAI_MODEL = "gpt-4o-mini"
 
 
@@ -91,7 +91,7 @@ def _llm(system: str, user: str, backend: str, json_mode: bool = False) -> str:
             **({"format": "json"} if json_mode else {}),
         }).encode()
         req = urllib.request.Request(
-            "http://localhost:11434/api/chat",
+            f"{OLLAMA_URL}/api/chat",
             data=payload,
             headers={"Content-Type": "application/json"},
         )

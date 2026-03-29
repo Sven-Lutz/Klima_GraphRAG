@@ -12,7 +12,7 @@ Replaces the OpenAI-based extract_graph.py with a fully local pipeline:
              increases extraction recall on dense municipal documents.
 
 Graph output is written to the same `graph_triplets` table so the
-existing Neo4j exporter (export_graph_to_neoj4j.py) works unchanged.
+existing Neo4j exporter (export_graph_to_neo4j.py) works unchanged.
 
 MODELS tested (German-language performance, descending):
   - qwen2.5:14b          best quality, needs 10+ GB VRAM
@@ -37,8 +37,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-DB_PATH    = Path("crawler/data/db/crawl.sqlite")
-MODEL_NAME = "llama3.1:8b"
+from crawler.core.config import DB_PATH, OLLAMA_URL, OLLAMA_MODEL as _DEFAULT_MODEL
+
+MODEL_NAME = _DEFAULT_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +150,7 @@ def _call_ollama(model: str, system: str, user: str) -> str:
     }).encode()
 
     req = urllib.request.Request(
-        "http://localhost:11434/api/chat",
+        f"{OLLAMA_URL}/api/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
     )
@@ -328,6 +329,16 @@ def main(
     cur  = conn.cursor()
     setup_db(cur)
 
+    # Build canonical name map from resolve_entities output (if available)
+    canonical_map: dict[str, str] = {}
+    try:
+        for raw_name, canon_name in cur.execute(
+            "SELECT original_name, canonical_name FROM entity_canonical"
+        ).fetchall():
+            canonical_map[raw_name.lower()] = canon_name
+    except Exception:
+        pass  # table doesn't exist yet — run resolve_entities.py first
+
     rows = get_chunks_for_extraction(
         cur, limit=limit, min_score=min_score, use_chunks_table=use_chunks_table
     )
@@ -360,6 +371,13 @@ def main(
                 url=url,
                 gleaning_rounds=gleaning_rounds,
             )
+            # Apply canonical name resolution before persisting
+            if canonical_map:
+                for ent in kg.entities:
+                    ent.name = canonical_map.get(ent.name.lower(), ent.name)
+                for rel in kg.relationships:
+                    rel.source_entity = canonical_map.get(rel.source_entity.lower(), rel.source_entity)
+                    rel.target_entity = canonical_map.get(rel.target_entity.lower(), rel.target_entity)
             graph_json = kg.model_dump_json(ensure_ascii=False)
             e, r = len(kg.entities), len(kg.relationships)
             seg_hash = hashlib.sha256((text or "").encode()).hexdigest()

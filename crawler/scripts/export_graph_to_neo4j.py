@@ -10,11 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from neo4j import GraphDatabase
 
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
-
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "password"
+from crawler.core.config import DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 
 # ---------- normalization / keys ----------

@@ -51,14 +51,13 @@ from typing import Any, Optional
 
 import numpy as np
 
-DB_PATH        = Path("crawler/data/db/crawl.sqlite")
-NEO4J_URI      = "bolt://localhost:7687"
-NEO4J_USER     = "neo4j"
-NEO4J_PASSWORD = "password"
-OLLAMA_MODEL   = "llama3.1:8b"
-OPENAI_MODEL   = "gpt-4o-mini"
+from crawler.core.config import (
+    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    OLLAMA_URL, OLLAMA_MODEL, MAX_CRITIC_LOOPS,
+    LOCAL_SEARCH_TOP_K, GLOBAL_SEARCH_MAX_COMMUNITIES,
+)
 
-MAX_CRITIC_LOOPS = 3   # max retry loops before returning partial answer
+OPENAI_MODEL = "gpt-4o-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ def _call_ollama(system: str, user: str, json_mode: bool = False) -> str:
         **({"format": "json"} if json_mode else {}),
     }).encode()
     req = urllib.request.Request(
-        "http://localhost:11434/api/chat",
+        f"{OLLAMA_URL}/api/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
     )
@@ -255,10 +254,29 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
     if not relevant:
         relevant = [(r[0], r[1], r[2], r[3], 0) for r in reports[:10]]
 
+    # Augment with document summaries that overlap with query keywords
+    conn2 = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
+    doc_summaries: list[str] = []
+    try:
+        rows = conn2.execute(
+            "SELECT summary, document_type, key_topics FROM document_summaries LIMIT 30"
+        ).fetchall()
+        for row_summary, doc_type, topics_json in rows:
+            doc_text = f"{row_summary} {topics_json or ''}".lower()
+            doc_words = set(re.findall(r"\w{4,}", doc_text))
+            if len(query_words & doc_words) > 0:
+                doc_summaries.append(f"[{doc_type}] {row_summary}")
+    except Exception:
+        pass
+    conn2.close()
+
     # Map phase
     partial_answers = []
     for cid, title, summary, importance, _ in relevant[:20]:
-        report_ctx = f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}"
+        extra = ""
+        if doc_summaries:
+            extra = "\n\nRELEVANTE DOKUMENTEN-ZUSAMMENFASSUNGEN:\n" + "\n".join(doc_summaries[:5])
+        report_ctx = f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}{extra}"
         answer = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
         if "NICHT_RELEVANT" not in answer:
             partial_answers.append((importance, answer))

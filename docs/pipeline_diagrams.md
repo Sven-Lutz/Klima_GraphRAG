@@ -40,7 +40,7 @@ flowchart TD
     end
 
     subgraph NEO4J["🗄️ Stage 2c — Neo4j Export"]
-        S4A[(graph_triplets)] --> S4B[export_graph_to_neoj4j.py\nentity_canonical resolution\nfuzzy name normalisation]
+        S4A[(graph_triplets)] --> S4B[export_graph_to_neo4j.py\nentity_canonical resolution\nfuzzy name normalisation]
         S4B --> S4C[(Neo4j\nEntity nodes\nRelationship edges\nSegment · Document · Chunk)]
         S4B --> S4D[document_links\nLINKS_TO edges]
         S4D --> S4C
@@ -160,7 +160,7 @@ python -m crawler.scripts.generate_embeddings --model paraphrase-multilingual-Mi
 python -m crawler.scripts.extract_graph_ollama --model llama3.1:8b --gleaning 1 --chunk-mode
 
 # 2c. Export to Neo4j
-python -m crawler.scripts.export_graph_to_neoj4j
+python -m crawler.scripts.export_graph_to_neo4j
 
 # 3. Community detection + LLM reports
 python -m crawler.scripts.detect_communities --algorithm leiden --min-size 3
