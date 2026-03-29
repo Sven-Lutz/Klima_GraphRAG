@@ -16,7 +16,7 @@ Community Reports are the backbone of GraphRAG *Global Search*:
 
 Prerequisites:
   - Neo4j 5.x with Graph Data Science (GDS) plugin >= 2.6
-  - Populated Entity + Relationship nodes (run export_graph_to_neoj4j.py first)
+  - Populated Entity + Relationship nodes (run export_graph_to_neo4j.py first)
   - Ollama running locally (or set OPENAI_API_KEY for cloud fallback)
 
 Usage:
@@ -36,14 +36,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-DB_PATH        = Path("crawler/data/db/crawl.sqlite")
-NEO4J_URI      = "bolt://localhost:7687"
-NEO4J_USER     = "neo4j"
-NEO4J_PASSWORD = "password"
-OLLAMA_MODEL   = "llama3.1:8b"
-OPENAI_MODEL   = "gpt-4o-mini"
+from crawler.core.config import (
+    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    OLLAMA_URL, OLLAMA_MODEL, GDS_GRAPH_NAME,
+)
 
-GDS_GRAPH_NAME = "klimaEntities"   # projected graph name in GDS
+OPENAI_MODEL = "gpt-4o-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +220,7 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
             "format":  "json",
         }).encode()
         req = urllib.request.Request(
-            "http://localhost:11434/api/chat",
+            f"{OLLAMA_URL}/api/chat",
             data=payload,
             headers={"Content-Type": "application/json"},
         )
