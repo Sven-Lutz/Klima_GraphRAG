@@ -23,6 +23,13 @@ def _clean_text(text: str) -> str:
     return _RE_WS.sub(" ", text or "").strip()
 
 
+def _build_heading_context(path: list[tuple[int, str]]) -> str | None:
+    """Build a breadcrumb string from the current heading path, e.g. 'Klimaschutz > Solarenergie'."""
+    if not path:
+        return None
+    return " > ".join(txt for _, txt in path)
+
+
 def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
     body = fetch_result.body or b""
     if not body:
@@ -43,20 +50,35 @@ def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
     order = 0
     min_len = int(MIN_SEGMENT_LENGTH)
 
-    for tag in soup.find_all(["h1", "h2", "h3", "h4", "p", "li"]):
+    # Track heading hierarchy as a list of (level, text) pairs
+    heading_path: list[tuple[int, str]] = []
+
+    for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li"]):
         txt = _clean_text(tag.get_text(" ", strip=True))
         if not txt or len(txt) < min_len:
             continue
 
         name = tag.name or ""
-        if name.startswith("h"):
+        if name.startswith("h") and len(name) == 2 and name[1].isdigit():
+            level = int(name[1])
+            # Drop any deeper headings from the path, then append this one
+            heading_path = [(l, t) for l, t in heading_path if l < level]
+            heading_path.append((level, txt))
             seg_type = "heading"
+            heading_ctx = None  # headings don't need context — they ARE context
         elif name == "li":
             seg_type = "list_item"
+            heading_ctx = _build_heading_context(heading_path)
         else:
             seg_type = "paragraph"
+            heading_ctx = _build_heading_context(heading_path)
 
-        segments.append(Segment(order_index=order, segment_type=seg_type, text=txt))
+        segments.append(Segment(
+            order_index=order,
+            segment_type=seg_type,
+            text=txt,
+            heading_context=heading_ctx,
+        ))
         order += 1
 
     links: list[tuple[str, str]] = []

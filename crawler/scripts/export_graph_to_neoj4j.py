@@ -43,14 +43,19 @@ SCHEMA_CYPHER = [
     "CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)",
     "CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
     "CREATE INDEX entity_category IF NOT EXISTS FOR (e:Entity) ON (e.category)",
+    "CREATE INDEX entity_status IF NOT EXISTS FOR (e:Entity) ON (e.status)",
+    "CREATE INDEX segment_heading IF NOT EXISTS FOR (s:Segment) ON (s.heading_context)",
 ]
 
 ALLOWED_REL_TYPES = {
     "FÖRDERT",
     "BAUT",
     "BESCHLIESST",
+    "IMPLEMENTIERT",
+    "PLANT",
     "GEHÖRT_ZU",
     "KOOPERIERT_MIT",
+    "FINANZIERT_DURCH",
     "BEZIEHT_SICH_AUF",
 }
 
@@ -88,18 +93,21 @@ def iter_graph_triplets(conn: sqlite3.Connection, limit: Optional[int] = None) -
             graph_json=str(r[3]),
         )
 
-def get_segment_meta(conn: sqlite3.Connection, segment_rowid: int) -> Tuple[Optional[int], Optional[str]]:
-    # optional: bring over impact_score + text snippet
+def get_segment_meta(
+    conn: sqlite3.Connection, segment_rowid: int
+) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    """Returns (impact_score, text_snippet, heading_context) for a segment."""
     cur = conn.execute(
-        "SELECT COALESCE(impact_score,0), text FROM segments WHERE rowid=? LIMIT 1",
+        "SELECT COALESCE(impact_score,0), text, heading_context FROM segments WHERE rowid=? LIMIT 1",
         (int(segment_rowid),),
     )
     row = cur.fetchone()
     if not row:
-        return None, None
+        return None, None, None
     score = int(row[0]) if row[0] is not None else None
     text = str(row[1]) if row[1] is not None else None
-    return score, text
+    heading_ctx = str(row[2]) if row[2] is not None else None
+    return score, text, heading_ctx
 
 
 # ---------- Neo4j upsert queries ----------
@@ -108,7 +116,8 @@ MERGE (m:Municipality {id: $muni_id})
 MERGE (d:Document {id: $doc_id})
 MERGE (s:Segment {rowid: $seg_rowid})
 SET s.impact_score = $impact_score,
-    s.text = $seg_text
+    s.text = $seg_text,
+    s.heading_context = $heading_context
 MERGE (m)-[:HAS_DOCUMENT]->(d)
 MERGE (d)-[:HAS_SEGMENT]->(s)
 """
@@ -184,7 +193,7 @@ def main(limit: Optional[int] = None):
         for row in iter_graph_triplets(conn, limit=limit):
             n_rows += 1
 
-            impact_score, seg_text = get_segment_meta(conn, row.segment_rowid)
+            impact_score, seg_text, heading_ctx = get_segment_meta(conn, row.segment_rowid)
 
             # base nodes/edges
             session.run(
@@ -194,6 +203,7 @@ def main(limit: Optional[int] = None):
                 seg_rowid=int(row.segment_rowid),
                 impact_score=int(impact_score) if impact_score is not None else 0,
                 seg_text=seg_text[:2000] if seg_text else None,  # cap to keep graph lean
+                heading_context=heading_ctx,
             )
 
             try:
