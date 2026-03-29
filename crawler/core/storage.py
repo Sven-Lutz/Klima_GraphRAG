@@ -414,6 +414,26 @@ class Storage:
         after = self.conn.total_changes
         return max(0, after - before)
 
+    def resolve_document_links(self) -> int:
+        """
+        Populate target_document_id in document_links by joining on documents_raw.url_canonical.
+        Call this once after a crawl batch completes so that LINKS_TO edges can be
+        exported to Neo4j.  Safe to call multiple times (only updates NULLs).
+        """
+        cur = self.conn.execute(
+            """
+            UPDATE document_links
+            SET target_document_id = (
+                SELECT document_id
+                FROM documents_raw
+                WHERE url_canonical = document_links.target_url_canonical
+                LIMIT 1
+            )
+            WHERE target_document_id IS NULL
+            """
+        )
+        return int(cur.rowcount or 0)
+
     def link_document_to_municipality(self, municipality_id: str, document_id: str) -> None:
         self.conn.execute(self._sql_link_muni_doc, (municipality_id, document_id))
 

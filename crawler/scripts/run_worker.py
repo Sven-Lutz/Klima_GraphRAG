@@ -131,6 +131,12 @@ def main() -> None:
                 
                 engine.run([(job.municipality_id, job.seed_url)])
 
+                # Resolve target_document_id in document_links so Neo4j LINKS_TO
+                # edges can be exported (otherwise target_document_id stays NULL)
+                resolved = engine.storage.resolve_document_links()
+                if resolved:
+                    logger.info(f"🔗 {resolved} document links resolved for {job.municipality_id}")
+
                 mark_done(con, job.municipality_id, worker_id)
                 
                 duration = timedelta(seconds=int(time.time() - muni_start_time))

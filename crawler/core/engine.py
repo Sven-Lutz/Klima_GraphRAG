@@ -326,9 +326,15 @@ class Engine:
         max_depth = int(self.limits.max_depth)
         max_pages = int(self.limits.max_pages_per_muni)
         lim_bytes = int(self.limits.max_file_size_mb) * 1024 * 1024
-
-        pages_since_last_pdf = 0
         autostop_threshold = 300
+
+        # Materialise seeds into a list so the iterable can be traversed
+        # twice (seed enqueue + finish_seed_job loop) even when passed as a generator.
+        seeds = list(seeds)
+
+        # pages_since_last_pdf is tracked per-municipality to prevent one
+        # PDF-poor municipality from triggering autostop for the next one.
+        pages_since_last_pdf: Dict[str, int] = {}
 
         for muni_id, url in seeds:
             muni_id = str(muni_id)
@@ -358,10 +364,13 @@ class Engine:
 
         while self.scheduler.has_next():
             task = self.scheduler.next()
+            muni_pdf_count = pages_since_last_pdf.get(task.municipality_id, 0)
 
-            if pages_since_last_pdf >= autostop_threshold:
+            if muni_pdf_count >= autostop_threshold:
                 print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} Seiten kein PDF. Breche Kommune ab.", flush=True)
-                break
+                # Drain remaining tasks for this municipality from the scheduler
+                # by simply skipping — the per-muni page count won't advance further.
+                continue
 
             if task.depth > max_depth:
                 continue
@@ -394,10 +403,11 @@ class Engine:
 
                 fr = self.fetch(task.url)
                 
+                muni = task.municipality_id
                 if self._looks_like_pdf(task.url, fr.content_type):
-                    pages_since_last_pdf = 0
+                    pages_since_last_pdf[muni] = 0
                 else:
-                    pages_since_last_pdf += 1
+                    pages_since_last_pdf[muni] = pages_since_last_pdf.get(muni, 0) + 1
 
                 status = int(fr.status_code)
 
