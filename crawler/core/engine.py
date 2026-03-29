@@ -20,6 +20,8 @@ from crawler.core.parsers.pdf_parser import parse_pdf
 from crawler.core.scheduler import PriorityScheduler
 from crawler.core.storage import Storage, default_worker_id
 
+from urllib.parse import urljoin as _urljoin
+
 _HIGH_IMPACT_WORDS = [
     r'klima\w*', r'klimaschutz\w*', r'klimaanpassung\w*', r'klimaneutral\w*',
     r'co2\b', r'thg\b', r'treibhausgas\w*', r'emission\w*', r'treibhausgasbilanz\w*',
@@ -119,6 +121,7 @@ class Engine:
         canonicalizer: Optional[Canonicalizer] = None,
         allowed_domains_by_muni: Optional[Mapping[str, Set[str]]] = None,
         worker_id: Optional[str] = None,
+        seed_additional_paths: Optional[list[str]] = None,
     ) -> None:
         self.storage = Storage()
         self.scheduler = PriorityScheduler()
@@ -161,6 +164,7 @@ class Engine:
             str(k): {self._norm_domain(d) for d in v if d}
             for k, v in (allowed_domains_by_muni or {}).items()
         }
+        self.seed_additional_paths: list[str] = list(seed_additional_paths or [])
 
     @staticmethod
     def _norm_domain(domain: str) -> str:
@@ -342,6 +346,16 @@ class Engine:
 
             self.scheduler.enqueue(CrawlTask(muni_id, url, depth=0), 100)
 
+            # Enqueue additional seed paths (e.g. /klima, /energie, /haushalt)
+            for path in self.seed_additional_paths:
+                extra_url = _urljoin(url.rstrip("/") + "/", path.lstrip("/"))
+                extra_c = canon(extra_url)
+                if extra_c and self._is_allowed(muni_id, extra_c):
+                    self.scheduler.enqueue(
+                        CrawlTask(muni_id, extra_c, depth=1, parent_url=url_c_seed),
+                        80,
+                    )
+
         while self.scheduler.has_next():
             task = self.scheduler.next()
 
@@ -407,6 +421,21 @@ class Engine:
 
                         if len(parse_result.segments) > 0:
                             self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+
+                        # Store HTML meta tags (description, date, author, ...)
+                        if parse_result.meta:
+                            self.storage.update_document_meta(doc_id, parse_result.meta)
+
+                        # Persist outlinks for GraphRAG document link graph
+                        if parse_result.out_links:
+                            canonical_links = []
+                            for link in parse_result.out_links:
+                                link_url = link[0] if isinstance(link, tuple) else getattr(link, "url", link)
+                                anchor = link[1] if isinstance(link, tuple) else getattr(link, "anchor", "")
+                                lc = canon(link_url)
+                                if lc:
+                                    canonical_links.append((lc, anchor))
+                            self.storage.store_outlinks(doc_id, canonical_links)
 
                         next_depth = task.depth + 1
                         if next_depth <= max_depth:

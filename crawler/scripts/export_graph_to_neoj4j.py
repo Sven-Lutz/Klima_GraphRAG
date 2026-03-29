@@ -165,6 +165,15 @@ MERGE (s)-[:EVIDENCE_FOR]->(r)
 """
 
 
+def _load_canonical_map(conn: sqlite3.Connection) -> Dict[str, str]:
+    """Load entity_canonical table (from resolve_entities.py) → {original_name → canonical_name}."""
+    try:
+        cur = conn.execute("SELECT original_name, canonical_name FROM entity_canonical")
+        return {str(r[0]): str(r[1]) for r in cur.fetchall()}
+    except Exception:
+        return {}
+
+
 def main(limit: Optional[int] = None):
     if not DB_PATH.exists():
         raise FileNotFoundError(f"DB not found: {DB_PATH}")
@@ -174,6 +183,11 @@ def main(limit: Optional[int] = None):
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA busy_timeout=60000;")
+
+    # Load entity resolution map (if available)
+    canonical_map = _load_canonical_map(conn)
+    if canonical_map:
+        print(f"[neo4j] Loaded {len(canonical_map)} entity canonical mappings")
 
     # Neo4j
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
@@ -214,10 +228,11 @@ def main(limit: Optional[int] = None):
             entities = kg.get("entities", []) or []
             rels = kg.get("relationships", []) or []
 
-            # upsert entities + mention edges
+            # upsert entities + mention edges (apply entity resolution if available)
             key_by_name: Dict[str, str] = {}
             for e in entities:
-                name = norm_name(e.get("name", ""))
+                raw_name = norm_name(e.get("name", ""))
+                name = canonical_map.get(raw_name, raw_name)  # resolve to canonical
                 etype = e.get("type", "Dokument")
                 cat = e.get("category", "Sonstiges")
                 status = e.get("status", "Unbekannt")
@@ -282,6 +297,33 @@ def main(limit: Optional[int] = None):
                 print(f"[neo4j] processed {n_rows} triplets...")
 
         print(f"✅ Done. triplets={n_rows}, entities_upserts~={n_entities}, rel_upserts~={n_rels}")
+
+        # Export document link graph (LINKS_TO edges)
+        n_links = 0
+        try:
+            cur = conn.execute(
+                """
+                SELECT dl.source_document_id, dl.target_document_id, dl.anchor_text
+                FROM document_links dl
+                WHERE dl.target_document_id IS NOT NULL
+                """
+            )
+            for src_doc, tgt_doc, anchor in cur.fetchall():
+                session.run(
+                    """
+                    MATCH (src:Document {id: $src_id})
+                    MATCH (tgt:Document {id: $tgt_id})
+                    MERGE (src)-[r:LINKS_TO]->(tgt)
+                    SET r.anchor_text = $anchor
+                    """,
+                    src_id=str(src_doc),
+                    tgt_id=str(tgt_doc),
+                    anchor=(anchor or "")[:300],
+                )
+                n_links += 1
+            print(f"✅ Document links exported: {n_links} LINKS_TO edges")
+        except Exception as e:
+            print(f"⚠️  Document links export skipped: {e}")
 
     driver.close()
     conn.close()

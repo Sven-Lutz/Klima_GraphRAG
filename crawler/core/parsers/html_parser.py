@@ -125,6 +125,29 @@ def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
     if fetch_result.content_type:
         meta["content_type"] = fetch_result.content_type
 
+    # Extract structured metadata from <meta> tags — free enrichment for GraphRAG
+    _META_MAP = {
+        "description": "description",
+        "og:description": "description",
+        "og:title": "og_title",
+        "article:published_time": "date",
+        "date": "date",
+        "dcterms.date": "date",
+        "dcterms.modified": "date_modified",
+        "author": "author",
+        "dcterms.creator": "author",
+        "keywords": "keywords",
+        "og:type": "og_type",
+    }
+    for meta_tag in soup.find_all("meta"):
+        attr_name = (meta_tag.get("name") or meta_tag.get("property") or "").lower().strip()
+        content = (meta_tag.get("content") or "").strip()
+        if not attr_name or not content:
+            continue
+        mapped = _META_MAP.get(attr_name)
+        if mapped:
+            meta.setdefault(mapped, content)
+
     return ParseResult(
         text=full_text,
         segments=segments,

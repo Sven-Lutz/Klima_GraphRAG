@@ -10,10 +10,13 @@ from bs4 import BeautifulSoup
 _WHITESPACE_RE = re.compile(r"\s+")
 _SCHEMES_BLOCK_RE = re.compile(r"^(?:mailto:|tel:|javascript:|data:)", re.IGNORECASE)
 
+
 @dataclass(frozen=True, slots=True)
 class Link:
     url: str
     anchor: str
+
+
 class LinkExtractor:
 
     def __init__(
@@ -66,12 +69,12 @@ class LinkExtractor:
         host = host.split(":", 1)[0]
         return any(host == d or host.endswith("." + d) for d in allowed_domains)
 
-def extract_links(
+    def extract_links(
         self,
         html: bytes,
         base_url: str,
         allowed_domains: Optional[set[str]] = None,
-    ) -> list[Link]: # <- Rückgabetyp korrigiert auf list[Link]
+    ) -> list[Link]:
         allow = (
             frozenset(d.strip().lower() for d in allowed_domains if d and d.strip())
             if allowed_domains
@@ -80,10 +83,10 @@ def extract_links(
 
         try:
             soup = BeautifulSoup(html, "lxml")
-        except Exception as e:
+        except Exception:
             return []
 
-        out: list[Link] = [] # <- Liste für Objekte
+        out: list[Link] = []
         seen: set[str] = set()
 
         for tag in soup.find_all("a", href=True):
@@ -108,7 +111,7 @@ def extract_links(
 
             seen.add(url)
             anchor = self._clean_anchor(tag.get_text(" ", strip=True))
-            
-            out.append(Link(url=url, anchor=anchor)) 
+
+            out.append(Link(url=url, anchor=anchor))
 
         return out
