@@ -44,9 +44,10 @@ class FetchResult:
 @dataclass(frozen=True, slots=True)
 class Segment:
     order_index: int
-    segment_type: str  
+    segment_type: str
     text: str
     page_ref: Optional[str] = None
+    heading_context: Optional[str] = None  # e.g. "Klimaschutz > Erneuerbare Energien"
 
 @dataclass(frozen=True, slots=True)
 class ParseResult:

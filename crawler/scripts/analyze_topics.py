@@ -126,16 +126,17 @@ def main():
         token_pattern=r"(?u)\b[\wäöüÄÖÜß]{3,}\b", # Mindestens 3 Buchstaben pro Wort
     )
 
+    representation_model = KeyBERTInspired()
+
     print("Starte BERTopic Analyse...")
     topic_model = BERTopic(
         embedding_model=None,  # Embeddings sind schon fertig berechnet
         language="german",
         vectorizer_model=vectorizer_model,
         representation_model=representation_model,
-        calculate_probabilities=False, 
+        calculate_probabilities=False,
         nr_topics="auto",
         min_topic_size=25,
-        calculate_probabilities=False,
         verbose=True,
     )
 
