@@ -47,7 +47,7 @@ class Fetcher:
             max_connections=int(cfg.max_connections),
         )
 
-async def __aenter__(self) -> "Fetcher":
+    async def __aenter__(self) -> "Fetcher":
         headers = {
             "User-Agent": self.cfg.user_agent,
             "Accept": "text/html,application/pdf,application/xhtml+xml;q=0.9,*/*;q=0.8",
@@ -62,7 +62,7 @@ async def __aenter__(self) -> "Fetcher":
             follow_redirects=True,
             limits=self._limits,
             max_redirects=int(self.cfg.max_redirects),
-            verify=False  # <--- NEU: Ignoriert abgelaufene SSL-Zertifikate von Behörden
+            verify=False,
         )
         return self
 

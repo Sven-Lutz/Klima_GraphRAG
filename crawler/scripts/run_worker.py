@@ -47,10 +47,19 @@ KLIMA_KEYWORDS = {
 }
 
 KLIMA_LIMITS = EngineLimits(
-    max_depth=12,                 
-    max_pages_per_muni=25000,     
-    max_file_size_mb=200  # Auf 200 MB angehoben für große Pläne        
+    max_depth=12,
+    max_pages_per_muni=25000,
+    max_file_size_mb=200  # Auf 200 MB angehoben für große Pläne
 )
+
+# Additional seed paths from crawl.yaml — enqueued alongside each homepage
+# to discover relevant climate/energy pages that may not be well-linked
+SEED_ADDITIONAL_PATHS = [
+    "/klima", "/klimaschutz", "/energie", "/waermeplanung",
+    "/umwelt", "/mobilitaet", "/verkehr", "/bauen",
+    "/foerderung", "/foerderprogramme", "/haushalt",
+    "/ratsinfo", "/bekanntmachungen",
+]
 
 def _heartbeat_loop(db_path: str, municipality_id: str, worker_id: str, stop: threading.Event) -> None:
     con = sqlite3.connect(db_path, timeout=60.0, isolation_level=None)
@@ -78,10 +87,11 @@ def main() -> None:
     _, allowed = load_seeds_from_sqlite()
 
     engine = Engine(
-        keywords=KLIMA_KEYWORDS,  
+        keywords=KLIMA_KEYWORDS,
         limits=KLIMA_LIMITS,
         allowed_domains_by_muni=allowed,
-        worker_id=worker_id
+        worker_id=worker_id,
+        seed_additional_paths=SEED_ADDITIONAL_PATHS,
     )
 
     con = sqlite3.connect(args.db, timeout=60.0, isolation_level=None)
@@ -120,6 +130,12 @@ def main() -> None:
                 logger.info(f"▶️ Bearbeite Gemeinde {job.municipality_id} ({job.seed_url})")
                 
                 engine.run([(job.municipality_id, job.seed_url)])
+
+                # Resolve target_document_id in document_links so Neo4j LINKS_TO
+                # edges can be exported (otherwise target_document_id stays NULL)
+                resolved = engine.storage.resolve_document_links()
+                if resolved:
+                    logger.info(f"🔗 {resolved} document links resolved for {job.municipality_id}")
 
                 mark_done(con, job.municipality_id, worker_id)
                 

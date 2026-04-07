@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import socket
 import sqlite3
@@ -186,6 +187,7 @@ class Storage:
         try:
             self._ensure_column("documents_raw", "raw_ext", "TEXT")
             self._ensure_column("documents_raw", "content_length", "INTEGER")
+            self._ensure_column("documents_raw", "meta_json", "TEXT")
         except Exception:
             pass
 
@@ -238,6 +240,29 @@ class Storage:
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_graph_triplets_doc ON graph_triplets(document_id)"
+            )
+        except Exception:
+            pass
+
+        # --- document_links: cross-document link graph for GraphRAG edges ---
+        try:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document_links (
+                    source_document_id TEXT NOT NULL,
+                    target_url_canonical TEXT NOT NULL,
+                    target_document_id TEXT,
+                    anchor_text TEXT,
+                    PRIMARY KEY (source_document_id, target_url_canonical),
+                    FOREIGN KEY(source_document_id) REFERENCES documents_raw(document_id) ON DELETE CASCADE
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target ON document_links(target_url_canonical)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target_doc ON document_links(target_document_id)"
             )
         except Exception:
             pass
@@ -358,6 +383,56 @@ class Storage:
         )
         self.conn.execute(self._sql_link_muni_doc, (municipality_id, doc_id))
         return doc_id
+
+    def update_document_meta(self, document_id: str, meta: dict) -> None:
+        """Store HTML-extracted metadata (description, date, author, ...) on the document."""
+        if not meta:
+            return
+        self.conn.execute(
+            "UPDATE documents_raw SET meta_json=? WHERE document_id=?",
+            (json.dumps(meta, ensure_ascii=False), document_id),
+        )
+
+    def store_outlinks(self, source_doc_id: str, links: Iterable[tuple[str, str]]) -> int:
+        """Persist outlinks for the document link graph (GraphRAG LINKS_TO edges)."""
+        rows = []
+        for url, anchor in links:
+            url = (url or "").strip()
+            if not url:
+                continue
+            rows.append((source_doc_id, url, (anchor or "")[:500]))
+        if not rows:
+            return 0
+        before = self.conn.total_changes
+        self.conn.executemany(
+            """
+            INSERT OR IGNORE INTO document_links (source_document_id, target_url_canonical, anchor_text)
+            VALUES (?, ?, ?)
+            """,
+            rows,
+        )
+        after = self.conn.total_changes
+        return max(0, after - before)
+
+    def resolve_document_links(self) -> int:
+        """
+        Populate target_document_id in document_links by joining on documents_raw.url_canonical.
+        Call this once after a crawl batch completes so that LINKS_TO edges can be
+        exported to Neo4j.  Safe to call multiple times (only updates NULLs).
+        """
+        cur = self.conn.execute(
+            """
+            UPDATE document_links
+            SET target_document_id = (
+                SELECT document_id
+                FROM documents_raw
+                WHERE url_canonical = document_links.target_url_canonical
+                LIMIT 1
+            )
+            WHERE target_document_id IS NULL
+            """
+        )
+        return int(cur.rowcount or 0)
 
     def link_document_to_municipality(self, municipality_id: str, document_id: str) -> None:
         self.conn.execute(self._sql_link_muni_doc, (municipality_id, document_id))

@@ -20,6 +20,8 @@ from crawler.core.parsers.pdf_parser import parse_pdf
 from crawler.core.scheduler import PriorityScheduler
 from crawler.core.storage import Storage, default_worker_id
 
+from urllib.parse import urljoin as _urljoin
+
 _HIGH_IMPACT_WORDS = [
     r'klima\w*', r'klimaschutz\w*', r'klimaanpassung\w*', r'klimaneutral\w*',
     r'co2\b', r'thg\b', r'treibhausgas\w*', r'emission\w*', r'treibhausgasbilanz\w*',
@@ -119,6 +121,7 @@ class Engine:
         canonicalizer: Optional[Canonicalizer] = None,
         allowed_domains_by_muni: Optional[Mapping[str, Set[str]]] = None,
         worker_id: Optional[str] = None,
+        seed_additional_paths: Optional[list[str]] = None,
     ) -> None:
         self.storage = Storage()
         self.scheduler = PriorityScheduler()
@@ -161,6 +164,7 @@ class Engine:
             str(k): {self._norm_domain(d) for d in v if d}
             for k, v in (allowed_domains_by_muni or {}).items()
         }
+        self.seed_additional_paths: list[str] = list(seed_additional_paths or [])
 
     @staticmethod
     def _norm_domain(domain: str) -> str:
@@ -322,9 +326,15 @@ class Engine:
         max_depth = int(self.limits.max_depth)
         max_pages = int(self.limits.max_pages_per_muni)
         lim_bytes = int(self.limits.max_file_size_mb) * 1024 * 1024
-
-        pages_since_last_pdf = 0
         autostop_threshold = 300
+
+        # Materialise seeds into a list so the iterable can be traversed
+        # twice (seed enqueue + finish_seed_job loop) even when passed as a generator.
+        seeds = list(seeds)
+
+        # pages_since_last_pdf is tracked per-municipality to prevent one
+        # PDF-poor municipality from triggering autostop for the next one.
+        pages_since_last_pdf: Dict[str, int] = {}
 
         for muni_id, url in seeds:
             muni_id = str(muni_id)
@@ -342,12 +352,25 @@ class Engine:
 
             self.scheduler.enqueue(CrawlTask(muni_id, url, depth=0), 100)
 
+            # Enqueue additional seed paths (e.g. /klima, /energie, /haushalt)
+            for path in self.seed_additional_paths:
+                extra_url = _urljoin(url.rstrip("/") + "/", path.lstrip("/"))
+                extra_c = canon(extra_url)
+                if extra_c and self._is_allowed(muni_id, extra_c):
+                    self.scheduler.enqueue(
+                        CrawlTask(muni_id, extra_c, depth=1, parent_url=url_c_seed),
+                        80,
+                    )
+
         while self.scheduler.has_next():
             task = self.scheduler.next()
+            muni_pdf_count = pages_since_last_pdf.get(task.municipality_id, 0)
 
-            if pages_since_last_pdf >= autostop_threshold:
+            if muni_pdf_count >= autostop_threshold:
                 print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} Seiten kein PDF. Breche Kommune ab.", flush=True)
-                break
+                # Drain remaining tasks for this municipality from the scheduler
+                # by simply skipping — the per-muni page count won't advance further.
+                continue
 
             if task.depth > max_depth:
                 continue
@@ -380,10 +403,11 @@ class Engine:
 
                 fr = self.fetch(task.url)
                 
+                muni = task.municipality_id
                 if self._looks_like_pdf(task.url, fr.content_type):
-                    pages_since_last_pdf = 0
+                    pages_since_last_pdf[muni] = 0
                 else:
-                    pages_since_last_pdf += 1
+                    pages_since_last_pdf[muni] = pages_since_last_pdf.get(muni, 0) + 1
 
                 status = int(fr.status_code)
 
@@ -407,6 +431,21 @@ class Engine:
 
                         if len(parse_result.segments) > 0:
                             self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+
+                        # Store HTML meta tags (description, date, author, ...)
+                        if parse_result.meta:
+                            self.storage.update_document_meta(doc_id, parse_result.meta)
+
+                        # Persist outlinks for GraphRAG document link graph
+                        if parse_result.out_links:
+                            canonical_links = []
+                            for link in parse_result.out_links:
+                                link_url = link[0] if isinstance(link, tuple) else getattr(link, "url", link)
+                                anchor = link[1] if isinstance(link, tuple) else getattr(link, "anchor", "")
+                                lc = canon(link_url)
+                                if lc:
+                                    canonical_links.append((lc, anchor))
+                            self.storage.store_outlinks(doc_id, canonical_links)
 
                         next_depth = task.depth + 1
                         if next_depth <= max_depth:
