@@ -1,17 +1,22 @@
 #!/bin/bash
 # =============================================================================
-# submit_pipeline.sh  –  Startet die komplette GraphRAG-Pipeline als verkettete
-#                        SLURM-Jobs (jeder wartet auf den Abschluss des vorherigen)
+# submit_pipeline.sh  –  Startet die GraphRAG-Pipeline als verkettete
+#                        SLURM-Jobs (Crawl läuft lokal, DB wird per
+#                        hpc/transfer_db.sh übertragen)
 #
 # Verwendung:
-#   bash hpc/submit_pipeline.sh [--skip-crawl] [--from STAGE]
+#   bash hpc/submit_pipeline.sh [--from STAGE]
 #
 # Optionen:
-#   --skip-crawl     Crawl überspringen (Daten bereits vorhanden)
-#   --from 2         Pipeline ab Stage 2 starten (1=crawl, 2=chunk, 3=graph, ...)
+#   --from 3   Pipeline ab einer bestimmten Stage starten
+#              (2=chunk+embed, 3=graph, 4=neo4j, 5=community, 6=eval)
 #
 # Voraussetzung:
-#   bash hpc/00_setup_env.sh   muss bereits ausgeführt worden sein
+#   1. Lokal crawlen + DB übertragen:
+#        python -m crawler.scripts.run_worker   (lokal)
+#        bash hpc/transfer_db.sh --host <cluster>
+#   2. Umgebung einrichten (einmalig auf dem Cluster):
+#        bash hpc/00_setup_env.sh
 # =============================================================================
 set -euo pipefail
 
@@ -20,29 +25,34 @@ cd "$PROJEKT_DIR"
 mkdir -p logs
 
 # ── Argumente parsen ──────────────────────────────────────────────────────────
-START_FROM=1
-SKIP_CRAWL=0
+START_FROM=2   # Crawl läuft lokal → Pipeline startet immer ab Stage 2
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --skip-crawl) SKIP_CRAWL=1; shift ;;
-        --from)       START_FROM="$2"; shift 2 ;;
+        --from) START_FROM="$2"; shift 2 ;;
         *) echo "Unbekannte Option: $1"; exit 1 ;;
     esac
 done
 
+# ── Voraussetzungen prüfen ────────────────────────────────────────────────────
+DB_PATH="${KLIMA_DB_PATH:-${PROJEKT_DIR}/crawler/data/db/crawl.sqlite}"
+if [[ ! -f "${DB_PATH}" ]]; then
+    echo "FEHLER: Datenbank nicht gefunden: ${DB_PATH}"
+    echo "Bitte zuerst lokal crawlen und mit hpc/transfer_db.sh übertragen."
+    exit 1
+fi
+
+DB_DOCS=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM documents_raw;" 2>/dev/null || echo "0")
 echo "════════════════════════════════════════════════════════"
-echo " KIT KlimaCrawler – SLURM Pipeline Submission"
-echo " Starte ab Stage: ${START_FROM}"
-echo " Projektverzeichnis: ${PROJEKT_DIR}"
+echo " KIT KlimaCrawler – SLURM Pipeline"
+echo " Datenbank:  ${DB_PATH}"
+echo " Dokumente:  ${DB_DOCS}"
+echo " Starte ab:  Stage ${START_FROM}"
 echo "════════════════════════════════════════════════════════"
 
-PREV_JOB=""   # Job-ID des vorherigen Schritts (für --dependency)
+PREV_JOB=""
 
 dep_flag() {
-    # Gibt --dependency=afterok:<id> zurück, wenn ein Vorgänger existiert
-    if [[ -n "${PREV_JOB}" ]]; then
-        echo "--dependency=afterok:${PREV_JOB}"
-    fi
+    [[ -n "${PREV_JOB}" ]] && echo "--dependency=afterok:${PREV_JOB}" || echo ""
 }
 
 submit() {
@@ -51,7 +61,7 @@ submit() {
     local label="$3"
 
     if [[ "${stage}" -lt "${START_FROM}" ]]; then
-        echo "  ⏭  Stage ${stage} übersprungen (--from ${START_FROM})"
+        echo "  ⏭  Stage ${stage} übersprungen"
         return
     fi
 
@@ -62,47 +72,27 @@ submit() {
     job_id=$(sbatch ${dep} "${script}" | awk '{print $NF}')
     PREV_JOB="${job_id}"
     echo "  ✓  Stage ${stage} | ${label}"
-    echo "         Job-ID: ${job_id}  Skript: ${script}"
+    echo "         Job-ID: ${job_id}"
 }
 
-# ── Stage 0: Crawl (Job Array mit 4 Workern) ─────────────────────────────────
-if [[ "${SKIP_CRAWL}" -eq 0 && "${START_FROM}" -le 1 ]]; then
-    CRAWL_JOB=$(sbatch hpc/01_crawl.sbatch | awk '{print $NF}')
-    PREV_JOB="${CRAWL_JOB}"
-    echo "  ✓  Stage 1 | Crawl (4-Worker Array)"
-    echo "         Job-ID: ${CRAWL_JOB}  (Array: ${CRAWL_JOB}_0 … ${CRAWL_JOB}_3)"
-else
-    echo "  ⏭  Stage 1 – Crawl übersprungen"
-fi
-
-# ── Stage 2: Chunking + Embeddings ───────────────────────────────────────────
-submit 2 hpc/02_chunk_embed.sbatch       "Chunking + Embeddings + Entity-Resolution"
-
-# ── Stage 3: Graph-Extraktion via Ollama ─────────────────────────────────────
-submit 3 hpc/03_extract_graph.sbatch     "Graph-Extraktion (Ollama + Gleaning)"
-
-# ── Stage 4: Neo4j-Export ────────────────────────────────────────────────────
-submit 4 hpc/04_neo4j_export.sbatch      "Neo4j Export (Triplets + Embeddings)"
-
-# ── Stage 5: Community Detection ─────────────────────────────────────────────
-submit 5 hpc/05_community_detect.sbatch  "Community Detection (Leiden + LLM Reports)"
-
-# ── Stage 6: Evaluation ──────────────────────────────────────────────────────
-submit 6 hpc/06_evaluate.sbatch          "Evaluation (AutoQ + RAGAS + AutoE)"
+submit 2 hpc/02_chunk_embed.sbatch      "Chunking + Embeddings + Entity-Resolution"
+submit 3 hpc/03_extract_graph.sbatch    "Graph-Extraktion (Ollama + Gleaning)"
+submit 4 hpc/04_neo4j_export.sbatch     "Neo4j Export (Triplets + Embeddings)"
+submit 5 hpc/05_community_detect.sbatch "Community Detection (Leiden + LLM Reports)"
+submit 6 hpc/06_evaluate.sbatch         "Evaluation (AutoQ + RAGAS + AutoE)"
 
 echo ""
 echo "════════════════════════════════════════════════════════"
-echo " Alle Jobs submitted. Fortschritt überwachen:"
+echo " Alle Jobs submitted. Fortschritt:"
 echo "   squeue -u \$USER"
-echo "   tail -f logs/crawl_<JOBID>_0.out"
+echo "   tail -f logs/chunk_embed_<JOBID>.out"
 echo ""
-echo " Geschätzte Gesamtdauer:"
-echo "   Stage 1  – Crawl (4 Worker parallel):  ~2-3 Tage"
+echo " Geschätzte Gesamtdauer (ab jetzt):"
 echo "   Stage 2  – Chunk + Embed (GPU):         ~2-4 Stunden"
-echo "   Stage 3  – Graph-Extraktion (GPU):      ~12-24 Stunden"
-echo "   Stage 4  – Neo4j Export:                ~1-2 Stunden"
-echo "   Stage 5  – Community Detection:         ~4-8 Stunden"
-echo "   Stage 6  – Evaluation:                  ~2-4 Stunden"
+echo "   Stage 3  – Graph-Extraktion (GPU):       ~12-24 Stunden"
+echo "   Stage 4  – Neo4j Export (CPU):           ~1-2 Stunden"
+echo "   Stage 5  – Community Detection (GPU):    ~4-8 Stunden"
+echo "   Stage 6  – Evaluation (GPU):             ~2-4 Stunden"
 echo "   ─────────────────────────────────────────────────────"
-echo "   Gesamt:                                 ~4-6 Tage"
+echo "   Gesamt:                                  ~20-40 Stunden"
 echo "════════════════════════════════════════════════════════"

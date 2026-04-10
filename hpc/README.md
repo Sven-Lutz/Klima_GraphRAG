@@ -1,35 +1,43 @@
 # HPC-Pipeline — KIT KlimaCrawler GraphRAG
 
-SLURM-basierte Ausführung der kompletten 6-stufigen Pipeline auf einem
-Hochleistungsrechner.
+Der Crawl läuft **lokal** (kein Netzwerk-Overhead auf dem Cluster, keine
+Internet-Freigabe nötig). Die fertige SQLite-DB wird per `transfer_db.sh`
+übertragen. Der HPC übernimmt dann die rechenintensiven Stages 2–6.
 
 ## Schnellstart
 
 ```bash
-# 1. Einmalig: Umgebung einrichten (auf dem Login-Node)
+# Lokal: crawlen
+python -m crawler.scripts.run_worker
+
+# Lokal → Cluster: DB übertragen + Integrität prüfen
+bash hpc/transfer_db.sh --host bwunicluster.scc.kit.edu --user st_abc1234
+
+# Auf dem Cluster: Umgebung einrichten (einmalig)
 bash hpc/00_setup_env.sh
 
-# 2. Alle Stages als verkettete SLURM-Jobs abschicken
+# Auf dem Cluster: Pipeline starten
 bash hpc/submit_pipeline.sh
 
-# 3. Fortschritt überwachen
+# Fortschritt überwachen
 squeue -u $USER
-tail -f logs/crawl_<JOBID>_0.out
+tail -f logs/chunk_embed_<JOBID>.out
 ```
 
 ## Pipeline-Übersicht
 
-| Stage | Skript | Ressourcen | Dauer (est.) |
-|-------|--------|------------|--------------|
-| 0 Setup | `00_setup_env.sh` | Login-Node | 1× |
-| 1 Crawl | `01_crawl.sbatch` | 4× CPU, 8G, 72h | 2–3 Tage |
-| 2 Chunk+Embed | `02_chunk_embed.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
-| 3 Graph-Extraktion | `03_extract_graph.sbatch` | 1 GPU, 48G, 24h | 12–24 h |
-| 4 Neo4j Export | `04_neo4j_export.sbatch` | CPU, 16G, 4h | 1–2 h |
-| 5 Community Detection | `05_community_detect.sbatch` | 1 GPU, 32G, 8h | 4–8 h |
-| 6 Evaluation | `06_evaluate.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
+| Stage | Wo | Skript | Ressourcen | Dauer (est.) |
+|-------|----|--------|------------|--------------|
+| 0 Setup | Cluster (Login) | `00_setup_env.sh` | — | einmalig |
+| 1 Crawl | **lokal** | `run_worker.py` | CPU + Internet | Tage |
+| — Transfer | lokal→Cluster | `transfer_db.sh` | rsync | Minuten |
+| 2 Chunk+Embed | Cluster (GPU) | `02_chunk_embed.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
+| 3 Graph-Extraktion | Cluster (GPU) | `03_extract_graph.sbatch` | 1 GPU, 48G, 24h | 12–24 h |
+| 4 Neo4j Export | Cluster (CPU) | `04_neo4j_export.sbatch` | CPU, 16G, 4h | 1–2 h |
+| 5 Community Detection | Cluster (GPU) | `05_community_detect.sbatch` | 1 GPU, 32G, 8h | 4–8 h |
+| 6 Evaluation | Cluster (GPU) | `06_evaluate.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
 
-**Gesamt:** ~4–6 Tage Maschinen-Zeit (kalendarisch: ~3 Tage, da Stages parallel)
+**Gesamt auf dem Cluster:** ~20–40 Stunden Maschinen-Zeit
 
 ## Voraussetzungen
 
