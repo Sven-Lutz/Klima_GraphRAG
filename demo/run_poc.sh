@@ -71,7 +71,8 @@ python3 -m pip install --quiet \
     beautifulsoup4 \
     lxml \
     "sentence-transformers>=3.0.0" \
-    spacy
+    spacy \
+    pyvis
 
 # spaCy German model (14 MB, needed for graph extraction)
 python3 -c "import spacy; spacy.load('de_core_news_sm')" 2>/dev/null || \
@@ -301,8 +302,13 @@ echo "   python demo/query_demo.py --db demo/demo.sqlite \"Wärmepumpe Förderun
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"Photovoltaik Ausbau Ziel\""
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"CO2 Reduktion Maßnahmen\""
 echo ""
-echo " Graph inspizieren:"
+echo " Graph inspizieren (Tabellen):"
 echo "   python demo/inspect_graph.py --db demo/demo.sqlite"
+echo ""
+echo " Graph visualisieren (interaktives HTML im Browser):"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite --muni 09161000   # Ingolstadt"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite --type Förderprogramm --top 50"
 echo ""
 echo " Bessere Graph-Extraktion mit Ollama LLM:"
 echo "   curl -fsSL https://ollama.com/install.sh | sh"
