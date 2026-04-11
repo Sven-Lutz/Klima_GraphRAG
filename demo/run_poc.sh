@@ -43,15 +43,19 @@ echo "════════════════════════�
 echo ""
 echo "[ 0/5 ] Abhängigkeiten prüfen & installieren..."
 
-# Torch zuerst: via conda installieren (vermeidet kaputte dylib-Links auf macOS/Linux)
-# Falls conda nicht verfügbar, Fallback auf pip
-if python3 -c "import torch; torch.zeros(1)" 2>/dev/null; then
-    echo "  ✓ torch ok"
-else
-    echo "  → torch fehlt oder kaputt – installiere via conda..."
+# NumPy: muss < 2 sein — PyTorch 2.x wurde gegen NumPy 1.x kompiliert
+NUMPY_OK=$(python3 -c "import numpy as np; ok = tuple(int(x) for x in np.__version__.split('.')[:2]) < (2,0); print('yes' if ok else 'no')" 2>/dev/null || echo "no")
+if [[ "$NUMPY_OK" != "yes" ]]; then
+    echo "  → NumPy >= 2 gefunden, downgrade auf numpy<2 ..."
+    python3 -m pip install --quiet "numpy<2"
+fi
+
+# Torch: mind. 2.4 nötig für aktuelle sentence-transformers
+TORCH_OK=$(python3 -c "import torch; v=tuple(int(x) for x in torch.__version__.split('.')[:2]); print('yes' if v>=(2,4) else 'no')" 2>/dev/null || echo "no")
+if [[ "$TORCH_OK" != "yes" ]]; then
+    echo "  → torch < 2.4 oder fehlt – upgrade via conda..."
     if command -v conda &>/dev/null; then
-        conda install -y pytorch cpuonly -c pytorch 2>/dev/null \
-            || conda install -y pytorch -c pytorch 2>/dev/null \
+        conda install -y "pytorch>=2.4" cpuonly -c pytorch -q 2>/dev/null \
             || python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
     else
         python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
@@ -66,8 +70,7 @@ python3 -m pip install --quiet \
     aiohttp \
     beautifulsoup4 \
     lxml \
-    numpy \
-    "sentence-transformers>=2.2.0"
+    "sentence-transformers>=3.0.0"
 
 echo "  ✓ Pakete bereit"
 
@@ -158,6 +161,10 @@ for muni_id, seed_url in jobs:
         limits=LIMITS,
         seed_additional_paths=SEED_PATHS,
     )
+    # Default-Argument DB_PATH ist beim Import gebunden → nach der
+    # Konstruktion überschreiben, damit die Demo-DB genutzt wird
+    from crawler.core.storage import Storage as _Storage
+    engine.storage = _Storage(DB_PATH)
     engine.run([(muni_id, seed_url)])
 
     # Markiere als done
