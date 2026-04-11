@@ -42,6 +42,22 @@ echo "════════════════════════�
 # ── 0. Abhängigkeiten installieren ────────────────────────────────────────────
 echo ""
 echo "[ 0/5 ] Abhängigkeiten prüfen & installieren..."
+
+# Torch zuerst: via conda installieren (vermeidet kaputte dylib-Links auf macOS/Linux)
+# Falls conda nicht verfügbar, Fallback auf pip
+if python3 -c "import torch; torch.zeros(1)" 2>/dev/null; then
+    echo "  ✓ torch ok"
+else
+    echo "  → torch fehlt oder kaputt – installiere via conda..."
+    if command -v conda &>/dev/null; then
+        conda install -y pytorch cpuonly -c pytorch 2>/dev/null \
+            || conda install -y pytorch -c pytorch 2>/dev/null \
+            || python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+    else
+        python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+    fi
+fi
+
 python3 -m pip install --quiet \
     tiktoken \
     pydantic \
