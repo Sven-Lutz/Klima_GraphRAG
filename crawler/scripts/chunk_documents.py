@@ -48,6 +48,14 @@ DB_PATH = Path("crawler/data/db/crawl.sqlite")
 # ---------------------------------------------------------------------------
 
 def setup_db(conn: sqlite3.Connection) -> None:
+    # Ensure columns that may be missing in older crawled DBs
+    for col, typ in [("impact_score", "INTEGER"), ("heading_context", "TEXT"),
+                     ("is_negative", "INTEGER")]:
+        try:
+            conn.execute(f"ALTER TABLE segments ADD COLUMN {col} {typ}")
+        except Exception:
+            pass  # already exists
+
     conn.executescript(
         """
         PRAGMA journal_mode=WAL;
@@ -182,8 +190,10 @@ def main(
     overlap: int = DEFAULT_OVERLAP,
     min_score: int = 10,
     limit: int = 100_000,
+    db_path: str | None = None,
 ) -> None:
-    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+    _db = Path(db_path) if db_path else DB_PATH
+    conn = sqlite3.connect(str(_db), timeout=60.0, isolation_level=None)
     setup_db(conn)
 
     print(f"⚙️  Chunking segments  (size={chunk_size} tok, overlap={overlap} tok, min_score={min_score})")
@@ -207,10 +217,12 @@ if __name__ == "__main__":
     ap.add_argument("--overlap",    type=int, default=DEFAULT_OVERLAP)
     ap.add_argument("--min-score",  type=int, default=10)
     ap.add_argument("--limit",      type=int, default=100_000)
+    ap.add_argument("--db",         default=None, help="Pfad zur SQLite-DB (überschreibt config)")
     args = ap.parse_args()
     main(
         chunk_size=args.chunk_size,
         overlap=args.overlap,
         min_score=args.min_score,
         limit=args.limit,
+        db_path=args.db,
     )
