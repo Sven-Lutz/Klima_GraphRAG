@@ -107,20 +107,22 @@ echo "        Dies dauert ca. 5-15 Minuten..."
 
 if [[ "${SKIP_CRAWL:-0}" -eq 0 ]]; then
     # Crawler mit engen Limits für den Demo-Lauf
-    python3 - <<PYEOF
-import asyncio, sys
+    python3 - <<'PYEOF'
+import sys, sqlite3
 sys.path.insert(0, ".")
+
+# Monkey-patch DB_PATH VOR dem Import, damit Storage die Demo-DB nutzt
+import crawler.core.storage as _storage_mod
 from pathlib import Path
+_storage_mod.DB_PATH = Path("demo/demo.sqlite")
+
 from crawler.core.engine import Engine, EngineLimits
-from crawler.core.storage import Storage
-from crawler.core.seed_jobs import claim_next_job, mark_done, mark_failed, default_worker_id
-from crawler.core.seeds import load_seeds_from_sqlite
 
 DB_PATH = Path("demo/demo.sqlite")
 
 LIMITS = EngineLimits(
     max_depth=4,
-    max_pages_per_muni=120,   # Demo: 120 Seiten je Kommune
+    max_pages_per_muni=120,
     max_file_size_mb=50,
 )
 
@@ -138,54 +140,37 @@ KEYWORDS = {
 
 SEED_PATHS = ["/klima", "/klimaschutz", "/energie", "/umwelt", "/nachhaltigkeit"]
 
-async def run():
-    import sqlite3
-    con = sqlite3.connect(str(DB_PATH), isolation_level=None)
-    con.execute("PRAGMA journal_mode=WAL")
+con = sqlite3.connect(str(DB_PATH), isolation_level=None)
+jobs = con.execute(
+    "SELECT municipality_id, seed_url FROM seed_jobs WHERE status='pending'"
+).fetchall()
+con.close()
 
-    jobs = con.execute(
-        "SELECT municipality_id, seed_url FROM seed_jobs WHERE status='pending'"
-    ).fetchall()
-    con.close()
+if not jobs:
+    print("  Alle Jobs bereits erledigt.")
+    sys.exit(0)
 
-    if not jobs:
-        print("  Alle Jobs bereits erledigt.")
-        return
+for muni_id, seed_url in jobs:
+    print(f"\n  → Crawle {muni_id}: {seed_url}")
 
-    for muni_id, seed_url in jobs:
-        print(f"\n  → Crawle {muni_id}: {seed_url}")
-        storage = Storage(DB_PATH)
+    engine = Engine(
+        keywords=KEYWORDS,
+        limits=LIMITS,
+        seed_additional_paths=SEED_PATHS,
+    )
+    engine.run([(muni_id, seed_url)])
 
-        # Seeds für diese Kommune
-        seeds = [(muni_id, seed_url)]
+    # Markiere als done
+    con2 = sqlite3.connect(str(DB_PATH), isolation_level=None)
+    con2.execute("UPDATE seed_jobs SET status='done' WHERE municipality_id=?", (muni_id,))
+    con2.close()
 
-        engine = Engine(
-            storage=storage,
-            limits=LIMITS,
-            keyword_lists=KEYWORDS,
-            seed_additional_paths=SEED_PATHS,
-        )
-        await engine.run(seeds)
-
-        # Markiere als done
-        con2 = sqlite3.connect(str(DB_PATH), isolation_level=None)
-        con2.execute(
-            "UPDATE seed_jobs SET status='done' WHERE municipality_id=?",
-            (muni_id,)
-        )
-        con2.close()
-
-        import sqlite3 as sq
-        c = sq.connect(str(DB_PATH))
-        docs = c.execute("SELECT COUNT(*) FROM documents_raw WHERE municipality_id=?",
-                         (muni_id,)).fetchone()[0]
-        segs = c.execute("SELECT COUNT(*) FROM segments WHERE document_id IN "
-                         "(SELECT document_id FROM documents_raw WHERE municipality_id=?)",
-                         (muni_id,)).fetchone()[0]
-        c.close()
-        print(f"     ✓ {muni_id}: {docs} Dokumente, {segs} Segmente")
-
-asyncio.run(run())
+    c = sqlite3.connect(str(DB_PATH))
+    docs = c.execute("SELECT COUNT(*) FROM documents_raw WHERE municipality_id=?", (muni_id,)).fetchone()[0]
+    segs = c.execute("SELECT COUNT(*) FROM segments WHERE document_id IN "
+                     "(SELECT document_id FROM documents_raw WHERE municipality_id=?)", (muni_id,)).fetchone()[0]
+    c.close()
+    print(f"     ✓ {muni_id}: {docs} Dokumente, {segs} Segmente")
 PYEOF
 else
     echo "  ↳ Crawl übersprungen (Daten vorhanden)"
