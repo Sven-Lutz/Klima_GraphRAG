@@ -24,3 +24,6 @@ crawler/data/db/crawl.sqlite
 crawler/data/db/*.bak*
 *.sqlite.s
 distribution_packages/
+
+# Demo-Datenbank (generiert durch run_poc.sh, nicht versionieren)
+demo/demo.sqlite
