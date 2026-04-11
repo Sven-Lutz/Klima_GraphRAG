@@ -41,7 +41,7 @@ echo "════════════════════════�
 
 # ── 0. Abhängigkeiten installieren ────────────────────────────────────────────
 echo ""
-echo "[ 0/5 ] Abhängigkeiten prüfen & installieren..."
+echo "[ 0/6 ] Abhängigkeiten prüfen & installieren..."
 
 # NumPy: muss < 2 sein — PyTorch 2.x wurde gegen NumPy 1.x kompiliert
 NUMPY_OK=$(python3 -c "import numpy as np; ok = tuple(int(x) for x in np.__version__.split('.')[:2]) < (2,0); print('yes' if ok else 'no')" 2>/dev/null || echo "no")
@@ -70,13 +70,18 @@ python3 -m pip install --quiet \
     aiohttp \
     beautifulsoup4 \
     lxml \
-    "sentence-transformers>=3.0.0"
+    "sentence-transformers>=3.0.0" \
+    spacy
+
+# spaCy German model (14 MB, needed for graph extraction)
+python3 -c "import spacy; spacy.load('de_core_news_sm')" 2>/dev/null || \
+    python3 -m spacy download de_core_news_sm --quiet
 
 echo "  ✓ Pakete bereit"
 
 # ── 1. Demo-DB initialisieren ─────────────────────────────────────────────────
 echo ""
-echo "[ 1/5 ] Demo-Datenbank initialisieren..."
+echo "[ 1/6 ] Demo-Datenbank initialisieren..."
 
 if [[ -f "$DEMO_DB" ]]; then
     DOCS=$(python3 -c "
@@ -105,7 +110,7 @@ fi
 
 # ── 2. Crawl (3 Kommunen, max 120 Seiten je) ─────────────────────────────────
 echo ""
-echo "[ 2/5 ] Crawle 3 Kommunen (max. 120 Seiten je, Tiefe 4)..."
+echo "[ 2/6 ] Crawle 3 Kommunen (max. 120 Seiten je, Tiefe 4)..."
 echo "        Dies dauert ca. 5-15 Minuten..."
 
 if [[ "${SKIP_CRAWL:-0}" -eq 0 ]]; then
@@ -196,7 +201,7 @@ PYEOF
 
 # ── 3. Tiktoken-Chunking ──────────────────────────────────────────────────────
 echo ""
-echo "[ 3/5 ] Tiktoken-Chunking (600 Tok / 60 Overlap)..."
+echo "[ 3/6 ] Tiktoken-Chunking (600 Tok / 60 Overlap)..."
 
 python3 - <<'PYEOF'
 import sys; sys.path.insert(0, ".")
@@ -217,7 +222,7 @@ PYEOF
 
 # ── 4. Embeddings (CPU, all-MiniLM-L6-v2) ────────────────────────────────────
 echo ""
-echo "[ 4/5 ] Embeddings berechnen (CPU, ~5-10 Minuten)..."
+echo "[ 4/6 ] Embeddings berechnen (CPU, ~5-10 Minuten)..."
 echo "        Modell: all-MiniLM-L6-v2 (~90 MB Download beim ersten Mal)"
 
 python3 - <<'PYEOF'
@@ -269,7 +274,17 @@ PYEOF
 
 # ── 5. Demo-Suche ────────────────────────────────────────────────────────────
 echo ""
-echo "[ 5/5 ] GraphRAG Demo-Suche..."
+echo "[ 5/6 ] Graph-Extraktion (spaCy NER, offline, ~2-5 Minuten)..."
+echo "        Modell: de_core_news_sm  |  Entitäten + Beziehungen"
+
+python3 demo/extract_graph_spacy.py \
+    --db "demo/demo.sqlite" \
+    --limit 500 \
+    --min-score 0
+
+# ── 6. Demo-Suche ─────────────────────────────────────────────────────────────
+echo ""
+echo "[ 6/6 ] GraphRAG Demo-Suche..."
 echo "        Anfrage: \"$QUERY\""
 echo ""
 
@@ -281,13 +296,16 @@ python3 demo/query_demo.py \
 echo "════════════════════════════════════════════════════════"
 echo " PoC abgeschlossen!"
 echo ""
-echo " Weitere Anfragen:"
+echo " Weitere Suchanfragen:"
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"Wärmepumpe Förderung\""
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"Photovoltaik Ausbau Ziel\""
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"CO2 Reduktion Maßnahmen\""
 echo ""
-echo " Nächster Schritt: Ollama installieren für Graph-Extraktion"
+echo " Graph inspizieren:"
+echo "   python demo/inspect_graph.py --db demo/demo.sqlite"
+echo ""
+echo " Bessere Graph-Extraktion mit Ollama LLM:"
 echo "   curl -fsSL https://ollama.com/install.sh | sh"
 echo "   ollama pull llama3.1:8b"
-echo "   python -m crawler.scripts.extract_graph_ollama --db demo/demo.sqlite"
+echo "   KLIMA_DB_PATH=demo/demo.sqlite python -m crawler.scripts.extract_graph_ollama --chunk-mode"
 echo "════════════════════════════════════════════════════════"
