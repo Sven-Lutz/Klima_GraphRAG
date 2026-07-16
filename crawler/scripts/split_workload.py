@@ -48,7 +48,6 @@ def split_db(source_db_path, num_splits=20):
             placeholders_munich = ','.join(['?'] * len(munich_data))
             new_conn.execute(f"INSERT INTO seed_jobs VALUES ({placeholders_munich})", munich_data)
         
-        placeholders_subset = ','.join(['?'] * len(all_pending[0:1]))
         ids_subset = subset
         placeholders_ids = ','.join(['?'] * len(ids_subset))
         jobs_data = conn.execute(f"SELECT * FROM seed_jobs WHERE municipality_id IN ({placeholders_ids})", ids_subset).fetchall()
@@ -65,9 +64,9 @@ def split_db(source_db_path, num_splits=20):
             f.write("-" * 30 + "\n")
             f.write("1. Kopiere 'crawl.sqlite' in deinen Ordner: crawler/data/db/\n")
             f.write("2. Starte den Crawl mit: caffeinate -i python3 -m crawler.scripts.run_worker\n")
-            f.write("3. Wenn fertig, lade die Datei als 'crawl_{pkg_name}_DONE_Name.sqlite' hoch.\n")
+            f.write(f"3. Wenn fertig, lade die Datei als 'crawl_{pkg_name}_DONE_Name.sqlite' hoch.\n")
 
-    print(f"✅ 20 Pakete in '{dist_dir}' erstellt (basierend auf {len(munich_data)} Spalten).")
+    print(f"✅ {num_splits} Pakete in '{dist_dir}' erstellt ({len(all_pending)} pending Jobs verteilt).")
     conn.close()
 
 if __name__ == "__main__":

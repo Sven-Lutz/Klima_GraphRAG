@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 
 # ---------------------------------------------------------------------------
 # Normalisation rules

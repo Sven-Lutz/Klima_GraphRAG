@@ -27,7 +27,7 @@ from openai import OpenAI
 
 client = OpenAI()
 MODEL_NAME = "gpt-4o-mini"
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 
 
 # ---------------------------------------------------------------------------
