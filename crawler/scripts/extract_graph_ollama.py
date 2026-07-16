@@ -210,7 +210,18 @@ def extract_with_gleaning(
             if e.name.lower() not in existing_names:
                 kg.entities.append(e)
                 existing_names.add(e.name.lower())
-        kg.relationships.extend(kg2.relationships)
+
+        # Relationships ebenfalls deduplizieren — Gleaning liefert oft
+        # dieselben Beziehungen erneut, was relationship_count verfälscht
+        existing_rels = {
+            (r.source_entity.lower(), r.relation_type, r.target_entity.lower())
+            for r in kg.relationships
+        }
+        for r in kg2.relationships:
+            rel_key = (r.source_entity.lower(), r.relation_type, r.target_entity.lower())
+            if rel_key not in existing_rels:
+                kg.relationships.append(r)
+                existing_rels.add(rel_key)
 
     return kg
 

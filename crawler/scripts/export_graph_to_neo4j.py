@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from neo4j import GraphDatabase
-
+try:
+    from neo4j import GraphDatabase
+except ImportError:  # Modul bleibt für Tests/Tools ohne Neo4j importierbar
+    GraphDatabase = None
 
 from crawler.core.config import DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
@@ -162,12 +164,50 @@ MERGE (s)-[:EVIDENCE_FOR]->(r)
 
 
 def _load_canonical_map(conn: sqlite3.Connection) -> Dict[str, str]:
-    """Load entity_canonical table (from resolve_entities.py) → {original_name → canonical_name}."""
+    """Load entity_canonical table (from resolve_entities.py) → {original_name → canonical_name}.
+
+    Schlüssel sind lowercase — identisch zur Anwendung in extract_graph_ollama.py,
+    sonst greift die Entity Resolution je nach Schreibweise nur teilweise.
+    """
     try:
         cur = conn.execute("SELECT original_name, canonical_name FROM entity_canonical")
-        return {str(r[0]): str(r[1]) for r in cur.fetchall()}
+        return {str(r[0]).strip().lower(): str(r[1]) for r in cur.fetchall()}
     except Exception:
         return {}
+
+
+def _resolve(name: str, canonical_map: Dict[str, str]) -> str:
+    """Wendet die Entity Resolution case-insensitiv an."""
+    return canonical_map.get(name.strip().lower(), name)
+
+
+def build_entity_key_index(
+    conn: sqlite3.Connection,
+    canonical_map: Dict[str, str],
+    limit: Optional[int] = None,
+) -> Dict[str, str]:
+    """Pass 1: globaler Index {lowercase-Name → Entity-Key} über ALLE Triplets.
+
+    Relationships dürfen nur auf tatsächlich extrahierte Entitäten zeigen —
+    auch wenn die Entität in einem anderen Chunk extrahiert wurde. Ohne diesen
+    globalen Index entstünden Phantom-Knoten (falsch als Dokument/Sonstiges
+    typisiert) aus LLM-Tippfehlern in Endpunkt-Namen.
+    """
+    index: Dict[str, str] = {}
+    for row in iter_graph_triplets(conn, limit=limit):
+        try:
+            kg = json.loads(row.graph_json)
+        except Exception:
+            continue
+        for e in kg.get("entities", []) or []:
+            raw_name = norm_name(e.get("name", ""))
+            if not raw_name:
+                continue
+            name = _resolve(raw_name, canonical_map)
+            etype = e.get("type", "Dokument")
+            cat = e.get("category", "Sonstiges")
+            index.setdefault(name.lower(), entity_key(name, etype, cat))
+    return index
 
 
 def main(limit: Optional[int] = None):
@@ -185,6 +225,10 @@ def main(limit: Optional[int] = None):
     if canonical_map:
         print(f"[neo4j] Loaded {len(canonical_map)} entity canonical mappings")
 
+    # Pass 1: globaler Entity-Key-Index (für Chunk-übergreifende Relationships)
+    key_by_name = build_entity_key_index(conn, canonical_map, limit=limit)
+    print(f"[neo4j] Entity-Index: {len(key_by_name)} eindeutige Entitäten")
+
     # Neo4j
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
@@ -199,6 +243,7 @@ def main(limit: Optional[int] = None):
         n_rows = 0
         n_entities = 0
         n_rels = 0
+        n_dangling = 0
 
         for row in iter_graph_triplets(conn, limit=limit):
             n_rows += 1
@@ -225,17 +270,17 @@ def main(limit: Optional[int] = None):
             rels = kg.get("relationships", []) or []
 
             # upsert entities + mention edges (apply entity resolution if available)
-            key_by_name: Dict[str, str] = {}
             for e in entities:
                 raw_name = norm_name(e.get("name", ""))
-                name = canonical_map.get(raw_name, raw_name)  # resolve to canonical
+                if not raw_name:
+                    continue
+                name = _resolve(raw_name, canonical_map)
                 etype = e.get("type", "Dokument")
                 cat = e.get("category", "Sonstiges")
                 status = e.get("status", "Unbekannt")
                 metrics = e.get("metrics", {}) or {}
 
-                k = entity_key(name, etype, cat)
-                key_by_name[name] = k
+                k = key_by_name.get(name.lower()) or entity_key(name, etype, cat)
 
                 session.run(
                     UPSERT_ENTITY,
@@ -249,36 +294,20 @@ def main(limit: Optional[int] = None):
                 session.run(MENTION_EDGE, seg_rowid=int(row.segment_rowid), e_key=k)
                 n_entities += 1
 
-            # relationships
+            # relationships — nur zwischen tatsächlich extrahierten Entitäten.
+            # Nicht auflösbare Endpunkte (LLM-Tippfehler, Halluzinationen)
+            # werden verworfen und gezählt statt Phantom-Knoten zu erzeugen.
             for r in rels:
-                src_name = norm_name(r.get("source_entity", ""))
-                dst_name = norm_name(r.get("target_entity", ""))
+                src_name = _resolve(norm_name(r.get("source_entity", "")), canonical_map)
+                dst_name = _resolve(norm_name(r.get("target_entity", "")), canonical_map)
                 rt = safe_rel_type(r.get("relation_type", "BEZIEHT_SICH_AUF"))
                 evidence = norm_name(r.get("evidence", ""))[:500]
 
-                # map by normalized names present in entity list; if missing, create minimal nodes
-                src_key = key_by_name.get(src_name) or entity_key(src_name, "Dokument", "Sonstiges")
-                dst_key = key_by_name.get(dst_name) or entity_key(dst_name, "Dokument", "Sonstiges")
-
-                # ensure nodes exist (minimal)
-                session.run(
-                    UPSERT_ENTITY,
-                    key=src_key,
-                    name=src_name,
-                    type="Dokument",
-                    category="Sonstiges",
-                    status="Unbekannt",
-                    metrics={},
-                )
-                session.run(
-                    UPSERT_ENTITY,
-                    key=dst_key,
-                    name=dst_name,
-                    type="Dokument",
-                    category="Sonstiges",
-                    status="Unbekannt",
-                    metrics={},
-                )
+                src_key = key_by_name.get(src_name.lower())
+                dst_key = key_by_name.get(dst_name.lower())
+                if not src_key or not dst_key:
+                    n_dangling += 1
+                    continue
 
                 session.run(
                     rel_edge_query(rt),
@@ -293,6 +322,8 @@ def main(limit: Optional[int] = None):
                 print(f"[neo4j] processed {n_rows} triplets...")
 
         print(f"✅ Done. triplets={n_rows}, entities_upserts~={n_entities}, rel_upserts~={n_rels}")
+        if n_dangling:
+            print(f"   ⚠  {n_dangling} Relationships verworfen (Endpunkt keine extrahierte Entität)")
 
         # Export document link graph (LINKS_TO edges)
         n_links = 0
