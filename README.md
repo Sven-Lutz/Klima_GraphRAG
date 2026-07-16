@@ -2,6 +2,8 @@
 
 Pipeline zur systematischen Erfassung von Energie- und Klimarichtlinien bayerischer Kommunen für die **GraphRAG-Analyse**.
 
+📖 **Überblick über alle Pipeline-Stages (Chunking → Embeddings → Graph → Query → Evaluation): [docs/PIPELINE.md](docs/PIPELINE.md)** — Einstiegsdokument für neue Teammitglieder.
+
 Distributed Packages: https://bwsyncandshare.kit.edu/s/4gTz25xpaYbw6BW 
 ---
 
