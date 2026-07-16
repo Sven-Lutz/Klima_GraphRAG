@@ -1,0 +1,7 @@
+# Entwicklungs-/CI-Abhängigkeiten (nicht für den Betrieb nötig)
+pytest>=8.0.0
+ruff>=0.4.0
+
+# Minimale Runtime-Deps, die die Tests brauchen
+tiktoken>=0.7.0
+pydantic>=2.0.0
