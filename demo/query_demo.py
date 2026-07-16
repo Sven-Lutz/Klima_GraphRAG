@@ -22,8 +22,11 @@ from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+# Repo-Root in sys.path, damit crawler.core.config importierbar ist
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from crawler.core.config import EMBED_MODEL  # gleiches Modell wie Produktion
+
 DEMO_DB    = Path("demo/demo.sqlite")
-EMBED_MODEL = "all-MiniLM-L6-v2"   # ~90 MB, schnell auf CPU, Englisch+Deutsch
 TOP_K      = 5
 
 
