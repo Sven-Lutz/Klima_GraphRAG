@@ -56,6 +56,16 @@ EXTRACT_MIN_SCORE:  float = 15.0
 EXTRACT_CONTEXT_WINDOW: int = 1   # neighbour segments included in prompt
 
 # ---------------------------------------------------------------------------
+# Reproducibility (Benchmarking)
+# ---------------------------------------------------------------------------
+# Fester Seed + einheitliche Temperatur für alle Ollama-Calls, damit
+# Benchmark-Läufe reproduzierbar und zitierfähig sind.
+LLM_SEED:        int   = int(os.environ.get("KLIMA_LLM_SEED", "42"))
+LLM_TEMPERATURE: float = float(os.environ.get("KLIMA_LLM_TEMPERATURE", "0.0"))
+# Bei jeder inhaltlichen Prompt-Änderung erhöhen — wird in Eval-Reports mitgeschrieben
+PROMPT_VERSION:  str   = "1.0.0"
+
+# ---------------------------------------------------------------------------
 # Community detection
 # ---------------------------------------------------------------------------
 COMMUNITY_MIN_SIZE: int = 3

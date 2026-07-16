@@ -37,7 +37,10 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from crawler.core.config import DB_PATH, OLLAMA_URL, OLLAMA_MODEL as _DEFAULT_MODEL
+from crawler.core.config import (
+    DB_PATH, OLLAMA_URL, OLLAMA_MODEL as _DEFAULT_MODEL,
+    LLM_SEED, LLM_TEMPERATURE,
+)
 
 MODEL_NAME = _DEFAULT_MODEL
 
@@ -145,7 +148,7 @@ def _call_ollama(model: str, system: str, user: str) -> str:
             {"role": "user",    "content": user},
         ],
         "stream":   False,
-        "options":  {"temperature": 0.0, "num_predict": 2048},
+        "options":  {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
         "format":   "json",   # Ollama structured output mode
     }).encode()
 
