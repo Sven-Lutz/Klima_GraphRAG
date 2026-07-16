@@ -25,7 +25,10 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from crawler.core.config import DB_PATH, OLLAMA_URL, OLLAMA_MODEL
+from crawler.core.config import (
+    DB_PATH, OLLAMA_URL, OLLAMA_MODEL,
+    LLM_SEED, LLM_TEMPERATURE,
+)
 
 OPENAI_MODEL = "gpt-4o-mini"
 
@@ -208,7 +211,7 @@ def _summarise_ollama(user_prompt: str) -> DocumentSummary:
         ],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.0, "num_predict": 1024},
+        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
     }).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -230,7 +233,8 @@ def _summarise_openai(user_prompt: str) -> DocumentSummary:
             {"role": "user", "content": user_prompt},
         ],
         response_format=DocumentSummary,
-        temperature=0.0,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED,
     )
     return resp.choices[0].message.parsed
 

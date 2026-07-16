@@ -55,6 +55,7 @@ from crawler.core.config import (
     DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     OLLAMA_URL, OLLAMA_MODEL, MAX_CRITIC_LOOPS,
     LOCAL_SEARCH_TOP_K, GLOBAL_SEARCH_MAX_COMMUNITIES,
+    EMBED_MODEL, LLM_SEED, LLM_TEMPERATURE,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -73,7 +74,7 @@ def _call_ollama(system: str, user: str, json_mode: bool = False) -> str:
             {"role": "user",   "content": user},
         ],
         "stream":  False,
-        "options": {"temperature": 0.0, "num_predict": 2048},
+        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
         **({"format": "json"} if json_mode else {}),
     }).encode()
     req = urllib.request.Request(
@@ -94,7 +95,8 @@ def _call_openai(system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user",   "content": user},
         ],
-        temperature=0.0,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED,
     )
     return resp.choices[0].message.content or ""
 
@@ -115,10 +117,17 @@ Beantworte die Frage präzise und detailliert anhand der gegebenen Kontexte.
 Zitiere konkrete Fakten, Zahlen und Quellen wo möglich.
 """
 
+_EMBED_MODEL_CACHE = None
+
+
 def _embed_query(query: str) -> np.ndarray:
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    return model.encode([query], normalize_embeddings=True)[0].astype(np.float32)
+    # Modell einmal laden — im Critic-Loop und in der Evaluation wird
+    # local_search mehrfach aufgerufen, Reload kostet Sekunden pro Query
+    global _EMBED_MODEL_CACHE
+    if _EMBED_MODEL_CACHE is None:
+        from sentence_transformers import SentenceTransformer
+        _EMBED_MODEL_CACHE = SentenceTransformer(EMBED_MODEL)
+    return _EMBED_MODEL_CACHE.encode([query], normalize_embeddings=True)[0].astype(np.float32)
 
 
 def _blob_to_vec(blob: bytes) -> np.ndarray:
@@ -131,12 +140,16 @@ def local_search(
     backend: str,
     top_k: int = 8,
     hop: int = 1,
-) -> str:
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
     """
     1. Embed query → cosine similarity over chunks table
     2. Retrieve top-K chunks (vector search in SQLite)
     3. Expand: pull entities mentioned in those chunks + their neighbors
     4. Synthesise answer
+
+    Mit return_context=True wird (answer, context_parts) zurückgegeben —
+    die Evaluation braucht den echten Retrieval-Kontext für Faithfulness.
     """
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
 
@@ -149,7 +162,8 @@ def local_search(
 
     if not rows:
         conn.close()
-        return "[LocalSearch] Keine eingebetteten Chunks gefunden. Bitte generate_embeddings.py ausführen."
+        msg = "[LocalSearch] Keine eingebetteten Chunks gefunden. Bitte generate_embeddings.py ausführen."
+        return (msg, []) if return_context else msg
 
     chunk_ids, texts, headings, scores, blobs = zip(*rows)
     vecs = np.stack([_blob_to_vec(b) for b in blobs])
@@ -192,7 +206,8 @@ def local_search(
 
     context = "\n\n---\n\n".join(context_parts)
     user_prompt = f"FRAGE: {query}\n\nKONTEXTE:\n{context}"
-    return llm(SYSTEM_LOCAL, user_prompt, backend)
+    result = llm(SYSTEM_LOCAL, user_prompt, backend)
+    return (result, context_parts) if return_context else result
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +226,12 @@ Fasse die gegebenen Teilantworten zu einer kohärenten, umfassenden Gesamtantwor
 Priorisiere Antworten mit hohem Wichtigkeits-Score. Nenne konkrete Fakten und Beispiele.
 """
 
-def global_search(query: str, backend: str, max_communities: int = 50) -> str:
+def global_search(
+    query: str,
+    backend: str,
+    max_communities: int = 50,
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
     """
     LazyGraphRAG Map-Reduce:
     1. Pre-filter community reports by keyword overlap (Lazy: skip irrelevant ones)
@@ -232,12 +252,14 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
         ).fetchall()
     except Exception:
         conn.close()
-        return "[GlobalSearch] Keine Community Reports. Bitte detect_communities.py ausführen."
+        msg = "[GlobalSearch] Keine Community Reports. Bitte detect_communities.py ausführen."
+        return (msg, []) if return_context else msg
 
     conn.close()
 
     if not reports:
-        return "[GlobalSearch] Keine Community Reports gefunden."
+        msg = "[GlobalSearch] Keine Community Reports gefunden."
+        return (msg, []) if return_context else msg
 
     # LazyGraphRAG: pre-filter by keyword overlap to skip irrelevant communities
     query_words = set(re.findall(r"\w{4,}", query.lower()))
@@ -272,6 +294,7 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
 
     # Map phase
     partial_answers = []
+    used_contexts: list[str] = []
     for cid, title, summary, importance, _ in relevant[:20]:
         extra = ""
         if doc_summaries:
@@ -280,15 +303,18 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
         answer = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
         if "NICHT_RELEVANT" not in answer:
             partial_answers.append((importance, answer))
+            used_contexts.append(report_ctx)
 
     if not partial_answers:
-        return "[GlobalSearch] Keine relevanten Community Reports für diese Frage gefunden."
+        msg = "[GlobalSearch] Keine relevanten Community Reports für diese Frage gefunden."
+        return (msg, []) if return_context else msg
 
     partial_answers.sort(key=lambda x: -x[0])
     combined = "\n\n---\n\n".join(f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
 
     # Reduce phase
-    return llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
+    result = llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
+    return (result, used_contexts) if return_context else result
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +348,9 @@ Beispiele:
   Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment) RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
 """
 
-def text2cypher(query: str, backend: str) -> str:
+def text2cypher(
+    query: str, backend: str, return_context: bool = False
+) -> str | tuple[str, list[str]]:
     """Translate natural language to Cypher; execute; format result."""
     cypher = llm(SYSTEM_CYPHER, query, backend).strip()
     # Strip any accidental markdown
@@ -337,19 +365,22 @@ def text2cypher(query: str, backend: str) -> str:
             rows = result.data()
         driver.close()
     except Exception as e:
-        return f"[Text2Cypher] Cypher-Fehler: {e}\nQuery: {cypher}"
+        msg = f"[Text2Cypher] Cypher-Fehler: {e}\nQuery: {cypher}"
+        return (msg, []) if return_context else msg
 
     if not rows:
-        return f"[Text2Cypher] Keine Ergebnisse.\nCypher: {cypher}"
+        msg = f"[Text2Cypher] Keine Ergebnisse.\nCypher: {cypher}"
+        return (msg, []) if return_context else msg
 
     # Format result as markdown table
-    if rows:
-        keys = list(rows[0].keys())
-        header = " | ".join(keys)
-        sep    = " | ".join(["---"] * len(keys))
-        body   = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
-        return f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{cypher}`"
-    return ""
+    keys = list(rows[0].keys())
+    header = " | ".join(keys)
+    sep    = " | ".join(["---"] * len(keys))
+    body   = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
+    formatted = f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{cypher}`"
+    # Kontext = das faktische Query-Ergebnis, gegen das die Antwort geprüft wird
+    ctx = [f"CYPHER: {cypher}", f"ERGEBNIS:\n{header}\n{body}"]
+    return (formatted, ctx) if return_context else formatted
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +441,21 @@ def critic_check(question: str, answer: str, backend: str) -> dict:
 # Main query loop
 # ---------------------------------------------------------------------------
 
-def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
+def answer(
+    query: str,
+    backend: str = "ollama",
+    verbose: bool = False,
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
+    """Beantwortet eine Frage über den Router.
+
+    Mit return_context=True wird (answer, contexts) zurückgegeben — die
+    Liste aller Retrieval-Kontexte über sämtliche Critic-Loops hinweg.
+    Die Evaluation braucht diese für Faithfulness/Context-Recall.
+    """
     current_query = query
     all_answers   = []
+    all_contexts: list[str] = []
 
     for loop in range(MAX_CRITIC_LOOPS):
         # Route
@@ -422,13 +465,14 @@ def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
 
         # Execute
         if tool == "local_search":
-            result = local_search(current_query, backend)
+            result, ctx = local_search(current_query, backend, return_context=True)
         elif tool == "global_search":
-            result = global_search(current_query, backend)
+            result, ctx = global_search(current_query, backend, return_context=True)
         else:
-            result = text2cypher(current_query, backend)
+            result, ctx = text2cypher(current_query, backend, return_context=True)
 
         all_answers.append(result)
+        all_contexts.extend(ctx)
 
         # Critic
         review = critic_check(query, result, backend)
@@ -454,8 +498,9 @@ def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
             f"URSPRUNGSFRAGE: {query}\n\nTEILANTWORTEN:\n{combined}",
             backend,
         )
-        return final
-    return all_answers[0]
+    else:
+        final = all_answers[0]
+    return (final, all_contexts) if return_context else final
 
 
 # ---------------------------------------------------------------------------

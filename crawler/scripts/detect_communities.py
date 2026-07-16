@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 from crawler.core.config import (
     DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     OLLAMA_URL, OLLAMA_MODEL, GDS_GRAPH_NAME,
+    LLM_SEED, LLM_TEMPERATURE,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -216,7 +217,7 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
                 {"role": "user",   "content": prompt},
             ],
             "stream":  False,
-            "options": {"temperature": 0.1, "num_predict": 1024},
+            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
             "format":  "json",
         }).encode()
         req = urllib.request.Request(
@@ -236,7 +237,8 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
                 {"role": "user",   "content": prompt},
             ],
             response_format=CommunityReport,
-            temperature=0.1,
+            temperature=LLM_TEMPERATURE,
+            seed=LLM_SEED,
         )
         return resp.choices[0].message.parsed
 
