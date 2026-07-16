@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_CRAWL_DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH as DEFAULT_CRAWL_DB_PATH
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

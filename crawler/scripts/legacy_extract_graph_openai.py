@@ -1,3 +1,10 @@
+"""
+LEGACY — nicht Teil der aktiven Pipeline.
+
+Frühe Version der Graph-Extraktion über die OpenAI-API (gpt-4o-mini).
+Ersetzt durch extract_graph_ollama.py (lokal, datenschutzkonform).
+Wird nur als Referenz behalten, z.B. für einen Cloud-Fallback-Vergleich.
+"""
 from __future__ import annotations
 
 import sqlite3
@@ -11,7 +18,7 @@ from openai import OpenAI
 
 client = OpenAI()
 MODEL_NAME = "gpt-4o-mini"
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 
 # Neighbours to fetch for context window around the target segment
 CONTEXT_WINDOW = 1

@@ -21,6 +21,8 @@
 set -euo pipefail
 
 DEMO_DB="demo/demo.sqlite"
+# Alle crawler.*-Module lesen den DB-Pfad aus config.py (KLIMA_DB_PATH)
+export KLIMA_DB_PATH="$DEMO_DB"
 QUERY="${1:---query}"
 if [[ "$QUERY" == "--query" ]]; then
     QUERY="Klimaschutz Maßnahmen Solarenergie Förderung"
@@ -120,11 +122,8 @@ if [[ "${SKIP_CRAWL:-0}" -eq 0 ]]; then
 import sys, sqlite3
 sys.path.insert(0, ".")
 
-# Monkey-patch DB_PATH VOR dem Import, damit Storage die Demo-DB nutzt
-import crawler.core.storage as _storage_mod
+# KLIMA_DB_PATH ist gesetzt → config.py und damit Storage nutzen die Demo-DB
 from pathlib import Path
-_storage_mod.DB_PATH = Path("demo/demo.sqlite")
-
 from crawler.core.engine import Engine, EngineLimits
 
 DB_PATH = Path("demo/demo.sqlite")
@@ -167,10 +166,6 @@ for muni_id, seed_url in jobs:
         limits=LIMITS,
         seed_additional_paths=SEED_PATHS,
     )
-    # Default-Argument DB_PATH ist beim Import gebunden → nach der
-    # Konstruktion überschreiben, damit die Demo-DB genutzt wird
-    from crawler.core.storage import Storage as _Storage
-    engine.storage = _Storage(DB_PATH)
     engine.run([(muni_id, seed_url)])
 
     # Markiere als done

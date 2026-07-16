@@ -40,7 +40,7 @@ from crawler.core.segmentation.chunker import (
     count_tokens,
 )
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 
 
 # ---------------------------------------------------------------------------

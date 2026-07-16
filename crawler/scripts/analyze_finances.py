@@ -1,4 +1,9 @@
-# analyze_finances.py
+"""
+analyze_finances.py — Findet Geldbeträge und Förder-Keywords in Segmenten.
+
+Reines Analyse-/Reporting-Tool (Regex-basiert), KEIN Teil der GraphRAG-Pipeline.
+Hieß früher irreführenderweise extract_entities.py.
+"""
 from __future__ import annotations
 
 import sqlite3

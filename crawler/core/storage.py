@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
+
 RAW_DIR = Path("crawler/data/raw")
 
 

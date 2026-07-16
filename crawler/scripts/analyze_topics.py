@@ -11,7 +11,7 @@ from bertopic.representation import KeyBERTInspired
 from sklearn.feature_extraction.text import CountVectorizer
 from sentence_transformers import SentenceTransformer
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 OUT_DIR = Path("topic_out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

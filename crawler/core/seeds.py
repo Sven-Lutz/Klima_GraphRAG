@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 DEFAULT_MUNI_SQLITE_PATH = Path("crawler/data/db/municipalities.sqlite")
 DEFAULT_CSV_PATH = Path("crawler/data/seeds/municipalities.csv")
-DEFAULT_CRAWL_DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH as DEFAULT_CRAWL_DB_PATH
 
 def _is_valid_url(url: str) -> bool:
     try:
