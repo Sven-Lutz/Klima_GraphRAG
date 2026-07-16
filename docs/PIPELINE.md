@@ -220,6 +220,7 @@ python -m crawler.scripts.evaluate --compare system_a.json system_b.json
 | `analyze_finances.py` | Geldbeträge/Förder-Keywords per Regex finden | Reporting-Tool |
 | `summarize_documents.py` | Dokument-Zusammenfassungen per LLM | ⚠ nutzt aktuell OpenAI (`gpt-4o-mini`), nicht Ollama |
 | `generate_municipalities_csv.py` | Kommunen-Stammdaten aus Wikipedia/Wikidata | erzeugt `municipalities.sqlite` |
+| `prune_db.py` | Arbeits-DB verkleinern (Report → gezieltes Löschen → VACUUM) | nach Abschluss von Chunking/Embeddings; siehe `--help` |
 
 ---
 
