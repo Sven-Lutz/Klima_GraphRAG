@@ -5,7 +5,12 @@
 # Was bewiesen wird:
 #   ✓ Crawl:       3 bayerische Kommunen (Ingolstadt, Regensburg, Augsburg)
 #   ✓ Chunking:    Tiktoken 600/60 auf allen relevanten Segmenten
-#   ✓ Embeddings:  SentenceTransformers (CPU, all-MiniLM-L6-v2, ~90 MB)
+#   ✓ Embeddings:  SentenceTransformers (CPU, paraphrase-multilingual-MiniLM-L12-v2)
+#                  — gleiches Modell wie Produktion (crawler/core/config.py)
+#
+# ACHTUNG bei alter demo.sqlite (vor der Modell-Umstellung): Embeddings wurden
+# mit all-MiniLM-L6-v2 berechnet und passen nicht zum neuen Query-Modell.
+# In dem Fall demo/demo.sqlite löschen und neu laufen lassen.
 #   ✓ Retrieval:   Cosine-Similarity Suche direkt auf SQLite-BLOBs
 #
 # Optional (falls Ollama läuft):
@@ -199,11 +204,8 @@ PYEOF
 echo ""
 echo "[ 3/6 ] Tiktoken-Chunking (600 Tok / 60 Overlap)..."
 
-python3 - <<'PYEOF'
-import sys; sys.path.insert(0, ".")
-from crawler.scripts.chunk_documents import main
-main(db_path="demo/demo.sqlite", chunk_size=600, overlap=60, min_score=0)
-PYEOF
+# Produktions-Skript; DB kommt aus KLIMA_DB_PATH
+python3 -m crawler.scripts.chunk_documents --min-score 0
 
 python3 - <<'PYEOF'
 import sqlite3
@@ -216,57 +218,13 @@ except:
 con.close()
 PYEOF
 
-# ── 4. Embeddings (CPU, all-MiniLM-L6-v2) ────────────────────────────────────
+# ── 4. Embeddings (CPU, gleiches Modell wie Produktion) ─────────────────────
 echo ""
-echo "[ 4/6 ] Embeddings berechnen (CPU, ~5-10 Minuten)..."
-echo "        Modell: all-MiniLM-L6-v2 (~90 MB Download beim ersten Mal)"
+echo "[ 4/6 ] Embeddings berechnen (CPU, ~10-20 Minuten)..."
+echo "        Modell: paraphrase-multilingual-MiniLM-L12-v2 (~470 MB beim ersten Mal)"
 
-python3 - <<'PYEOF'
-import sys, sqlite3, struct
-sys.path.insert(0, ".")
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-import numpy as np
-
-DB = "demo/demo.sqlite"
-MODEL = "all-MiniLM-L6-v2"   # schnell auf CPU, gutes DE+EN
-
-print(f"  Lade Modell {MODEL}...")
-model = SentenceTransformer(MODEL)
-
-con = sqlite3.connect(DB, isolation_level=None)
-con.execute("PRAGMA journal_mode=WAL")
-
-# Chunks ohne Embedding laden
-rows = con.execute(
-    "SELECT chunk_id, text FROM chunks WHERE embedding IS NULL LIMIT 10000"
-).fetchall()
-
-if not rows:
-    print("  ✓ Alle Chunks bereits eingebettet")
-    con.close()
-    sys.exit(0)
-
-print(f"  Berechne Embeddings für {len(rows)} Chunks...")
-
-BATCH = 64
-for i in range(0, len(rows), BATCH):
-    batch = rows[i:i+BATCH]
-    ids   = [r[0] for r in batch]
-    texts = [r[1] for r in batch]
-    vecs  = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-
-    for cid, vec in zip(ids, vecs):
-        blob = struct.pack(f"{len(vec)}f", *vec.tolist())
-        con.execute("UPDATE chunks SET embedding=? WHERE chunk_id=?", (blob, cid))
-
-    if (i // BATCH) % 5 == 0:
-        done = min(i + BATCH, len(rows))
-        print(f"  ... {done}/{len(rows)} ({100*done//len(rows)}%)")
-
-con.close()
-print(f"  ✓ Embeddings abgeschlossen")
-PYEOF
+# Produktions-Skript; Modell + DB kommen aus config.py (KLIMA_DB_PATH)
+python3 -m crawler.scripts.generate_embeddings --limit 10000
 
 # ── 5. Demo-Suche ────────────────────────────────────────────────────────────
 echo ""
