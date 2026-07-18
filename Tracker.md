@@ -1,5 +1,9 @@
 # 📊 Crawl Tracker Bayern
 
+> **Hinweis (Juli 2026):** Dieser Tracker dokumentiert die verteilte
+> Crawl-Kampagne. Für neue Läufe wird empfohlen, statt der Paket-Verteilung
+> `run_worker --workers N` auf einer Maschine zu nutzen (siehe README).
+
 > **ACHTUNG:** Jedes Paket enthält eine Datei namens `crawl.sqlite`. Diese sind **nicht identisch**, sondern enthalten jeweils unterschiedliche Kommunen. Bitte nur das eigene Paket herunterladen!
 
 ## Status-Liste

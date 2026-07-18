@@ -27,3 +27,10 @@ distribution_packages/
 
 # Demo-Datenbank (generiert durch run_poc.sh, nicht versionieren)
 demo/demo.sqlite
+demo/graph.html
+
+# Generierte Auswertungen & Caches
+eval_runs/
+topic_out/
+.pytest_cache/
+.ruff_cache/

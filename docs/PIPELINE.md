@@ -25,6 +25,8 @@ dort — es gibt keine hartkodierten Pfade in den Skripten.
 | `KLIMA_OLLAMA_MODEL` | `llama3.1:8b` | Extraktions-/Query-LLM |
 | `KLIMA_NEO4J_URI` | `bolt://localhost:7687` | Neo4j |
 | `KLIMA_NEO4J_USER` / `KLIMA_NEO4J_PASSWORD` | `neo4j` / `password` | Neo4j Login |
+| `KLIMA_LLM_SEED` | `42` | Seed für alle LLM-Calls (Reproduzierbarkeit) |
+| `KLIMA_LLM_TEMPERATURE` | `0.0` | Einheitliche Temperatur aller LLM-Calls |
 
 Beispiel — komplette Pipeline gegen eine andere DB:
 
@@ -46,7 +48,13 @@ Läuft **lokal** (nicht auf dem HPC — Compute-Nodes brauchen kein Internet).
 ```bash
 python -m crawler.scripts.run_worker              # alle pending Jobs
 python -m crawler.scripts.run_worker --limit 10   # nur 10 Kommunen
+python -m crawler.scripts.run_worker --workers 8  # 8 Kommunen parallel
 ```
+
+`robots.txt` wird respektiert (Default) und Sitemap-Einträge daraus werden
+als priorisierte Seeds genutzt. Transiente Fehler (Timeout, 429/5xx) werden
+mit Backoff wiederholt; Re-Fetches aktualisieren bestehende Dokumente
+(Upsert per `url_canonical`) statt Duplikate anzulegen.
 
 | Schreibt | Inhalt |
 |---|---|
@@ -107,6 +115,7 @@ Governance, Sonstiges.
 
 ```bash
 python -m crawler.scripts.extract_graph_ollama --chunk-mode
+python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4   # HPC
 ```
 
 | Liest | Schreibt |
@@ -166,6 +175,7 @@ Reports → landesweite/aggregierende Antworten, „Sensemaking").
 ```bash
 python -m crawler.scripts.detect_communities
 python -m crawler.scripts.detect_communities --algorithm louvain --min-size 3
+python -m crawler.scripts.detect_communities --parallel 4   # Reports parallel
 ```
 
 **Voraussetzungen:** Neo4j 5.x + GDS-Plugin ≥ 2.6, Stage 3 abgeschlossen, Ollama läuft.
@@ -206,9 +216,21 @@ Benchmarking-Gerüst (Ausbau ist Kern der Bachelorarbeit):
 - **Claimify** — Antworten in atomare, prüfbare Claims zerlegen
 
 ```bash
-python -m crawler.scripts.evaluate --questions 50 --output eval_report.json
+# Fragen generieren + als Fixture einfrieren (kuratieren, dann einchecken!)
+python -m crawler.scripts.evaluate --questions 50 --save-questions questions.json
+
+# Reproduzierbarer Lauf gegen eingefrorenes Fixture
+python -m crawler.scripts.evaluate --load questions.json
+
+# Fragen mit ANDEREM Modell generieren (vermeidet Zirkularitäts-Bias)
+python -m crawler.scripts.evaluate --autoq-model qwen2.5:14b
+
+# A/B-Vergleich mit Positions-Swap-Kontrolle
 python -m crawler.scripts.evaluate --compare system_a.json system_b.json
 ```
+
+Reports landen unter `eval_runs/eval_report_<run_id>.json` (nie überschrieben)
+und enthalten Seed, Temperatur, Prompt-Version, Modell und Git-Commit.
 
 ---
 
@@ -220,7 +242,7 @@ python -m crawler.scripts.evaluate --compare system_a.json system_b.json
 | `analyze_finances.py` | Geldbeträge/Förder-Keywords per Regex finden | Reporting-Tool |
 | `summarize_documents.py` | Dokument-Zusammenfassungen per LLM | Ollama (Default), `--llm openai` als Cloud-Fallback |
 | `generate_municipalities_csv.py` | Kommunen-Stammdaten aus Wikipedia/Wikidata | erzeugt `municipalities.sqlite` |
-| `prune_db.py` | Arbeits-DB verkleinern (Report → gezieltes Löschen → VACUUM) | nach Abschluss von Chunking/Embeddings; siehe `--help` |
+| `prune_db.py` | Arbeits-DB verkleinern (Report → gezieltes Löschen → VACUUM) | `--mark-boilerplate` markiert seitenübergreifend identische Segmente; siehe `--help` |
 
 ---
 
