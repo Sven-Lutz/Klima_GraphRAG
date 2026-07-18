@@ -52,8 +52,8 @@ KLIMA_LIMITS = EngineLimits(
     max_file_size_mb=200  # Auf 200 MB angehoben für große Pläne
 )
 
-# Additional seed paths from crawl.yaml — enqueued alongside each homepage
-# to discover relevant climate/energy pages that may not be well-linked
+# Additional seed paths — enqueued alongside each homepage to discover
+# relevant climate/energy pages that may not be well-linked
 SEED_ADDITIONAL_PATHS = [
     "/klima", "/klimaschutz", "/energie", "/waermeplanung",
     "/umwelt", "/mobilitaet", "/verkehr", "/bauen",

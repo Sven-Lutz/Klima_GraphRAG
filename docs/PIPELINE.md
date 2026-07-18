@@ -62,8 +62,9 @@ mit Backoff wiederholt; Re-Fetches aktualisieren bestehende Dokumente
 | `segments` | Extrahierte Textabschnitte mit `impact_score`, `heading_context` |
 | `seed_jobs` | Job-Status pro Kommune (`pending` → `done`) |
 
-Verteiltes Crawlen: `split_workload.py` teilt pending Jobs in 20 Pakete
-(`distribution_packages/pkg_XX/`), Koordination über `Tracker.md`.
+Verteiltes Crawlen über mehrere Maschinen: `seed_jobs` nutzt atomares
+Claiming — einfach auf jeder Maschine `run_worker` gegen eine DB-Kopie
+starten und die Ergebnisse anschließend zusammenführen.
 
 ---
 
@@ -122,9 +123,8 @@ python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4   # HPC
 |---|---|
 | `chunks` | `graph_triplets` (graph_json, entity_count, relationship_count) |
 
-**Alternativen:**
+**Alternative:**
 - `demo/extract_graph_spacy.py` — Offline-Fallback (spaCy NER + Keywords), gleiche Zieltabelle, deutlich geringere Qualität. Nur für Demos ohne GPU/Ollama.
-- `legacy_extract_graph_openai.py` — Alte OpenAI-Version, nicht Teil der Pipeline.
 
 ---
 

@@ -1,6 +1,0 @@
-PROJEKT: KIT KlimaCrawler
-PAKET: pkg_15
-------------------------------
-1. Kopiere 'crawl.sqlite' in deinen Ordner: crawler/data/db/
-2. Starte den Crawl mit: caffeinate -i python3 -m crawler.scripts.run_worker
-3. Wenn fertig, lade die Datei als 'crawl_{pkg_name}_DONE_Name.sqlite' hoch.
