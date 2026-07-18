@@ -301,8 +301,19 @@ class Storage:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        with self.conn:
+        """Echte Transaktion trotz isolation_level=None (Autocommit).
+
+        `with self.conn:` öffnet unter Autocommit KEINE Transaktion — der
+        Block store_raw → segments → meta → outlinks → mark_visited wäre
+        nicht atomar und jedes Statement würde einzeln fsyncen.
+        """
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
             yield
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
 
     def _extract_body(self, fetch_result: Any) -> bytes:
         body = getattr(fetch_result, "body", None)
@@ -340,8 +351,12 @@ class Storage:
         return ".bin"
 
     def store_raw(self, municipality_id: str, url_canonical: str, fetch_result: Any) -> str:
-        doc_id = str(uuid.uuid4())
+        """Upsert per url_canonical: Re-Fetches (Fehler-Retry, Re-Crawl)
+        aktualisieren die bestehende Dokument-Zeile statt Duplikate anzulegen.
 
+        Bei geändertem Inhalt (raw_hash) werden veraltete Segmente/Chunks des
+        Dokuments entfernt, damit der neue Parse sie ersetzt.
+        """
         body = self._extract_body(fetch_result)
         raw_hash = hashlib.sha256(body).hexdigest()
         raw_path = self.raw_dir / raw_hash
@@ -366,6 +381,34 @@ class Storage:
         raw_ext = self._guess_ext(content_type, url_final)
         content_length = len(body)
 
+        existing = self.conn.execute(
+            "SELECT document_id, raw_hash FROM documents_raw WHERE url_canonical=? LIMIT 1",
+            (url_canonical,),
+        ).fetchone()
+
+        if existing is not None:
+            doc_id = str(existing["document_id"])
+            content_changed = str(existing["raw_hash"] or "") != raw_hash
+            self.conn.execute(
+                """
+                UPDATE documents_raw
+                SET url_final=?, fetched_at=?, status_code=?, content_type=?,
+                    raw_hash=?, raw_path=?, raw_ext=?, content_length=?
+                WHERE document_id=?
+                """,
+                (url_final, _utc_now_iso(), status_code, content_type,
+                 raw_hash, str(raw_path), raw_ext, int(content_length), doc_id),
+            )
+            if content_changed:
+                self.conn.execute("DELETE FROM segments WHERE document_id=?", (doc_id,))
+                try:
+                    self.conn.execute("DELETE FROM chunks WHERE document_id=?", (doc_id,))
+                except sqlite3.OperationalError:
+                    pass  # chunks-Tabelle existiert erst nach dem Chunking
+            self.conn.execute(self._sql_link_muni_doc, (municipality_id, doc_id))
+            return doc_id
+
+        doc_id = str(uuid.uuid4())
         self.conn.execute(
             self._sql_insert_doc,
             (

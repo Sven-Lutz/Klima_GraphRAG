@@ -130,6 +130,47 @@ def _embed_query(query: str) -> np.ndarray:
     return _EMBED_MODEL_CACHE.encode([query], normalize_embeddings=True)[0].astype(np.float32)
 
 
+# Chunk-Korpus-Cache: {sig, chunk_ids, texts, headings, matrix}
+# Die Vektorsuche läuft über ALLE eingebetteten Chunks — ein impact_score-
+# Vorfilter würde relevante, aber impact-schwache Chunks systematisch
+# unauffindbar machen und das Benchmarking verzerren.
+_CHUNK_CORPUS: dict = {"sig": None}
+
+
+# Community-Report-Embeddings: einmal pro (Report, Textstand) berechnen
+_REPORT_EMB_CACHE: dict = {}
+
+
+def _report_embedding(community_id: int, text: str) -> np.ndarray:
+    key = (community_id, hash(text))
+    if key not in _REPORT_EMB_CACHE:
+        _REPORT_EMB_CACHE[key] = _embed_query(text)
+    return _REPORT_EMB_CACHE[key]
+
+
+def _load_chunk_corpus(conn: sqlite3.Connection) -> dict:
+    sig = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM chunks WHERE embedding IS NOT NULL"
+    ).fetchone()
+    sig = (int(sig[0]), int(sig[1]))
+    if _CHUNK_CORPUS["sig"] == sig:
+        return _CHUNK_CORPUS
+
+    rows = conn.execute(
+        "SELECT chunk_id, text, heading_context, embedding FROM chunks "
+        "WHERE embedding IS NOT NULL"
+    ).fetchall()
+
+    _CHUNK_CORPUS["sig"] = sig
+    _CHUNK_CORPUS["chunk_ids"] = [r[0] for r in rows]
+    _CHUNK_CORPUS["texts"] = [r[1] for r in rows]
+    _CHUNK_CORPUS["headings"] = [r[2] for r in rows]
+    _CHUNK_CORPUS["matrix"] = (
+        np.stack([_blob_to_vec(r[3]) for r in rows]) if rows else None
+    )
+    return _CHUNK_CORPUS
+
+
 def _blob_to_vec(blob: bytes) -> np.ndarray:
     n = len(blob) // 4
     return np.array(struct.unpack(f"{n}f", blob), dtype=np.float32)
@@ -153,22 +194,22 @@ def local_search(
     """
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
 
-    # Vector search (brute-force cosine in Python)
+    # Vector search über das GESAMTE Korpus (Matrix gecacht, Matmul ist schnell)
     q_vec = _embed_query(query)
-    rows = conn.execute(
-        "SELECT chunk_id, text, heading_context, impact_score, embedding FROM chunks "
-        "WHERE embedding IS NOT NULL ORDER BY impact_score DESC LIMIT 2000"
-    ).fetchall()
+    corpus = _load_chunk_corpus(conn)
 
-    if not rows:
+    if corpus.get("matrix") is None:
         conn.close()
         msg = "[LocalSearch] Keine eingebetteten Chunks gefunden. Bitte generate_embeddings.py ausführen."
         return (msg, []) if return_context else msg
 
-    chunk_ids, texts, headings, scores, blobs = zip(*rows)
-    vecs = np.stack([_blob_to_vec(b) for b in blobs])
-    sims = vecs @ q_vec
-    top_idx = np.argsort(sims)[::-1][:top_k]
+    chunk_ids = corpus["chunk_ids"]
+    texts     = corpus["texts"]
+    headings  = corpus["headings"]
+    sims = corpus["matrix"] @ q_vec
+    k = min(top_k, len(sims))
+    top_idx = np.argpartition(sims, -k)[-k:]
+    top_idx = top_idx[np.argsort(sims[top_idx])[::-1]]
 
     context_parts = []
     for i in top_idx:
@@ -261,20 +302,24 @@ def global_search(
         msg = "[GlobalSearch] Keine Community Reports gefunden."
         return (msg, []) if return_context else msg
 
-    # LazyGraphRAG: pre-filter by keyword overlap to skip irrelevant communities
-    query_words = set(re.findall(r"\w{4,}", query.lower()))
-    relevant = []
+    # LazyGraphRAG: Vorfilter über Embedding-Ähnlichkeit statt Wort-Overlap.
+    # Token-Overlap scheitert an Synonymen/Flexion („PV" vs „Photovoltaik",
+    # „Wärmepumpe" vs „Wärmepumpen") und fiel dann auf thematisch beliebige
+    # Top-Importance-Communities zurück.
+    q_vec = _embed_query(query)
+    scored = []
     for cid, title, summary, importance, key_entities_json in reports:
-        report_text = f"{title} {summary} {key_entities_json or ''}".lower()
-        report_words = set(re.findall(r"\w{4,}", report_text))
-        overlap = len(query_words & report_words)
-        if overlap > 0:
-            relevant.append((cid, title, summary, importance, overlap))
+        report_text = f"{title}. {summary or ''} {key_entities_json or ''}"[:1000]
+        r_vec = _report_embedding(cid, report_text)
+        sim = float(r_vec @ q_vec)
+        scored.append((cid, title, summary, importance, sim))
 
-    relevant.sort(key=lambda x: (-x[3], -x[4]))  # sort by importance then overlap
-
+    scored.sort(key=lambda x: -x[4])  # Relevanz zuerst; importance zählt im Reduce
+    relevant = [s for s in scored if s[4] >= 0.25][:20]
     if not relevant:
-        relevant = [(r[0], r[1], r[2], r[3], 0) for r in reports[:10]]
+        relevant = scored[:10]
+
+    query_words = set(re.findall(r"\w{4,}", query.lower()))
 
     # Augment with document summaries that overlap with query keywords
     conn2 = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
