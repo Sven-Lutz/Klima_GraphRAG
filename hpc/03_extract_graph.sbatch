@@ -54,13 +54,15 @@ echo "  ✓ Ollama läuft (PID ${OLLAMA_PID})"
 export KLIMA_OLLAMA_URL="http://${OLLAMA_HOST}"
 
 # Graph-Extraktion mit Gleaning
+# --parallel 4: Ollama bedient mehrere Requests gleichzeitig (GPU-Auslastung);
+# bei OOM auf 2 reduzieren, bei >24GB VRAM auf 8 erhöhen
 python -m crawler.scripts.extract_graph_ollama \
     --model      "${OLLAMA_MODEL}" \
     --gleaning   1           \
     --chunk-mode             \
     --min-score  15          \
     --limit      999999      \
-    --sleep      0.2
+    --parallel   4
 
 echo "→ Dokument-Zusammenfassungen..."
 python -m crawler.scripts.summarize_documents \
