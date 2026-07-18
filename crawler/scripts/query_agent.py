@@ -292,18 +292,30 @@ def global_search(
         pass
     conn2.close()
 
-    # Map phase
+    # Map phase — Reports sind unabhängig, LLM-Calls laufen parallel
+    from concurrent.futures import ThreadPoolExecutor
+
+    extra = ""
+    if doc_summaries:
+        extra = "\n\nRELEVANTE DOKUMENTEN-ZUSAMMENFASSUNGEN:\n" + "\n".join(doc_summaries[:5])
+
+    map_inputs = [
+        (importance, f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}{extra}")
+        for cid, title, summary, importance, _ in relevant[:20]
+    ]
+
+    def _map_one(item: tuple) -> tuple:
+        importance, report_ctx = item
+        ans = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
+        return importance, report_ctx, ans
+
     partial_answers = []
     used_contexts: list[str] = []
-    for cid, title, summary, importance, _ in relevant[:20]:
-        extra = ""
-        if doc_summaries:
-            extra = "\n\nRELEVANTE DOKUMENTEN-ZUSAMMENFASSUNGEN:\n" + "\n".join(doc_summaries[:5])
-        report_ctx = f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}{extra}"
-        answer = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
-        if "NICHT_RELEVANT" not in answer:
-            partial_answers.append((importance, answer))
-            used_contexts.append(report_ctx)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for importance, report_ctx, answer in pool.map(_map_one, map_inputs):
+            if "NICHT_RELEVANT" not in answer:
+                partial_answers.append((importance, answer))
+                used_contexts.append(report_ctx)
 
     if not partial_answers:
         msg = "[GlobalSearch] Keine relevanten Community Reports für diese Frage gefunden."

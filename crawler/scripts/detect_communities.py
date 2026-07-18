@@ -322,6 +322,7 @@ def main(
     llm_backend: str = "ollama",
     max_communities: int = 500,
     sleep_between: float = 0.3,
+    parallel: int = 1,
 ) -> None:
     from neo4j import GraphDatabase
 
@@ -336,25 +337,49 @@ def main(
         communities = run_community_detection(session, algorithm, min_community_size)
         print(f"   {len(communities)} Communities gefunden (min_size={min_community_size})")
 
-        ok = 0
-        for comm in communities[:max_communities]:
-            cid  = int(comm["communityId"])
-            size = int(comm["size"])
-            print(f"\n⚙️  Community {cid} (size={size})")
+        # Phase 1: Kontexte sequenziell laden (Neo4j-Session ist nicht threadsafe)
+        selected = communities[:max_communities]
+        prompts: list[tuple[int, str]] = []
+        for comm in selected:
+            cid = int(comm["communityId"])
             try:
-                ctx    = get_community_context(session, cid)
-                prompt = build_report_prompt(ctx)
-                report = call_llm(prompt, llm_backend)
-
-                store_report_neo4j(session, cid, report)
-                store_report_sqlite(conn, cid, report)
-
-                print(f"   🟢 [{report.domain}] {report.title}  importance={report.importance}")
-                ok += 1
+                ctx = get_community_context(session, cid)
+                prompts.append((cid, build_report_prompt(ctx)))
             except Exception as ex:
-                print(f"   🔴 Fehler: {ex}")
+                print(f"   🔴 Kontext-Fehler Community {cid}: {ex}")
 
-            time.sleep(sleep_between)
+        # Phase 2: LLM-Reports parallel generieren (embarrassingly parallel),
+        # Phase 3: Writes seriell im Hauptthread
+        ok = 0
+        if parallel <= 1:
+            for cid, prompt in prompts:
+                print(f"\n⚙️  Community {cid}")
+                try:
+                    report = call_llm(prompt, llm_backend)
+                    store_report_neo4j(session, cid, report)
+                    store_report_sqlite(conn, cid, report)
+                    print(f"   🟢 [{report.domain}] {report.title}  importance={report.importance}")
+                    ok += 1
+                except Exception as ex:
+                    print(f"   🔴 Fehler: {ex}")
+                time.sleep(sleep_between)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=parallel) as pool:
+                futures = {
+                    pool.submit(call_llm, prompt, llm_backend): cid
+                    for cid, prompt in prompts
+                }
+                for fut in as_completed(futures):
+                    cid = futures[fut]
+                    try:
+                        report = fut.result()
+                        store_report_neo4j(session, cid, report)
+                        store_report_sqlite(conn, cid, report)
+                        print(f"   🟢 Community {cid}: [{report.domain}] {report.title}")
+                        ok += 1
+                    except Exception as ex:
+                        print(f"   🔴 Fehler Community {cid}: {ex}")
 
         # Drop projected graph to free GDS memory
         try:
@@ -374,6 +399,8 @@ if __name__ == "__main__":
     ap.add_argument("--llm",        choices=["ollama", "openai"], default="ollama")
     ap.add_argument("--max",        type=int,   default=500,     help="Max. Communities für Reports")
     ap.add_argument("--sleep",      type=float, default=0.3)
+    ap.add_argument("--parallel",   type=int,   default=1,
+                    help="Gleichzeitige LLM-Anfragen für Reports (HPC: 4-8)")
     args = ap.parse_args()
     main(
         algorithm=args.algorithm,
@@ -381,4 +408,5 @@ if __name__ == "__main__":
         llm_backend=args.llm,
         max_communities=args.max,
         sleep_between=args.sleep,
+        parallel=args.parallel,
     )
