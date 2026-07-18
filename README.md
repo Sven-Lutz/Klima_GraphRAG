@@ -4,7 +4,6 @@ Pipeline zur systematischen Erfassung von Energie- und Klimarichtlinien bayerisc
 
 📖 **Überblick über alle Pipeline-Stages (Chunking → Embeddings → Graph → Query → Evaluation): [docs/PIPELINE.md](docs/PIPELINE.md)** — Einstiegsdokument für neue Teammitglieder.
 
-Distributed Packages: https://bwsyncandshare.kit.edu/s/4gTz25xpaYbw6BW 
 ---
 
 ## 🛠 Voraussetzungen
@@ -69,54 +68,11 @@ pip install -r requirements.txt
 
 ---
 
-## 👯 Verteiltes Arbeiten (Sharding)
+## 🏃‍♂️ Crawl starten
 
-Um Bayern parallel zu crawlen, werden vorab aufgeteilte Datenbank-Pakete verwendet.
-
-> ⚠️ **WICHTIG:**  
-> In jedem Paket-Ordner heißt die Datei identisch: `crawl.sqlite`.  
-> Der Dateiname muss exakt so bleiben, da der Code darauf referenziert.  
-> Der Inhalt ist jedoch pro Paket einzigartig (unterschiedliche Kommunen).
-
-### Ablauf
-
-1. **Reservieren**  
-   Trage deinen Namen im Repository in die Datei `TRACKER.md` beim gewählten Paket ein (z. B. `pkg_05`) und pushe die Änderung. -> Warnhinweis -> Create Fork
-
-2. **Paket laden**  
-   Lade den entsprechenden Ordner aus der Cloud/GitHub herunter.
-
-3. **Platzieren**  
-   Kopiere die enthaltene `crawl.sqlite` in:
-
-   ```
-   crawler/data/db/
-   ```
-
-   (Bestehende Datei überschreiben.)
-
-   Den Ordner muss man manuell anlegen, der ist nicht im GitHub!
-
-4. **Starten (ohne Limit)**  
-
-   ```bash
-   caffeinate -i python3 -m crawler.scripts.run_worker
-   ```
-
-5. **Upload nach Abschluss**  
-   Datei umbenennen in:
-
-   ```
-   pkg_XX_DONE_Name.sqlite
-   ```
-
-   und wieder hochladen.
-
----
-
-## 🏃‍♂️ Crawl starten (Allgemein)
-
-Falls unabhängig von Paketen gearbeitet wird, kann der Umfang manuell gesteuert werden.
+Der Umfang wird über `--limit` und `--workers` gesteuert. Die Jobs kommen
+aus der `seed_jobs`-Tabelle (atomares Claiming — mehrere Maschinen können
+parallel gegen dieselbe DB-Kopie arbeiten, ohne sich Jobs wegzunehmen).
 
 ### Einzel-Lauf (eine Kommune)
 
