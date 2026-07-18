@@ -497,6 +497,30 @@ class Storage:
         cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1", (url_canonical,))
         return cur.fetchone() is not None
 
+    def get_visited_status(self, url_canonical: str) -> Tuple[bool, bool, Optional[str]]:
+        """(visited, errored, document_id) in EINEM Query.
+
+        Ersetzt die bis zu 4 Einzel-Queries pro bereits besuchter URL im
+        Crawl-Loop (is_visited → get_document_id → link → is_visited_with_error).
+        """
+        cur = self.conn.execute(
+            """
+            SELECT v.last_status_code, d.document_id
+            FROM visited v
+            LEFT JOIN documents_raw d ON d.url_canonical = v.url_canonical
+            WHERE v.url_canonical = ?
+            LIMIT 1
+            """,
+            (url_canonical,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False, False, None
+        status = row[0]
+        errored = status is None or int(status) != 200
+        doc_id = str(row[1]) if row[1] is not None else None
+        return True, errored, doc_id
+
     def get_document_id_by_canonical_url(self, url_canonical: str) -> Optional[str]:
         cur = self.conn.execute(
             "SELECT document_id FROM documents_raw WHERE url_canonical=? LIMIT 1",

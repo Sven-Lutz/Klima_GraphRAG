@@ -94,6 +94,41 @@ def report(con: sqlite3.Connection, db_path: Path) -> None:
     print(f"{'═' * 62}\n")
 
 
+def mark_boilerplate(con: sqlite3.Connection, min_docs: int) -> None:
+    """Markiert Segmente als is_negative, deren identischer Text (segment_hash)
+    in >= min_docs Dokumenten DERSELBEN Kommune vorkommt.
+
+    Das sind Menüs, Footer, Cookie-Banner — der Dedup-Index verhindert
+    Duplikate nur innerhalb eines Dokuments, nicht seitenübergreifend.
+    Markierte Segmente werden von Chunking und Graph-Extraktion übersprungen.
+    """
+    if not _column_exists(con, "segments", "is_negative"):
+        try:
+            con.execute("ALTER TABLE segments ADD COLUMN is_negative INTEGER")
+        except Exception:
+            pass
+    cur = con.execute(
+        """
+        UPDATE segments SET is_negative = 1
+        WHERE COALESCE(is_negative, 0) = 0 AND segment_id IN (
+            SELECT s.segment_id
+            FROM segments s
+            JOIN documents_raw d ON d.document_id = s.document_id
+            JOIN (
+                SELECT d2.municipality_id AS muni, s2.segment_hash AS h
+                FROM segments s2
+                JOIN documents_raw d2 ON d2.document_id = s2.document_id
+                GROUP BY d2.municipality_id, s2.segment_hash
+                HAVING COUNT(DISTINCT s2.document_id) >= ?
+            ) rep ON rep.muni = d.municipality_id AND rep.h = s.segment_hash
+        )
+        """,
+        (min_docs,),
+    )
+    print(f"  ✓ {cur.rowcount:,} Boilerplate-Segmente markiert "
+          f"(identischer Text in ≥{min_docs} Dokumenten einer Kommune)")
+
+
 def prune_negative(con: sqlite3.Connection) -> None:
     if not _column_exists(con, "segments", "is_negative"):
         print("  [!] Spalte is_negative existiert nicht — nichts zu tun.")
@@ -143,6 +178,10 @@ def vacuum(con: sqlite3.Connection, into: str | None, db_path: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Arbeits-DB verkleinern (Report ohne Flags)")
     ap.add_argument("--db", default=str(DB_PATH))
+    ap.add_argument("--mark-boilerplate", action="store_true",
+                    help="Seitenübergreifend identische Segmente (Menüs/Footer) als is_negative markieren")
+    ap.add_argument("--boilerplate-min-docs", type=int, default=5,
+                    help="Ab wie vielen Dokumenten pro Kommune ein Segment als Boilerplate gilt (default: 5)")
     ap.add_argument("--prune-negative", action="store_true",
                     help="Segmente mit is_negative=1 löschen (nie gechunkt)")
     ap.add_argument("--clear-chunked-segment-text", action="store_true",
@@ -163,6 +202,8 @@ def main() -> None:
 
     report(con, db_path)
 
+    if args.mark_boilerplate:
+        mark_boilerplate(con, args.boilerplate_min_docs)
     if args.prune_negative:
         prune_negative(con)
     if args.clear_chunked_segment_text:
