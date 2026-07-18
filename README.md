@@ -227,11 +227,59 @@ sqlite3 crawler/data/db/crawl.sqlite \"SELECT municipality_id, url_canonical FRO
 ```
 ---
 
+## 🔀 Parallel crawlen
+
+Mehrere Kommunen gleichzeitig (je 1 Thread pro Kommune; die Politeness pro
+Host bleibt erhalten, da jede Kommune ein eigener Host ist):
+
+```bash
+python3 -m crawler.scripts.run_worker --workers 8
+```
+
+Der Crawler respektiert `robots.txt` (Default) und nutzt Sitemap-Einträge
+daraus als priorisierte Seeds. Transiente Fehler (Timeouts, 429/5xx) werden
+automatisch mit Backoff wiederholt.
+
+---
+
+## 🧠 Nach dem Crawl: GraphRAG-Pipeline
+
+Chunking → Embeddings → Graph-Extraktion (Ollama) → Neo4j → Communities →
+Query Agent → Evaluation. Alle Stages, Kommandos und Tabellen:
+**[docs/PIPELINE.md](docs/PIPELINE.md)**
+
+```bash
+python3 -m crawler.scripts.chunk_documents
+python3 -m crawler.scripts.generate_embeddings
+python3 -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
+python3 -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
+```
+
+DB verkleinern (Report ohne Flags — gefahrlos):
+
+```bash
+python3 -m crawler.scripts.prune_db
+```
+
+---
+
+## 🧪 Tests & CI
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+GitHub Actions führt bei jedem Push Lint (ruff, kritische Fehler) und die
+Test-Suite aus (`.github/workflows/ci.yml`).
+
+---
+
 ## ⚠ Fehlerquellen
 
 - **Netzwerk:** VPN-Abbruch oder instabiles WLAN beendet den Prozess  
 - **Tools:** `pdftotext` muss im Systempfad installiert sein  
-- **Pfad-Fehler:** Die Datenbank muss exakt in `crawler/data/db/` liegen  
+- **Pfad-Fehler:** Die Datenbank muss exakt in `crawler/data/db/` liegen — oder per `KLIMA_DB_PATH` überschreiben  
 
 ---
 
@@ -240,8 +288,8 @@ sqlite3 crawler/data/db/crawl.sqlite \"SELECT municipality_id, url_canonical FRO
 ```bash
 git clone <repository-url>
 cd KIT_KlimaCrawler
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-caffeinate -i python3 -m crawler.scripts.run_worker
+python3 -m venv wi2026 && source wi2026/bin/activate
+pip install -r crawler/requirements.txt
+caffeinate -i python3 -m crawler.scripts.run_worker --workers 4
 ```
 
