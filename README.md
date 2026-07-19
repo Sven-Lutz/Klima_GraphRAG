@@ -37,6 +37,16 @@ python -m crawler.scripts.init_seed_jobs              # Jobs aus municipalities.
 caffeinate -i python -m crawler.scripts.run_worker --workers 4
 ```
 
+**Infrastruktur (Neo4j + Ollama) per Docker:**
+
+```bash
+docker compose up -d
+docker compose exec ollama ollama pull llama3.1:8b
+```
+
+Die Defaults in `config.py` passen direkt auf diese Dienste — Neo4j-Browser
+unter `http://localhost:7474`, GDS- und APOC-Plugin sind vorinstalliert.
+
 ---
 
 ## 📁 Repo-Struktur — was macht welche Datei?
@@ -168,6 +178,7 @@ Umgebungsvariable — kein Skript hat hartkodierte Pfade:
 | `KLIMA_OLLAMA_URL` / `KLIMA_OLLAMA_MODEL` | `localhost:11434` / `llama3.1:8b` | LLM |
 | `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | `bolt://localhost:7687` | Graph-DB |
 | `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
+| `KLIMA_TLS_VERIFY` | `0` | TLS-Zertifikate beim Crawlen prüfen (Default aus: viele kommunale Server haben kaputte Zertifikatsketten) |
 
 ---
 

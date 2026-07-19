@@ -27,6 +27,10 @@ dort — es gibt keine hartkodierten Pfade in den Skripten.
 | `KLIMA_NEO4J_USER` / `KLIMA_NEO4J_PASSWORD` | `neo4j` / `password` | Neo4j Login |
 | `KLIMA_LLM_SEED` | `42` | Seed für alle LLM-Calls (Reproduzierbarkeit) |
 | `KLIMA_LLM_TEMPERATURE` | `0.0` | Einheitliche Temperatur aller LLM-Calls |
+| `KLIMA_TLS_VERIFY` | `0` | TLS-Verifikation beim Crawlen (Default aus — kaputte kommunale Zertifikate) |
+
+Neo4j und Ollama lassen sich per `docker compose up -d` starten
+(GDS + APOC vorinstalliert, Zugangsdaten passen auf die Defaults).
 
 Beispiel — komplette Pipeline gegen eine andere DB:
 

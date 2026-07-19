@@ -14,15 +14,12 @@ import urllib3
 from requests.adapters import HTTPAdapter
 
 from crawler.core.canonical import Canonicalizer
+from crawler.core.config import TLS_VERIFY
 from crawler.core.models import CrawlTask, FetchResult
 from crawler.core.parsers.html_parser import parse_html
 from crawler.core.parsers.pdf_parser import parse_pdf
 from crawler.core.scheduler import PriorityScheduler
 from crawler.core.storage import Storage, default_worker_id
-
-# Kommunale Server haben oft kaputte Zertifikatsketten; wir fetchen mit
-# verify=False und unterdrücken die zugehörige Warnung
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _HIGH_IMPACT_WORDS = [
     r'klima\w*', r'klimaschutz\w*', r'klimaanpassung\w*', r'klimaneutral\w*',
@@ -123,6 +120,7 @@ class Engine:
         request_timeout_seconds: int = 20,
         max_redirects: int = 10,
         respect_robots_txt: bool = True,
+        tls_verify: Optional[bool] = None,
         min_delay_seconds_per_domain: float = 0.2,
         canonicalizer: Optional[Canonicalizer] = None,
         allowed_domains_by_muni: Optional[Mapping[str, Set[str]]] = None,
@@ -140,6 +138,11 @@ class Engine:
         self.timeout_read = float(request_timeout_seconds)
         self.max_redirects = int(max_redirects)
         self.respect_robots_txt = bool(respect_robots_txt)
+        # Default aus config (KLIMA_TLS_VERIFY); kommunale Server haben oft
+        # kaputte Zertifikatsketten, daher ist Verifikation standardmäßig aus
+        self.tls_verify = TLS_VERIFY if tls_verify is None else bool(tls_verify)
+        if not self.tls_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.min_delay_seconds_per_domain = float(min_delay_seconds_per_domain)
 
         self.canon = canonicalizer or Canonicalizer(
@@ -259,7 +262,7 @@ class Engine:
         sitemaps: List[str] = []
         robots_url = f"{s.scheme or 'https'}://{s.netloc}/robots.txt"
         try:
-            resp = self._session.get(robots_url, timeout=(5, 10), verify=False)
+            resp = self._session.get(robots_url, timeout=(5, 10), verify=self.tls_verify)
             if resp.status_code == 200 and resp.text:
                 rp = robotparser.RobotFileParser()
                 rp.parse(resp.text.splitlines())
@@ -292,7 +295,7 @@ class Engine:
         if _depth > 1 or max_urls <= 0:
             return []
         try:
-            resp = self._session.get(sitemap_url, timeout=(5, 15), verify=False)
+            resp = self._session.get(sitemap_url, timeout=(5, 15), verify=self.tls_verify)
             if resp.status_code != 200:
                 return []
             text = resp.text
@@ -340,7 +343,7 @@ class Engine:
                     timeout=(self.timeout_connect, self.timeout_read),
                     allow_redirects=True,
                     headers={"Connection": "close"},
-                    verify=False,
+                    verify=self.tls_verify,
                     stream=True,  # stream; enforce hard size limit below
                 ) as resp:
                     status = int(resp.status_code)
