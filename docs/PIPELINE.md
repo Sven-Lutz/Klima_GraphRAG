@@ -239,7 +239,6 @@ und enthalten Seed, Temperatur, Prompt-Version, Modell und Git-Commit.
 | Skript | Zweck | Hinweis |
 |---|---|---|
 | `analyze_topics.py` | BERTopic-Themenanalyse über Segmente | Output nach `topic_out/` |
-| `analyze_finances.py` | Geldbeträge/Förder-Keywords per Regex finden | Reporting-Tool |
 | `summarize_documents.py` | Dokument-Zusammenfassungen per LLM | Ollama (Default), `--llm openai` als Cloud-Fallback |
 | `generate_municipalities_csv.py` | Kommunen-Stammdaten aus Wikipedia/Wikidata | erzeugt `municipalities.sqlite` |
 | `prune_db.py` | Arbeits-DB verkleinern (Report → gezieltes Löschen → VACUUM) | `--mark-boilerplate` markiert seitenübergreifend identische Segmente; siehe `--help` |

@@ -11,9 +11,9 @@ Was Platz frisst (typisch):
 Alle destruktiven Aktionen erfordern explizite Flags. Ohne Flags wird nur
 ein Größen-Report ausgegeben (immer gefahrlos).
 
-WICHTIG: segments.text wird von analyze_topics.py und analyze_finances.py
-gelesen. Nach --clear-chunked-segment-text funktionieren diese Analysen nur
-noch auf Segmenten ohne Chunks. Vorher ein Backup anlegen!
+WICHTIG: segments.text wird von analyze_topics.py (BERTopic) gelesen.
+Nach --clear-chunked-segment-text funktioniert diese Analyse nur noch
+auf Segmenten ohne Chunks. Vorher ein Backup anlegen!
 
 Usage:
     python -m crawler.scripts.prune_db                       # nur Report
