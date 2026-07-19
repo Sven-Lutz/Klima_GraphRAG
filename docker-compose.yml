@@ -1,0 +1,47 @@
+# Infrastruktur für die GraphRAG-Pipeline: Neo4j (Graph-DB) + Ollama (LLM).
+#
+#   docker compose up -d
+#   docker compose exec ollama ollama pull llama3.1:8b
+#
+# Die Defaults in crawler/core/config.py passen direkt auf diese Dienste —
+# keine weitere Konfiguration nötig. Daten liegen in benannten Volumes und
+# überleben Container-Neustarts.
+services:
+  neo4j:
+    image: neo4j:5.26
+    container_name: klima-neo4j
+    ports:
+      - "7474:7474"   # Browser-UI
+      - "7687:7687"   # Bolt (Treiber)
+    environment:
+      NEO4J_AUTH: neo4j/password              # = Default in config.py
+      # GDS für Community Detection (Leiden), APOC für den Metrics-Merge im Export
+      NEO4J_PLUGINS: '["graph-data-science", "apoc"]'
+      NEO4J_server_memory_heap_max__size: 2G
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: klima-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Für GPU-Nutzung (NVIDIA) einkommentieren:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  neo4j_data:
+  ollama_data:

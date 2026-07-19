@@ -56,6 +56,14 @@ EXTRACT_MIN_SCORE:  float = 15.0
 EXTRACT_CONTEXT_WINDOW: int = 1   # neighbour segments included in prompt
 
 # ---------------------------------------------------------------------------
+# Crawler
+# ---------------------------------------------------------------------------
+# TLS-Zertifikate beim Crawlen verifizieren. Default AUS, weil viele kommunale
+# Server kaputte/unvollständige Zertifikatsketten haben und der Crawl sonst
+# große Teile Bayerns verliert. Für andere Einsatzzwecke: KLIMA_TLS_VERIFY=1.
+TLS_VERIFY: bool = os.environ.get("KLIMA_TLS_VERIFY", "0") == "1"
+
+# ---------------------------------------------------------------------------
 # Reproducibility (Benchmarking)
 # ---------------------------------------------------------------------------
 # Fester Seed + einheitliche Temperatur für alle Ollama-Calls, damit
