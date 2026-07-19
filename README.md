@@ -1,221 +1,173 @@
 # KIT KlimaCrawler 🌍
 
-Pipeline zur systematischen Erfassung von Energie- und Klimarichtlinien bayerischer Kommunen für die **GraphRAG-Analyse**.
+**GraphRAG-System für kommunale Klimaschutzdaten.** Crawlt die Webseiten
+aller **2.056 bayerischen Kommunen**, extrahiert Klimaschutz-relevante
+Inhalte (Konzepte, Förderprogramme, Maßnahmen, CO₂-Ziele) und macht sie
+über einen Wissensgraphen in natürlicher Sprache durchsuchbar.
 
-📖 **Überblick über alle Pipeline-Stages (Chunking → Embeddings → Graph → Query → Evaluation): [docs/PIPELINE.md](docs/PIPELINE.md)** — Einstiegsdokument für neue Teammitglieder.
+```
+Crawl → Segmente → Chunks → Embeddings → Wissensgraph (Ollama-LLM)
+     → Neo4j → Community Detection → Query Agent → Evaluation
+```
+
+| Dokument | Inhalt |
+|---|---|
+| **[docs/PIPELINE.md](docs/PIPELINE.md)** | Alle Pipeline-Stages: Kommandos, Ein-/Ausgabetabellen, Konfiguration |
+| **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
+| **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
 ---
 
-## 🛠 Voraussetzungen
+## ⚡ Schnellstart
 
-- Python 3.9+ (empfohlen: 3.10)
-- macOS, Linux oder Windows
-- Stabile Internetverbindung
-- Ausreichend Laufzeit (Großstädte: > 10 Stunden)
-
----
-
-## 📦 Setup & Installation
-
-### 1️⃣ Repository klonen
+**Demo (3 Kommunen, lokal, ohne GPU/Neo4j/Ollama, ~20 Minuten):**
 
 ```bash
-git clone <repository-url>
-cd KIT_KlimaCrawler
+bash demo/run_poc.sh
+python demo/visualize_graph.py        # interaktiver Graph im Browser
+python demo/query_demo.py "Wärmepumpe Förderung"
 ```
 
----
-
-### 2️⃣ Virtuelle Umgebung erstellen (wi2026)
-
-#### Windows (PowerShell)
-
-```powershell
-python -m venv wi2026
-.\wi2026\Scripts\Activate.ps1
-```
-
-#### Windows (CMD)
-
-```cmd
-python -m venv wi2026
-wi2026\Scripts\activate
-```
-
-#### macOS / Linux
+**Vollbetrieb:**
 
 ```bash
-python3 -m venv wi2026
-source wi2026/bin/activate
-```
-
-#### Alternative: Conda
-
-```bash
-conda create -n wi2026 python=3.10 -y
-conda activate wi2026
+python3 -m venv wi2026 && source wi2026/bin/activate
+pip install -r crawler/requirements.txt
+python -m crawler.scripts.init_seed_jobs              # Jobs aus municipalities.sqlite
+caffeinate -i python -m crawler.scripts.run_worker --workers 4
 ```
 
 ---
 
-### 3️⃣ Abhängigkeiten installieren
+## 📁 Repo-Struktur — was macht welche Datei?
 
-Im Ordner "crawler" (über cd crawler navigieren) dann:
+```
+crawler/core/            Crawler-Kern (von allen Stages importiert)
+  config.py              ★ Single Source of Truth: Pfade, Ollama, Neo4j, Seed/Temperatur
+                           — alles per KLIMA_*-Umgebungsvariablen überschreibbar
+  engine.py              Crawl-Loop: Frontier, Scoring, robots.txt/Sitemaps,
+                           Retry/Backoff, Autostop, Politeness pro Host
+  storage.py             SQLite-Layer: Upsert per url_canonical, atomare
+                           Transaktionen, seed_jobs-Claiming (verteiltes Arbeiten)
+  scheduler.py           Prioritäts-Queue für die Crawl-Frontier
+  canonical.py           URL-Kanonisierung (Dedup-Grundlage, LRU-gecacht)
+  traps.py               Crawl-Fallen-Erkennung (Kalender, Paginierung, Galerien)
+  models.py              Datenklassen (CrawlTask, FetchResult, Segment, …)
+  seeds.py / seed_jobs.py  Seed-Verwaltung: CSV → seed_jobs-Tabelle, atomares Claiming
+  parsers/html_parser.py Segmente + Meta + Outlinks aus HTML
+  parsers/pdf_parser.py  Segmente aus PDFs (pdftotext, seitenweise)
+  segmentation/chunker.py Tiktoken-Chunking 600/60 (cl100k_base, gecacht)
 
-```bash
-pip install -r requirements.txt
+crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
+  run_worker.py          Stage 0 — Crawl-Worker (--workers N, --limit N)
+  init_seed_jobs.py      Stage 0 — befüllt seed_jobs aus municipalities.sqlite
+  chunk_documents.py     Stage 1 — Segmente → Chunks (600 Tok / 60 Overlap)
+  generate_embeddings.py Stage 2a — SentenceTransformers → chunks.embedding (+ Neo4j)
+  extract_graph_ollama.py Stage 2b — LLM-Extraktion Entitäten/Beziehungen (--parallel N)
+  resolve_entities.py    Stage 2c — Entity Resolution (kuratierte Aliase + Fuzzy)
+  export_graph_to_neo4j.py Stage 3 — Graph nach Neo4j (UNWIND-Batches, Dangling-Filter)
+  detect_communities.py  Stage 3b — Leiden-Communities + LLM-Reports (Global Search)
+  summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
+  query_agent.py         Stage 4 — Router: Local Search / Global Search / Text2Cypher
+  evaluate.py            Stage 5 — Benchmarking: AutoQ/AutoE, Fixtures, eval_runs/
+  analyze_topics.py      Ergänzend — BERTopic-Themenanalyse (HPC Stage 5)
+  prune_db.py            Wartung — DB-Report, Boilerplate-Markierung, VACUUM
+  generate_municipalities_csv.py  Stammdaten-Provenienz: erzeugt municipalities-
+                           Datensatz aus Wikipedia/Wikidata (Reproduzierbarkeit)
+
+crawler/data/
+  db/municipalities.sqlite  Stammdaten aller 2.056 Kommunen (AGS, URL, Domains, …)
+  seeds/municipalities.csv  CSV-Quelle für seeds.py / init_seed_jobs
+
+demo/                    Lauffähiger PoC ohne GPU/Neo4j/Ollama
+  run_poc.sh             Ende-zu-Ende: Crawl (3 Kommunen) → Chunks → Embeddings
+                           → spaCy-Graph → Suche; nutzt die Produktions-Module
+  init_demo_db.py        Demo-DB mit 3 Kommunen-Seeds anlegen
+  extract_graph_spacy.py Offline-Graph-Extraktion (spaCy NER) — Fallback ohne LLM
+  inspect_graph.py       Graph-Statistiken im Terminal
+  visualize_graph.py     Interaktiver HTML-Graph (pyvis) — visuelles Validierungswerkzeug
+  query_demo.py          Cosine-Retrieval direkt auf SQLite (gleiches Embedding-Modell)
+
+docs/
+  PIPELINE.md            Stage-für-Stage-Referenz (Einstiegsdokument)
+  pipeline_diagrams.md   Mermaid-Diagramme der Architektur
+  *.pptx + create_onepagers.py  Projekt-OnePager (Vorarbeiten & Ausschreibung) + Generator
+
+hpc/                     SLURM-Pipeline für bwUniCluster (Stages 2–6)
+tests/                   47 Tests: Chunker, URL-Kanonisierung, Graph-Schema,
+                           Export-Integrität, Storage-Upsert, Entity Resolution
+.github/workflows/ci.yml Lint (ruff) + Tests bei jedem Push
 ```
 
 ---
 
-## 🏃‍♂️ Crawl starten
-
-Der Umfang wird über `--limit` und `--workers` gesteuert. Die Jobs kommen
-aus der `seed_jobs`-Tabelle (atomares Claiming — mehrere Maschinen können
-parallel gegen dieselbe DB-Kopie arbeiten, ohne sich Jobs wegzunehmen).
-
-### Einzel-Lauf (eine Kommune)
+## 🕷️ Crawl
 
 ```bash
-python3 -m crawler.scripts.run_worker --limit 1
+python -m crawler.scripts.run_worker                  # alle pending Jobs
+python -m crawler.scripts.run_worker --limit 10       # 10 Kommunen
+python -m crawler.scripts.run_worker --workers 8      # 8 Kommunen parallel
 ```
 
-### Batch-Lauf (z. B. 100 Kommunen)
+- **Politeness:** `robots.txt` wird respektiert (Default), Mindestabstand pro
+  Host; Sitemap-Einträge aus robots.txt werden als priorisierte Seeds genutzt
+- **Robustheit:** Timeouts/429/5xx → 3 Versuche mit Backoff; Re-Fetches
+  aktualisieren bestehende Dokumente (kein Duplikat)
+- **Verteiltes Arbeiten:** `seed_jobs` nutzt atomares Claiming — mehrere
+  Maschinen/Worker nehmen sich keine Jobs weg
+- **Standby verhindern:** macOS `caffeinate -i …`, Windows PowerToys Awake
+
+**Fortschritt beobachten:**
 
 ```bash
-python3 -m crawler.scripts.run_worker --limit 100
+watch -n 30 'sqlite3 crawler/data/db/crawl.sqlite \
+  "SELECT status, COUNT(*) FROM seed_jobs GROUP BY status; \
+   SELECT COUNT(*) FROM documents_raw;"'
 ```
 
 ---
 
-## ☕ WICHTIG: Standby verhindern
+## 🧠 GraphRAG-Pipeline
 
-Wenn der Rechner in den Ruhezustand geht, bricht die Netzwerkverbindung ab und der Crawl stoppt.
-
-### macOS
+Nach dem Crawl (Details: [docs/PIPELINE.md](docs/PIPELINE.md)):
 
 ```bash
-caffeinate -i python3 -m crawler.scripts.run_worker
+python -m crawler.scripts.chunk_documents
+python -m crawler.scripts.generate_embeddings
+python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
+python -m crawler.scripts.resolve_entities
+python -m crawler.scripts.export_graph_to_neo4j
+python -m crawler.scripts.detect_communities --parallel 4
+python -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
 ```
 
-### Windows
+**Evaluation** (reproduzierbar: fester Seed, Prompt-Version, Run-Historie):
 
- ### Nutze Tools wie:
+```bash
+python -m crawler.scripts.evaluate --questions 50 --save-questions questions.json
+python -m crawler.scripts.evaluate --load questions.json     # eingefrorenes Fixture
+```
 
-- Caffeine  
-- PowerToys Awake  
+**DB verkleinern** (ohne Flags nur Report — gefahrlos):
 
-### 🔹 Installation
-
-1. Gehe auf die offizielle GitHub-Seite von
-Microsoft PowerToys
-2. Klicke auf Releases
-3. Lade die Datei
-PowerToysSetup-xxx-x64.exe herunter
-4. Installieren → fertig
-
-### 🔹 Aktivieren von „Awake“
-
-1. PowerToys öffnen
-2. Links Awake auswählen
-3. Aktivieren
-4. Modus wählen:
-
-Keep awake indefinitely
-
-Keep awake for a time interval
-
-Keep awake until expiration
-
--> Das ist die sauberste Lösung – kein Script, kein Hack.
+```bash
+python -m crawler.scripts.prune_db
+python -m crawler.scripts.prune_db --mark-boilerplate        # Menüs/Footer markieren
+```
 
 ---
 
-## 📊 Monitoring & Erfolgskontrolle
+## ⚙️ Konfiguration
 
-### Fortschritt prüfen (Extraktions-Statistik)
+Zentrale Konfiguration in `crawler/core/config.py`, überschreibbar per
+Umgebungsvariable — kein Skript hat hartkodierte Pfade:
 
-```bash
-sqlite3 crawler/data/db/crawl.sqlite "SELECT segment_type, COUNT(*) FROM segments GROUP BY segment_type;"
-```
-
-### Erfolgreicher Lauf
-
-- `run_worker` beendet sich ohne Fehlermeldung  
-- `seed_jobs.status` steht auf `done`  
-- Tabellen `documents_raw` und `segments` sind befüllt  
-
-- Fehler können aufkommen! Um eine Übersicht zu haben, könnt ihr euer Terminal splitten und 
-
-```bash
-while true; do
-  clear;
-  echo "=== CRAWLER PULS ($(date +%H:%M:%S)) ===";
-  sqlite3 crawler/data/db/crawl.sqlite "
-    SELECT 'Status ' || status || ': ' || count(*) FROM seed_jobs GROUP BY status;
-    SELECT 'Gesamt-Dokumente: ' || count(*) FROM documents_raw;
-    SELECT 'Davon PDFs:       ' || count(*) FROM documents_raw WHERE url_canonical LIKE '%.pdf';
-  ";
-  echo "----------------------------------------";
-  echo "Zuletzt gefundene PDFs:";
-  sqlite3 crawler/data/db/crawl.sqlite "SELECT url_canonical FROM documents_raw WHERE url_canonical LIKE '%.pdf' ORDER BY rowid DESC LIMIT 5;";
-  sleep 30;
-done
-```
-
-einfügen. 
-
-### Oder
-
-```bash
-brew install watch
-```
-
-```bash
-watch -n 30 "echo '=== CRAWLER DASHBOARD ===' && \
-sqlite3 crawler/data/db/crawl.sqlite \"SELECT 'Status ' || status || ': ' || count(*) FROM seed_jobs GROUP BY status;\" && \
-echo '---' && \
-echo 'Gesamt-Dokumente:' && \
-sqlite3 crawler/data/db/crawl.sqlite \"SELECT count(*) FROM documents_raw;\" && \
-echo '---' && \
-echo 'Neueste Nachhaltigkeits-PDFs:' && \
-sqlite3 crawler/data/db/crawl.sqlite \"SELECT municipality_id, url_canonical FROM documents_raw WHERE (url_canonical LIKE '%klima%' OR url_canonical LIKE '%solar%' OR url_canonical LIKE '%mobil%' OR url_canonical LIKE '%haushalt%') AND url_canonical LIKE '%.pdf' ORDER BY rowid DESC LIMIT 5;\""
-```
----
-
-## 🔀 Parallel crawlen
-
-Mehrere Kommunen gleichzeitig (je 1 Thread pro Kommune; die Politeness pro
-Host bleibt erhalten, da jede Kommune ein eigener Host ist):
-
-```bash
-python3 -m crawler.scripts.run_worker --workers 8
-```
-
-Der Crawler respektiert `robots.txt` (Default) und nutzt Sitemap-Einträge
-daraus als priorisierte Seeds. Transiente Fehler (Timeouts, 429/5xx) werden
-automatisch mit Backoff wiederholt.
-
----
-
-## 🧠 Nach dem Crawl: GraphRAG-Pipeline
-
-Chunking → Embeddings → Graph-Extraktion (Ollama) → Neo4j → Communities →
-Query Agent → Evaluation. Alle Stages, Kommandos und Tabellen:
-**[docs/PIPELINE.md](docs/PIPELINE.md)**
-
-```bash
-python3 -m crawler.scripts.chunk_documents
-python3 -m crawler.scripts.generate_embeddings
-python3 -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
-python3 -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
-```
-
-DB verkleinern (Report ohne Flags — gefahrlos):
-
-```bash
-python3 -m crawler.scripts.prune_db
-```
+| Variable | Default | Zweck |
+|---|---|---|
+| `KLIMA_DB_PATH` | `crawler/data/db/crawl.sqlite` | Arbeits-Datenbank |
+| `KLIMA_OLLAMA_URL` / `KLIMA_OLLAMA_MODEL` | `localhost:11434` / `llama3.1:8b` | LLM |
+| `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | `bolt://localhost:7687` | Graph-DB |
+| `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
 
 ---
 
@@ -226,26 +178,14 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-GitHub Actions führt bei jedem Push Lint (ruff, kritische Fehler) und die
-Test-Suite aus (`.github/workflows/ci.yml`).
+GitHub Actions führt bei jedem Push ruff (kritische Fehler) und die
+Test-Suite aus.
 
 ---
 
-## ⚠ Fehlerquellen
+## 🛠 Voraussetzungen & Fehlerquellen
 
-- **Netzwerk:** VPN-Abbruch oder instabiles WLAN beendet den Prozess  
-- **Tools:** `pdftotext` muss im Systempfad installiert sein  
-- **Pfad-Fehler:** Die Datenbank muss exakt in `crawler/data/db/` liegen — oder per `KLIMA_DB_PATH` überschreiben  
-
----
-
-## 📌 Kurzfassung (TL;DR)
-
-```bash
-git clone <repository-url>
-cd KIT_KlimaCrawler
-python3 -m venv wi2026 && source wi2026/bin/activate
-pip install -r crawler/requirements.txt
-caffeinate -i python3 -m crawler.scripts.run_worker --workers 4
-```
-
+- Python 3.10+, stabile Internetverbindung, `pdftotext` im Systempfad
+- Große Crawls: Standby des Rechners verhindern (sonst bricht der Lauf ab)
+- Datenbank liegt unter `crawler/data/db/` — oder per `KLIMA_DB_PATH` umbiegen
+- Ollama nötig für Graph-Extraktion/Query/Evaluation; die Demo läuft ohne
