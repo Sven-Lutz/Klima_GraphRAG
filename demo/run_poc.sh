@@ -5,7 +5,12 @@
 # Was bewiesen wird:
 #   ✓ Crawl:       3 bayerische Kommunen (Ingolstadt, Regensburg, Augsburg)
 #   ✓ Chunking:    Tiktoken 600/60 auf allen relevanten Segmenten
-#   ✓ Embeddings:  SentenceTransformers (CPU, all-MiniLM-L6-v2, ~90 MB)
+#   ✓ Embeddings:  SentenceTransformers (CPU, paraphrase-multilingual-MiniLM-L12-v2)
+#                  — gleiches Modell wie Produktion (crawler/core/config.py)
+#
+# ACHTUNG bei alter demo.sqlite (vor der Modell-Umstellung): Embeddings wurden
+# mit all-MiniLM-L6-v2 berechnet und passen nicht zum neuen Query-Modell.
+# In dem Fall demo/demo.sqlite löschen und neu laufen lassen.
 #   ✓ Retrieval:   Cosine-Similarity Suche direkt auf SQLite-BLOBs
 #
 # Optional (falls Ollama läuft):
@@ -21,6 +26,8 @@
 set -euo pipefail
 
 DEMO_DB="demo/demo.sqlite"
+# Alle crawler.*-Module lesen den DB-Pfad aus config.py (KLIMA_DB_PATH)
+export KLIMA_DB_PATH="$DEMO_DB"
 QUERY="${1:---query}"
 if [[ "$QUERY" == "--query" ]]; then
     QUERY="Klimaschutz Maßnahmen Solarenergie Förderung"
@@ -41,7 +48,27 @@ echo "════════════════════════�
 
 # ── 0. Abhängigkeiten installieren ────────────────────────────────────────────
 echo ""
-echo "[ 0/5 ] Abhängigkeiten prüfen & installieren..."
+echo "[ 0/6 ] Abhängigkeiten prüfen & installieren..."
+
+# NumPy: muss < 2 sein — PyTorch 2.x wurde gegen NumPy 1.x kompiliert
+NUMPY_OK=$(python3 -c "import numpy as np; ok = tuple(int(x) for x in np.__version__.split('.')[:2]) < (2,0); print('yes' if ok else 'no')" 2>/dev/null || echo "no")
+if [[ "$NUMPY_OK" != "yes" ]]; then
+    echo "  → NumPy >= 2 gefunden, downgrade auf numpy<2 ..."
+    python3 -m pip install --quiet "numpy<2"
+fi
+
+# Torch: mind. 2.4 nötig für aktuelle sentence-transformers
+TORCH_OK=$(python3 -c "import torch; v=tuple(int(x) for x in torch.__version__.split('.')[:2]); print('yes' if v>=(2,4) else 'no')" 2>/dev/null || echo "no")
+if [[ "$TORCH_OK" != "yes" ]]; then
+    echo "  → torch < 2.4 oder fehlt – upgrade via conda..."
+    if command -v conda &>/dev/null; then
+        conda install -y "pytorch>=2.4" cpuonly -c pytorch -q 2>/dev/null \
+            || python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+    else
+        python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+    fi
+fi
+
 python3 -m pip install --quiet \
     tiktoken \
     pydantic \
@@ -50,14 +77,19 @@ python3 -m pip install --quiet \
     aiohttp \
     beautifulsoup4 \
     lxml \
-    numpy \
-    "sentence-transformers>=2.2.0"
+    "sentence-transformers>=3.0.0" \
+    spacy \
+    pyvis
+
+# spaCy German model (14 MB, needed for graph extraction)
+python3 -c "import spacy; spacy.load('de_core_news_sm')" 2>/dev/null || \
+    python3 -m spacy download de_core_news_sm --quiet
 
 echo "  ✓ Pakete bereit"
 
 # ── 1. Demo-DB initialisieren ─────────────────────────────────────────────────
 echo ""
-echo "[ 1/5 ] Demo-Datenbank initialisieren..."
+echo "[ 1/6 ] Demo-Datenbank initialisieren..."
 
 if [[ -f "$DEMO_DB" ]]; then
     DOCS=$(python3 -c "
@@ -86,25 +118,24 @@ fi
 
 # ── 2. Crawl (3 Kommunen, max 120 Seiten je) ─────────────────────────────────
 echo ""
-echo "[ 2/5 ] Crawle 3 Kommunen (max. 120 Seiten je, Tiefe 4)..."
+echo "[ 2/6 ] Crawle 3 Kommunen (max. 120 Seiten je, Tiefe 4)..."
 echo "        Dies dauert ca. 5-15 Minuten..."
 
 if [[ "${SKIP_CRAWL:-0}" -eq 0 ]]; then
     # Crawler mit engen Limits für den Demo-Lauf
-    python3 - <<PYEOF
-import asyncio, sys
+    python3 - <<'PYEOF'
+import sys, sqlite3
 sys.path.insert(0, ".")
+
+# KLIMA_DB_PATH ist gesetzt → config.py und damit Storage nutzen die Demo-DB
 from pathlib import Path
 from crawler.core.engine import Engine, EngineLimits
-from crawler.core.storage import Storage
-from crawler.core.seed_jobs import claim_next_job, mark_done, mark_failed, default_worker_id
-from crawler.core.seeds import load_seeds_from_sqlite
 
 DB_PATH = Path("demo/demo.sqlite")
 
 LIMITS = EngineLimits(
     max_depth=4,
-    max_pages_per_muni=120,   # Demo: 120 Seiten je Kommune
+    max_pages_per_muni=120,
     max_file_size_mb=50,
 )
 
@@ -122,54 +153,37 @@ KEYWORDS = {
 
 SEED_PATHS = ["/klima", "/klimaschutz", "/energie", "/umwelt", "/nachhaltigkeit"]
 
-async def run():
-    import sqlite3
-    con = sqlite3.connect(str(DB_PATH), isolation_level=None)
-    con.execute("PRAGMA journal_mode=WAL")
+con = sqlite3.connect(str(DB_PATH), isolation_level=None)
+jobs = con.execute(
+    "SELECT municipality_id, seed_url FROM seed_jobs WHERE status='pending'"
+).fetchall()
+con.close()
 
-    jobs = con.execute(
-        "SELECT municipality_id, seed_url FROM seed_jobs WHERE status='pending'"
-    ).fetchall()
-    con.close()
+if not jobs:
+    print("  Alle Jobs bereits erledigt.")
+    sys.exit(0)
 
-    if not jobs:
-        print("  Alle Jobs bereits erledigt.")
-        return
+for muni_id, seed_url in jobs:
+    print(f"\n  → Crawle {muni_id}: {seed_url}")
 
-    for muni_id, seed_url in jobs:
-        print(f"\n  → Crawle {muni_id}: {seed_url}")
-        storage = Storage(DB_PATH)
+    engine = Engine(
+        keywords=KEYWORDS,
+        limits=LIMITS,
+        seed_additional_paths=SEED_PATHS,
+    )
+    engine.run([(muni_id, seed_url)])
 
-        # Seeds für diese Kommune
-        seeds = [(muni_id, seed_url)]
+    # Markiere als done
+    con2 = sqlite3.connect(str(DB_PATH), isolation_level=None)
+    con2.execute("UPDATE seed_jobs SET status='done' WHERE municipality_id=?", (muni_id,))
+    con2.close()
 
-        engine = Engine(
-            storage=storage,
-            limits=LIMITS,
-            keyword_lists=KEYWORDS,
-            seed_additional_paths=SEED_PATHS,
-        )
-        await engine.run(seeds)
-
-        # Markiere als done
-        con2 = sqlite3.connect(str(DB_PATH), isolation_level=None)
-        con2.execute(
-            "UPDATE seed_jobs SET status='done' WHERE municipality_id=?",
-            (muni_id,)
-        )
-        con2.close()
-
-        import sqlite3 as sq
-        c = sq.connect(str(DB_PATH))
-        docs = c.execute("SELECT COUNT(*) FROM documents_raw WHERE municipality_id=?",
-                         (muni_id,)).fetchone()[0]
-        segs = c.execute("SELECT COUNT(*) FROM segments WHERE document_id IN "
-                         "(SELECT document_id FROM documents_raw WHERE municipality_id=?)",
-                         (muni_id,)).fetchone()[0]
-        c.close()
-        print(f"     ✓ {muni_id}: {docs} Dokumente, {segs} Segmente")
-
-asyncio.run(run())
+    c = sqlite3.connect(str(DB_PATH))
+    docs = c.execute("SELECT COUNT(*) FROM documents_raw WHERE municipality_id=?", (muni_id,)).fetchone()[0]
+    segs = c.execute("SELECT COUNT(*) FROM segments WHERE document_id IN "
+                     "(SELECT document_id FROM documents_raw WHERE municipality_id=?)", (muni_id,)).fetchone()[0]
+    c.close()
+    print(f"     ✓ {muni_id}: {docs} Dokumente, {segs} Segmente")
 PYEOF
 else
     echo "  ↳ Crawl übersprungen (Daten vorhanden)"
@@ -188,13 +202,10 @@ PYEOF
 
 # ── 3. Tiktoken-Chunking ──────────────────────────────────────────────────────
 echo ""
-echo "[ 3/5 ] Tiktoken-Chunking (600 Tok / 60 Overlap)..."
+echo "[ 3/6 ] Tiktoken-Chunking (600 Tok / 60 Overlap)..."
 
-python3 - <<'PYEOF'
-import sys; sys.path.insert(0, ".")
-from crawler.scripts.chunk_documents import main
-main(db_path="demo/demo.sqlite", chunk_size=600, overlap=60, min_score=0)
-PYEOF
+# Produktions-Skript; DB kommt aus KLIMA_DB_PATH
+python3 -m crawler.scripts.chunk_documents --min-score 0
 
 python3 - <<'PYEOF'
 import sqlite3
@@ -207,61 +218,27 @@ except:
 con.close()
 PYEOF
 
-# ── 4. Embeddings (CPU, all-MiniLM-L6-v2) ────────────────────────────────────
+# ── 4. Embeddings (CPU, gleiches Modell wie Produktion) ─────────────────────
 echo ""
-echo "[ 4/5 ] Embeddings berechnen (CPU, ~5-10 Minuten)..."
-echo "        Modell: all-MiniLM-L6-v2 (~90 MB Download beim ersten Mal)"
+echo "[ 4/6 ] Embeddings berechnen (CPU, ~10-20 Minuten)..."
+echo "        Modell: paraphrase-multilingual-MiniLM-L12-v2 (~470 MB beim ersten Mal)"
 
-python3 - <<'PYEOF'
-import sys, sqlite3, struct
-sys.path.insert(0, ".")
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-import numpy as np
-
-DB = "demo/demo.sqlite"
-MODEL = "all-MiniLM-L6-v2"   # schnell auf CPU, gutes DE+EN
-
-print(f"  Lade Modell {MODEL}...")
-model = SentenceTransformer(MODEL)
-
-con = sqlite3.connect(DB, isolation_level=None)
-con.execute("PRAGMA journal_mode=WAL")
-
-# Chunks ohne Embedding laden
-rows = con.execute(
-    "SELECT chunk_id, text FROM chunks WHERE embedding IS NULL LIMIT 10000"
-).fetchall()
-
-if not rows:
-    print("  ✓ Alle Chunks bereits eingebettet")
-    con.close()
-    sys.exit(0)
-
-print(f"  Berechne Embeddings für {len(rows)} Chunks...")
-
-BATCH = 64
-for i in range(0, len(rows), BATCH):
-    batch = rows[i:i+BATCH]
-    ids   = [r[0] for r in batch]
-    texts = [r[1] for r in batch]
-    vecs  = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-
-    for cid, vec in zip(ids, vecs):
-        blob = struct.pack(f"{len(vec)}f", *vec.tolist())
-        con.execute("UPDATE chunks SET embedding=? WHERE chunk_id=?", (blob, cid))
-
-    if (i // BATCH) % 5 == 0:
-        done = min(i + BATCH, len(rows))
-        print(f"  ... {done}/{len(rows)} ({100*done//len(rows)}%)")
-
-con.close()
-print(f"  ✓ Embeddings abgeschlossen")
-PYEOF
+# Produktions-Skript; Modell + DB kommen aus config.py (KLIMA_DB_PATH)
+python3 -m crawler.scripts.generate_embeddings --limit 10000
 
 # ── 5. Demo-Suche ────────────────────────────────────────────────────────────
 echo ""
-echo "[ 5/5 ] GraphRAG Demo-Suche..."
+echo "[ 5/6 ] Graph-Extraktion (spaCy NER, offline, ~2-5 Minuten)..."
+echo "        Modell: de_core_news_sm  |  Entitäten + Beziehungen"
+
+python3 demo/extract_graph_spacy.py \
+    --db "demo/demo.sqlite" \
+    --limit 500 \
+    --min-score 0
+
+# ── 6. Demo-Suche ─────────────────────────────────────────────────────────────
+echo ""
+echo "[ 6/6 ] GraphRAG Demo-Suche..."
 echo "        Anfrage: \"$QUERY\""
 echo ""
 
@@ -273,13 +250,21 @@ python3 demo/query_demo.py \
 echo "════════════════════════════════════════════════════════"
 echo " PoC abgeschlossen!"
 echo ""
-echo " Weitere Anfragen:"
+echo " Weitere Suchanfragen:"
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"Wärmepumpe Förderung\""
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"Photovoltaik Ausbau Ziel\""
 echo "   python demo/query_demo.py --db demo/demo.sqlite \"CO2 Reduktion Maßnahmen\""
 echo ""
-echo " Nächster Schritt: Ollama installieren für Graph-Extraktion"
+echo " Graph inspizieren (Tabellen):"
+echo "   python demo/inspect_graph.py --db demo/demo.sqlite"
+echo ""
+echo " Graph visualisieren (interaktives HTML im Browser):"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite --muni 09161000   # Ingolstadt"
+echo "   python demo/visualize_graph.py --db demo/demo.sqlite --type Förderprogramm --top 50"
+echo ""
+echo " Bessere Graph-Extraktion mit Ollama LLM:"
 echo "   curl -fsSL https://ollama.com/install.sh | sh"
 echo "   ollama pull llama3.1:8b"
-echo "   python -m crawler.scripts.extract_graph_ollama --db demo/demo.sqlite"
+echo "   KLIMA_DB_PATH=demo/demo.sqlite python -m crawler.scripts.extract_graph_ollama --chunk-mode"
 echo "════════════════════════════════════════════════════════"

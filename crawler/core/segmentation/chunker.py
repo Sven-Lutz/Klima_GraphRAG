@@ -14,9 +14,16 @@ triples so that provenance back to the original document is always preserved.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Generator
 
 import tiktoken
+
+
+@lru_cache(maxsize=4)
+def _get_encoding(encoding_name: str):
+    # tiktoken.get_encoding pro Aufruf ist teuer — einmal pro Prozess reicht
+    return tiktoken.get_encoding(encoding_name)
 
 ENCODING_NAME = "cl100k_base"   # used by GPT-4 / text-embedding-3-*
 DEFAULT_CHUNK_SIZE = 600        # tokens per chunk
@@ -46,7 +53,7 @@ def chunk_text(
     if not text or not text.strip():
         return []
 
-    enc = tiktoken.get_encoding(encoding_name)
+    enc = _get_encoding(encoding_name)
     tokens = enc.encode(text)
 
     if len(tokens) == 0:
@@ -89,7 +96,7 @@ def iter_chunks(
     if not text or not text.strip():
         return
 
-    enc = tiktoken.get_encoding(encoding_name)
+    enc = _get_encoding(encoding_name)
     tokens = enc.encode(text)
 
     if not tokens:
@@ -117,5 +124,5 @@ def iter_chunks(
 
 def count_tokens(text: str, encoding_name: str = ENCODING_NAME) -> int:
     """Return the number of tokens in *text* without chunking."""
-    enc = tiktoken.get_encoding(encoding_name)
+    enc = _get_encoding(encoding_name)
     return len(enc.encode(text or ""))

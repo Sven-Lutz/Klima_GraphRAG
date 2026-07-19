@@ -52,7 +52,7 @@ python -m crawler.scripts.detect_communities \
     --algorithm leiden \
     --min-size  3      \
     --llm       ollama \
-    --sleep     0.3
+    --parallel  4
 
 # BERTopic auf denselben Segmenten (ergänzend, kein Neo4j nötig)
 echo "→ BERTopic Topic-Modelling..."

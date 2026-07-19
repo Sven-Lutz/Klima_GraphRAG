@@ -8,7 +8,8 @@ document level without scanning thousands of raw segments, and they provide
 the coarse-grained context needed for multi-hop reasoning across municipalities.
 
 Usage:
-    python -m crawler.scripts.summarize_documents          # process all unsummarised docs
+    python -m crawler.scripts.summarize_documents          # Ollama (lokal, Default)
+    python -m crawler.scripts.summarize_documents --llm openai   # Cloud-Fallback
     python -m crawler.scripts.summarize_documents --limit 100
     python -m crawler.scripts.summarize_documents --min-score 15 --per-doc 8
 """
@@ -19,15 +20,19 @@ import json
 import sqlite3
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
-from openai import OpenAI
 
-client = OpenAI()
-MODEL_NAME = "gpt-4o-mini"
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import (
+    DB_PATH,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
+)
+
+OPENAI_MODEL = "gpt-4o-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +59,8 @@ class DocumentSummary(BaseModel):
     ]
     key_topics: List[str] = Field(
         default_factory=list,
-        description="Bis zu 5 Themenstichwörter, z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']",
+        description=("Bis zu 5 Themenstichwörter, "
+                     "z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']"),
     )
     key_entities: List[str] = Field(
         default_factory=list,
@@ -75,6 +81,21 @@ Du bist Experte für kommunale Klimaschutzpolitik in Bayern.
 Fasse die wichtigsten Inhalte eines kommunalen Dokuments strukturiert zusammen.
 Beziehe dich ausschließlich auf die gegebenen Textsegmente.
 Sei präzise und faktenbasiert.
+"""
+
+# Für Ollama (kein natives Structured-Output-Parsing): Schema in den Prompt
+SYSTEM_MSG_JSON = SYSTEM_MSG + """
+Antworte NUR mit einem JSON-Objekt in exakt diesem Format:
+{
+  "summary": "3-5 Sätze Kernaussagen (bzw. 1 Satz Begründung wenn nicht klimarelevant)",
+  "document_type": "Klimaschutzkonzept|Energiebericht|Wärmeplanung|Beschluss\
+|Haushalt|Bauleitplanung|Förderbescheid|Bericht|Sonstiges",
+  "key_topics": ["bis zu 5 Themenstichwörter"],
+  "key_entities": ["bis zu 5 wichtige Akteure/Programme"],
+  "year_range": "z.B. 2023-2030 oder null",
+  "action_count": 0
+}
+Kein Text außerhalb des JSON.
 """
 
 
@@ -184,20 +205,53 @@ def build_user_prompt(doc: dict) -> str:
     return "\n".join(lines).strip()
 
 
-def summarise(user_prompt: str) -> DocumentSummary:
+def _summarise_ollama(user_prompt: str) -> DocumentSummary:
+    import urllib.request
+    payload = json.dumps({
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_MSG_JSON},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
+    }).encode()
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        content = json.loads(resp.read())["message"]["content"]
+    return DocumentSummary.model_validate_json(content)
+
+
+def _summarise_openai(user_prompt: str) -> DocumentSummary:
+    from openai import OpenAI
+    client = OpenAI()
     resp = client.beta.chat.completions.parse(
-        model=MODEL_NAME,
+        model=OPENAI_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_MSG},
             {"role": "user", "content": user_prompt},
         ],
         response_format=DocumentSummary,
-        temperature=0.0,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED,
     )
     return resp.choices[0].message.parsed
 
 
-def store_summary(conn: sqlite3.Connection, doc: dict, summary: DocumentSummary) -> None:
+def summarise(user_prompt: str, backend: str = "ollama") -> DocumentSummary:
+    if backend == "ollama":
+        return _summarise_ollama(user_prompt)
+    return _summarise_openai(user_prompt)
+
+
+def store_summary(
+    conn: sqlite3.Connection, doc: dict, summary: DocumentSummary, model_name: str
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
@@ -211,7 +265,7 @@ def store_summary(conn: sqlite3.Connection, doc: dict, summary: DocumentSummary)
             doc["document_id"],
             doc["municipality_id"],
             doc.get("url_canonical"),
-            MODEL_NAME,
+            model_name,
             summary.summary,
             summary.document_type,
             json.dumps(summary.key_topics, ensure_ascii=False),
@@ -227,7 +281,14 @@ def store_summary(conn: sqlite3.Connection, doc: dict, summary: DocumentSummary)
 # Main
 # ---------------------------------------------------------------------------
 
-def main(limit: int = 200, min_score: int = 15, per_doc: int = 6) -> None:
+def main(
+    limit: int = 200,
+    min_score: int = 15,
+    per_doc: int = 6,
+    backend: str = "ollama",
+) -> None:
+    model_name = OLLAMA_MODEL if backend == "ollama" else OPENAI_MODEL
+
     conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
     setup_db(conn)
 
@@ -237,7 +298,7 @@ def main(limit: int = 200, min_score: int = 15, per_doc: int = 6) -> None:
         conn.close()
         return
 
-    print(f"🚀 Erstelle Zusammenfassungen für {len(docs)} Dokumente\n")
+    print(f"🚀 Erstelle Zusammenfassungen für {len(docs)} Dokumente  (LLM: {model_name})\n")
 
     ok = 0
     for doc in docs:
@@ -247,8 +308,8 @@ def main(limit: int = 200, min_score: int = 15, per_doc: int = 6) -> None:
         print(f"⚙️  muni={muni_id}  doc={doc_id[:8]}…  segments={n_segs}")
         try:
             user_prompt = build_user_prompt(doc)
-            summary = summarise(user_prompt)
-            store_summary(conn, doc, summary)
+            summary = summarise(user_prompt, backend=backend)
+            store_summary(conn, doc, summary, model_name=model_name)
             print(
                 f"   🟢 [{summary.document_type}]  topics={summary.key_topics[:3]}  "
                 f"actions={summary.action_count}"
@@ -257,7 +318,8 @@ def main(limit: int = 200, min_score: int = 15, per_doc: int = 6) -> None:
         except Exception as ex:
             print(f"   🔴 Fehler: {ex}")
 
-        time.sleep(0.3)
+        if backend == "openai":
+            time.sleep(0.3)  # Rate-Limit-Schonung; lokal unnötig
 
     conn.close()
     print(f"\n🏁 Done. {ok}/{len(docs)} Dokumente zusammengefasst.")
@@ -268,5 +330,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=200, help="Max. Anzahl Dokumente")
     parser.add_argument("--min-score", type=int, default=15, help="Minimaler Impact-Score")
     parser.add_argument("--per-doc", type=int, default=6, help="Top-N Segmente pro Dokument")
+    parser.add_argument("--llm", choices=["ollama", "openai"], default="ollama",
+                        help="LLM-Backend (Default: ollama, lokal)")
     args = parser.parse_args()
-    main(limit=args.limit, min_score=args.min_score, per_doc=args.per_doc)
+    main(limit=args.limit, min_score=args.min_score, per_doc=args.per_doc, backend=args.llm)

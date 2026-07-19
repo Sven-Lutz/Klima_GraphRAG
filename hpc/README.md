@@ -32,7 +32,7 @@ tail -f logs/chunk_embed_<JOBID>.out
 | 1 Crawl | **lokal** | `run_worker.py` | CPU + Internet | Tage |
 | — Transfer | lokal→Cluster | `transfer_db.sh` | rsync | Minuten |
 | 2 Chunk+Embed | Cluster (GPU) | `02_chunk_embed.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
-| 3 Graph-Extraktion | Cluster (GPU) | `03_extract_graph.sbatch` | 1 GPU, 48G, 24h | 12–24 h |
+| 3 Graph-Extraktion | Cluster (GPU) | `03_extract_graph.sbatch` | 1 GPU, 48G, 24h | 4–12 h (`--parallel 4`) |
 | 4 Neo4j Export | Cluster (CPU) | `04_neo4j_export.sbatch` | CPU, 16G, 4h | 1–2 h |
 | 5 Community Detection | Cluster (GPU) | `05_community_detect.sbatch` | 1 GPU, 32G, 8h | 4–8 h |
 | 6 Evaluation | Cluster (GPU) | `06_evaluate.sbatch` | 1 GPU, 32G, 4h | 2–4 h |

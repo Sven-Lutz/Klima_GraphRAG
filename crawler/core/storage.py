@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
+
 RAW_DIR = Path("crawler/data/raw")
 
 
@@ -203,7 +204,8 @@ class Storage:
         # --- indices for fast top-segment retrieval ---
         try:
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_segments_doc_score ON segments(document_id, impact_score DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_segments_doc_score "
+                "ON segments(document_id, impact_score DESC)"
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_segments_score ON segments(impact_score DESC)"
@@ -233,10 +235,12 @@ class Storage:
                 """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg ON graph_triplets(segment_rowid)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg "
+                "ON graph_triplets(segment_rowid)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni ON graph_triplets(municipality_id)"
+                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni "
+                "ON graph_triplets(municipality_id)"
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_graph_triplets_doc ON graph_triplets(document_id)"
@@ -254,15 +258,18 @@ class Storage:
                     target_document_id TEXT,
                     anchor_text TEXT,
                     PRIMARY KEY (source_document_id, target_url_canonical),
-                    FOREIGN KEY(source_document_id) REFERENCES documents_raw(document_id) ON DELETE CASCADE
+                    FOREIGN KEY(source_document_id)
+                        REFERENCES documents_raw(document_id) ON DELETE CASCADE
                 )
                 """
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doclinks_target ON document_links(target_url_canonical)"
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target "
+                "ON document_links(target_url_canonical)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doclinks_target_doc ON document_links(target_document_id)"
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target_doc "
+                "ON document_links(target_document_id)"
             )
         except Exception:
             pass
@@ -288,10 +295,12 @@ class Storage:
                 """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_doc_summaries ON document_summaries(document_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_doc_summaries "
+                "ON document_summaries(document_id)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doc_summaries_muni ON document_summaries(municipality_id)"
+                "CREATE INDEX IF NOT EXISTS idx_doc_summaries_muni "
+                "ON document_summaries(municipality_id)"
             )
         except Exception:
             pass
@@ -300,8 +309,19 @@ class Storage:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        with self.conn:
+        """Echte Transaktion trotz isolation_level=None (Autocommit).
+
+        `with self.conn:` öffnet unter Autocommit KEINE Transaktion — der
+        Block store_raw → segments → meta → outlinks → mark_visited wäre
+        nicht atomar und jedes Statement würde einzeln fsyncen.
+        """
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
             yield
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
 
     def _extract_body(self, fetch_result: Any) -> bytes:
         body = getattr(fetch_result, "body", None)
@@ -339,8 +359,12 @@ class Storage:
         return ".bin"
 
     def store_raw(self, municipality_id: str, url_canonical: str, fetch_result: Any) -> str:
-        doc_id = str(uuid.uuid4())
+        """Upsert per url_canonical: Re-Fetches (Fehler-Retry, Re-Crawl)
+        aktualisieren die bestehende Dokument-Zeile statt Duplikate anzulegen.
 
+        Bei geändertem Inhalt (raw_hash) werden veraltete Segmente/Chunks des
+        Dokuments entfernt, damit der neue Parse sie ersetzt.
+        """
         body = self._extract_body(fetch_result)
         raw_hash = hashlib.sha256(body).hexdigest()
         raw_path = self.raw_dir / raw_hash
@@ -365,6 +389,34 @@ class Storage:
         raw_ext = self._guess_ext(content_type, url_final)
         content_length = len(body)
 
+        existing = self.conn.execute(
+            "SELECT document_id, raw_hash FROM documents_raw WHERE url_canonical=? LIMIT 1",
+            (url_canonical,),
+        ).fetchone()
+
+        if existing is not None:
+            doc_id = str(existing["document_id"])
+            content_changed = str(existing["raw_hash"] or "") != raw_hash
+            self.conn.execute(
+                """
+                UPDATE documents_raw
+                SET url_final=?, fetched_at=?, status_code=?, content_type=?,
+                    raw_hash=?, raw_path=?, raw_ext=?, content_length=?
+                WHERE document_id=?
+                """,
+                (url_final, _utc_now_iso(), status_code, content_type,
+                 raw_hash, str(raw_path), raw_ext, int(content_length), doc_id),
+            )
+            if content_changed:
+                self.conn.execute("DELETE FROM segments WHERE document_id=?", (doc_id,))
+                try:
+                    self.conn.execute("DELETE FROM chunks WHERE document_id=?", (doc_id,))
+                except sqlite3.OperationalError:
+                    pass  # chunks-Tabelle existiert erst nach dem Chunking
+            self.conn.execute(self._sql_link_muni_doc, (municipality_id, doc_id))
+            return doc_id
+
+        doc_id = str(uuid.uuid4())
         self.conn.execute(
             self._sql_insert_doc,
             (
@@ -406,7 +458,8 @@ class Storage:
         before = self.conn.total_changes
         self.conn.executemany(
             """
-            INSERT OR IGNORE INTO document_links (source_document_id, target_url_canonical, anchor_text)
+            INSERT OR IGNORE INTO document_links
+                (source_document_id, target_url_canonical, anchor_text)
             VALUES (?, ?, ?)
             """,
             rows,
@@ -490,11 +543,37 @@ class Storage:
         return max(0, after - before)
 
     def mark_visited(self, url_canonical: str, status: int, error: Optional[str] = None) -> None:
-        self.conn.execute(self._sql_mark_visited, (url_canonical, _utc_now_iso(), int(status), error))
+        self.conn.execute(self._sql_mark_visited,
+                          (url_canonical, _utc_now_iso(), int(status), error))
 
     def is_visited(self, url_canonical: str) -> bool:
-        cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1", (url_canonical,))
+        cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1",
+                                (url_canonical,))
         return cur.fetchone() is not None
+
+    def get_visited_status(self, url_canonical: str) -> Tuple[bool, bool, Optional[str]]:
+        """(visited, errored, document_id) in EINEM Query.
+
+        Ersetzt die bis zu 4 Einzel-Queries pro bereits besuchter URL im
+        Crawl-Loop (is_visited → get_document_id → link → is_visited_with_error).
+        """
+        cur = self.conn.execute(
+            """
+            SELECT v.last_status_code, d.document_id
+            FROM visited v
+            LEFT JOIN documents_raw d ON d.url_canonical = v.url_canonical
+            WHERE v.url_canonical = ?
+            LIMIT 1
+            """,
+            (url_canonical,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False, False, None
+        status = row[0]
+        errored = status is None or int(status) != 200
+        doc_id = str(row[1]) if row[1] is not None else None
+        return True, errored, doc_id
 
     def get_document_id_by_canonical_url(self, url_canonical: str) -> Optional[str]:
         cur = self.conn.execute(

@@ -32,12 +32,19 @@ import hashlib
 import json
 import sqlite3
 import time
-from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from crawler.core.config import DB_PATH, OLLAMA_URL, OLLAMA_MODEL as _DEFAULT_MODEL
+from crawler.core.config import (
+    DB_PATH,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    OLLAMA_URL,
+)
+from crawler.core.config import (
+    OLLAMA_MODEL as _DEFAULT_MODEL,
+)
 
 MODEL_NAME = _DEFAULT_MODEL
 
@@ -90,7 +97,8 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt im folgenden Format:
   ],
   "relationships": [
     {"source_entity": "...",
-     "relation_type": "FÖRDERT|BAUT|BESCHLIESST|IMPLEMENTIERT|PLANT|GEHÖRT_ZU|KOOPERIERT_MIT|FINANZIERT_DURCH|BEZIEHT_SICH_AUF",
+     "relation_type": "FÖRDERT|BAUT|BESCHLIESST|IMPLEMENTIERT|PLANT|GEHÖRT_ZU\
+|KOOPERIERT_MIT|FINANZIERT_DURCH|BEZIEHT_SICH_AUF",
      "target_entity": "...",
      "evidence": "exakter Originaltext (max. 200 Zeichen)"}
   ]
@@ -134,8 +142,12 @@ def _user_gleaning_prompt(text: str, first_extraction: KnowledgeGraph) -> str:
 # Ollama client
 # ---------------------------------------------------------------------------
 
-def _call_ollama(model: str, system: str, user: str) -> str:
-    """Call Ollama REST API; returns raw model response text."""
+def _call_ollama(model: str, system: str, user: str, max_retries: int = 3) -> str:
+    """Call Ollama REST API; returns raw model response text.
+
+    Retry mit exponentiellem Backoff — bei langen Läufen führen transiente
+    Timeouts sonst zu stillen Daten-Lücken im Graphen.
+    """
     import urllib.request
 
     payload = json.dumps({
@@ -145,18 +157,26 @@ def _call_ollama(model: str, system: str, user: str) -> str:
             {"role": "user",    "content": user},
         ],
         "stream":   False,
-        "options":  {"temperature": 0.0, "num_predict": 2048},
+        "options":  {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
         "format":   "json",   # Ollama structured output mode
     }).encode()
 
-    req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    last_err: Exception = RuntimeError("unreachable")
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(
+                f"{OLLAMA_URL}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+            return data["message"]["content"]
+        except Exception as ex:
+            last_err = ex
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # 1s, 2s
+    raise last_err
 
 
 def _parse_kg(raw: str) -> KnowledgeGraph:
@@ -207,7 +227,18 @@ def extract_with_gleaning(
             if e.name.lower() not in existing_names:
                 kg.entities.append(e)
                 existing_names.add(e.name.lower())
-        kg.relationships.extend(kg2.relationships)
+
+        # Relationships ebenfalls deduplizieren — Gleaning liefert oft
+        # dieselben Beziehungen erneut, was relationship_count verfälscht
+        existing_rels = {
+            (r.source_entity.lower(), r.relation_type, r.target_entity.lower())
+            for r in kg.relationships
+        }
+        for r in kg2.relationships:
+            rel_key = (r.source_entity.lower(), r.relation_type, r.target_entity.lower())
+            if rel_key not in existing_rels:
+                kg.relationships.append(r)
+                existing_rels.add(rel_key)
 
     return kg
 
@@ -324,6 +355,7 @@ def main(
     min_score: int = 15,
     use_chunks_table: bool = False,
     sleep_between: float = 0.0,
+    parallel: int = 1,
 ) -> None:
     conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
     cur  = conn.cursor()
@@ -348,56 +380,68 @@ def main(
         return
 
     mode = "chunks" if use_chunks_table else "segments"
-    print(f"🚀 Extrahiere Graph via Ollama ({model}) für {len(rows)} {mode} | gleaning={gleaning_rounds}\n")
+    print(f"🚀 Extrahiere Graph via Ollama ({model}) für {len(rows)} {mode} "
+          f"| gleaning={gleaning_rounds} | parallel={parallel}\n")
 
-    for row in rows:
-        rowid    = int(row["rowid"])
-        text     = row["text"]
-        muni     = row["municipality_id"]
-        doc      = row["document_id"]
-        url      = row["url_canonical"]
-        heading  = row["heading_context"]
-        score    = row["impact_score"]
+    def _extract_one(row: dict):
+        """LLM-Extraktion für eine Zeile — läuft im Worker-Thread, kein DB-Zugriff."""
+        kg = extract_with_gleaning(
+            model=model,
+            text=row["text"],
+            heading_context=row["heading_context"],
+            url=row["url_canonical"],
+            gleaning_rounds=gleaning_rounds,
+        )
+        # Apply canonical name resolution before persisting
+        if canonical_map:
+            for ent in kg.entities:
+                ent.name = canonical_map.get(ent.name.lower(), ent.name)
+            for rel in kg.relationships:
+                rel.source_entity = canonical_map.get(rel.source_entity.lower(), rel.source_entity)
+                rel.target_entity = canonical_map.get(rel.target_entity.lower(), rel.target_entity)
+        return kg
 
-        print(f"⚙️  muni={muni}  rowid={rowid}  score={score}")
-        if heading:
-            print(f"   📂 {heading}")
+    def _store(row: dict, kg) -> None:
+        """DB-Write — läuft ausschließlich im Hauptthread."""
+        graph_json = kg.model_dump_json(ensure_ascii=False)
+        e, r = len(kg.entities), len(kg.relationships)
+        seg_hash = hashlib.sha256((row["text"] or "").encode()).hexdigest()
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO graph_triplets (
+                municipality_id, document_id, segment_rowid, segment_hash,
+                model_name, graph_json, entity_count, relationship_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (row["municipality_id"], row["document_id"], int(row["rowid"]),
+             seg_hash, model, graph_json, e, r),
+        )
+        print(f"   🟢 rowid={row['rowid']}  muni={row['municipality_id']}  "
+              f"entities={e}  relationships={r}")
 
-        try:
-            kg = extract_with_gleaning(
-                model=model,
-                text=text,
-                heading_context=heading,
-                url=url,
-                gleaning_rounds=gleaning_rounds,
-            )
-            # Apply canonical name resolution before persisting
-            if canonical_map:
-                for ent in kg.entities:
-                    ent.name = canonical_map.get(ent.name.lower(), ent.name)
-                for rel in kg.relationships:
-                    rel.source_entity = canonical_map.get(rel.source_entity.lower(), rel.source_entity)
-                    rel.target_entity = canonical_map.get(rel.target_entity.lower(), rel.target_entity)
-            graph_json = kg.model_dump_json(ensure_ascii=False)
-            e, r = len(kg.entities), len(kg.relationships)
-            seg_hash = hashlib.sha256((text or "").encode()).hexdigest()
-
-            cur.execute(
-                """
-                INSERT OR IGNORE INTO graph_triplets (
-                    municipality_id, document_id, segment_rowid, segment_hash,
-                    model_name, graph_json, entity_count, relationship_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (muni, doc, rowid, seg_hash, model, graph_json, e, r),
-            )
-            print(f"   🟢 entities={e}  relationships={r}")
-
-        except Exception as ex:
-            print(f"   🔴 Fehler: {ex}")
-
-        if sleep_between > 0:
-            time.sleep(sleep_between)
+    if parallel <= 1:
+        # Sequenziell (Default) — identisches Verhalten wie bisher
+        for row in rows:
+            print(f"⚙️  muni={row['municipality_id']}  rowid={row['rowid']}  "
+                  f"score={row['impact_score']}")
+            try:
+                _store(row, _extract_one(row))
+            except Exception as ex:
+                print(f"   🔴 Fehler rowid={row['rowid']}: {ex}")
+            if sleep_between > 0:
+                time.sleep(sleep_between)
+    else:
+        # Parallel: Ollama verarbeitet mehrere Requests gleichzeitig.
+        # LLM-Calls in Threads, Writes seriell im Hauptthread (SQLite).
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(_extract_one, row): row for row in rows}
+            for fut in as_completed(futures):
+                row = futures[fut]
+                try:
+                    _store(row, fut.result())
+                except Exception as ex:
+                    print(f"   🔴 Fehler rowid={row['rowid']}: {ex}")
 
     conn.close()
     print("\n🏁 Done.")
@@ -409,8 +453,12 @@ if __name__ == "__main__":
     ap.add_argument("--gleaning",    type=int,   default=1,   help="Anzahl Gleaning-Runden")
     ap.add_argument("--limit",       type=int,   default=200)
     ap.add_argument("--min-score",   type=int,   default=15)
-    ap.add_argument("--chunk-mode",  action="store_true",     help="Aus chunks-Tabelle statt segments lesen")
-    ap.add_argument("--sleep",       type=float, default=0.0, help="Pause zwischen Anfragen (Sekunden)")
+    ap.add_argument("--chunk-mode",  action="store_true",
+                    help="Aus chunks-Tabelle statt segments lesen")
+    ap.add_argument("--sleep",       type=float, default=0.0,
+                    help="Pause zwischen Anfragen (Sekunden)")
+    ap.add_argument("--parallel",    type=int,   default=1,
+                    help="Gleichzeitige LLM-Anfragen (HPC: 4-8, abhängig von VRAM)")
     args = ap.parse_args()
     main(
         model=args.model,
@@ -419,4 +467,5 @@ if __name__ == "__main__":
         min_score=args.min_score,
         use_chunks_table=args.chunk_mode,
         sleep_between=args.sleep,
+        parallel=args.parallel,
     )

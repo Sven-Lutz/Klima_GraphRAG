@@ -7,10 +7,8 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
-DEFAULT_CRAWL_DB_PATH = Path("crawler/data/db/crawl.sqlite")
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -68,7 +66,7 @@ def claim_next_job(
     stale_after_seconds: int = 15 * 60,
 ) -> Optional[SeedJob]:
     """Atomically claim one pending job (or reclaim stale claimed job)."""
-    
+
     now = _utc_now_iso()
     stale_cutoff = time.time() - float(stale_after_seconds)
     stale_cutoff_iso = datetime.fromtimestamp(stale_cutoff, tz=timezone.utc).isoformat()

@@ -1,47 +1,49 @@
 # crawler/core/engine.py
 from __future__ import annotations
 
-import time
 import re
+import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, Mapping, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from urllib import robotparser
+from urllib.parse import urljoin as _urljoin
 from urllib.parse import urlsplit
 
 import requests
-from requests.adapters import HTTPAdapter
 import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from requests.adapters import HTTPAdapter
 
 from crawler.core.canonical import Canonicalizer
+from crawler.core.config import TLS_VERIFY
 from crawler.core.models import CrawlTask, FetchResult
 from crawler.core.parsers.html_parser import parse_html
 from crawler.core.parsers.pdf_parser import parse_pdf
 from crawler.core.scheduler import PriorityScheduler
 from crawler.core.storage import Storage, default_worker_id
 
-from urllib.parse import urljoin as _urljoin
-
 _HIGH_IMPACT_WORDS = [
     r'klima\w*', r'klimaschutz\w*', r'klimaanpassung\w*', r'klimaneutral\w*',
     r'co2\b', r'thg\b', r'treibhausgas\w*', r'emission\w*', r'treibhausgasbilanz\w*',
     r'energiebericht\w*', r'klimabericht\w*', r'klimaschutzkonzept\w*', r'klimafahrplan\w*',
     r'energie-?\s?und\s?klimakonzept\w*', r'energie\w*', r'erneuerbar\w*', r'fernw(?:ä|ae)rme\w*',
-    r'nahw(?:ä|ae)rme\w*', r'w(?:ä|ae)rmenetz\w*', r'bhkw\b', r'blockheizkraftwerk\w*', r'w(?:ä|ae)rmepump\w*',
+    r'nahw(?:ä|ae)rme\w*', r'w(?:ä|ae)rmenetz\w*', r'bhkw\b', r'blockheizkraftwerk\w*',
+    r'w(?:ä|ae)rmepump\w*',
     r'geotherm\w*', r'biogas\w*', r'wasserkraft\w*', r'wasserstoff\b', r'h2\b',
     r'solar\w*', r'photovoltaik\w*', r'pv\b', r'windkraft\w*', r'windenergie\w*',
     r'speicher\w*', r'stromnetz\w*', r'smart\s?grid\w*', r'led\b', r'strombeschaffung\w*',
     r'sanier\w*', r'd(?:ä|ae)mm\w*', r'energieeffizienz\w*', r'passivhaus\w*',
     r'effizienzhaus\w*', r'kfw-\d+', r'geg\b', r'geb(?:ä|ae)udeenergiegesetz\w*',
     r'quartierskonzept\w*', r'fl(?:ä|ae)chennutzungsplan\w*', r'fnp\b', r'bebauungsplan\w*',
-    r'nachverdichtung\w*', r'mobilit(?:ä|ae)t\w*', r'verkehr\w*', r'verkehrswende\w*', r'emobilit(?:ä|ae)t\w*',
+    r'nachverdichtung\w*', r'mobilit(?:ä|ae)t\w*', r'verkehr\w*', r'verkehrswende\w*',
+    r'emobilit(?:ä|ae)t\w*',
     r'elektromobilit(?:ä|ae)t\w*', r'radverkehr\w*', r'radweg\w*', r'fahrrad\w*',
     r'verkehrsentwicklungsplan\w*', r'vep\b', r'lades(?:ä|ae)ul\w*', r'wallbox\w*',
     r'ladinfrastruktur\w*', r'carsharing\w*', r'(?:ö|oe)pnv\b', r'f(?:ö|oe)rder\w*',
     r'zuschuss\w*', r'mittel\w*', r'finanz\w*', r'investition\w*',
     r'projekttr(?:ä|ae)ger\w*', r'f(?:ö|oe)rderprogramm\w*', r'bewilligungsbescheid\w*',
     r'eigenanteil\w*', r'nki\b', r'kfw\b', r'bafa\b', r'efre\b', r'eler\b',
-    r'eu-?f(?:ö|oe)rder\w*', r'beschluss\w*', r'beschlussvorlage\w*', r'antrag\w*', r'drucksache\w*',
+    r'eu-?f(?:ö|oe)rder\w*', r'beschluss\w*', r'beschlussvorlage\w*', r'antrag\w*',
+    r'drucksache\w*',
     r'vorlage\w*', r'tagesordnungspunkt\w*', r'sitzung\w*', r'niederschrift\w*',
     r'protokoll\w*', r'klimabeirat\w*', r'umweltbeirat\w*', r'stadtwerk\w*'
 ]
@@ -74,7 +76,8 @@ def _segment_features(text: str) -> Tuple[int, int, int]:
 try:
     from crawler.core.traps import TrapDetector
     _trap_detector = TrapDetector(
-        block_extensions=["jpg", "jpeg", "png", "gif", "svg", "mp4", "zip", "rar", "css", "js", "xml", "exe", "doc", "docx"],
+        block_extensions=["jpg", "jpeg", "png", "gif", "svg", "mp4", "zip", "rar",
+                          "css", "js", "xml", "exe", "doc", "docx"],
         block_path_patterns=[
             '/kalender', 'veranstaltungen', 'termine', 'sitzungskalender',
             'monat=', 'jahr=', 'month=', 'year=', 'datum=',
@@ -116,7 +119,8 @@ class Engine:
         user_agent: str = "KIT-ClimatePolicyCrawler/1.0 (research)",
         request_timeout_seconds: int = 20,
         max_redirects: int = 10,
-        respect_robots_txt: bool = False,
+        respect_robots_txt: bool = True,
+        tls_verify: Optional[bool] = None,
         min_delay_seconds_per_domain: float = 0.2,
         canonicalizer: Optional[Canonicalizer] = None,
         allowed_domains_by_muni: Optional[Mapping[str, Set[str]]] = None,
@@ -134,12 +138,18 @@ class Engine:
         self.timeout_read = float(request_timeout_seconds)
         self.max_redirects = int(max_redirects)
         self.respect_robots_txt = bool(respect_robots_txt)
+        # Default aus config (KLIMA_TLS_VERIFY); kommunale Server haben oft
+        # kaputte Zertifikatsketten, daher ist Verifikation standardmäßig aus
+        self.tls_verify = TLS_VERIFY if tls_verify is None else bool(tls_verify)
+        if not self.tls_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.min_delay_seconds_per_domain = float(min_delay_seconds_per_domain)
 
         self.canon = canonicalizer or Canonicalizer(
             strip_fragment=True,
             drop_query_prefixes=["utm_", "pk_"],
-            drop_query_keys=["fbclid", "gclid", "session", "jsessionid", "sid", "phpsessid", "msclkid"],
+            drop_query_keys=["fbclid", "gclid", "session", "jsessionid", "sid",
+                             "phpsessid", "msclkid"],
             normalize_trailing_slash=True,
         )
 
@@ -157,8 +167,13 @@ class Engine:
         )
         self._session.max_redirects = self.max_redirects
 
+        self.user_agent = user_agent
         self._last_request_ts_by_domain: Dict[str, float] = {}
         self._pages_by_muni: Dict[str, int] = {}
+        # robots.txt-Cache pro Host: (parser|None, sitemap_urls)
+        self._robots_cache: Dict[str, Tuple[Optional[robotparser.RobotFileParser], List[str]]] = {}
+        # Enqueue-Dedup: verhindert, dass dieselbe URL den Heap mehrfach füllt
+        self._enqueued: Set[str] = set()
 
         self.allowed_domains_by_muni: Dict[str, Set[str]] = {
             str(k): {self._norm_domain(d) for d in v if d}
@@ -229,6 +244,74 @@ class Engine:
 
         return score
 
+    # ── robots.txt + Sitemaps ────────────────────────────────────────────────
+
+    def _load_robots(self, url: str) -> Tuple[Optional[robotparser.RobotFileParser], List[str]]:
+        """Lädt robots.txt einmal pro Host; liefert (Parser, Sitemap-URLs).
+
+        Parser None = keine/nicht lesbare robots.txt → alles erlaubt.
+        """
+        s = self._split(url)
+        if s is None or not s.netloc:
+            return None, []
+        host = s.netloc.lower()
+        if host in self._robots_cache:
+            return self._robots_cache[host]
+
+        rp: Optional[robotparser.RobotFileParser] = None
+        sitemaps: List[str] = []
+        robots_url = f"{s.scheme or 'https'}://{s.netloc}/robots.txt"
+        try:
+            resp = self._session.get(robots_url, timeout=(5, 10), verify=self.tls_verify)
+            if resp.status_code == 200 and resp.text:
+                rp = robotparser.RobotFileParser()
+                rp.parse(resp.text.splitlines())
+                sitemaps = [
+                    line.split(":", 1)[1].strip()
+                    for line in resp.text.splitlines()
+                    if line.lower().startswith("sitemap:")
+                ]
+        except Exception:
+            rp = None
+
+        self._robots_cache[host] = (rp, sitemaps)
+        return rp, sitemaps
+
+    def _robots_allowed(self, url: str) -> bool:
+        if not self.respect_robots_txt:
+            return True
+        rp, _ = self._load_robots(url)
+        if rp is None:
+            return True
+        try:
+            return rp.can_fetch(self.user_agent, url)
+        except Exception:
+            return True
+
+    _RE_SITEMAP_LOC = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE | re.DOTALL)
+
+    def _sitemap_urls(self, sitemap_url: str, max_urls: int = 500, _depth: int = 0) -> List[str]:
+        """Extrahiert URLs aus einer Sitemap (eine Ebene sitemapindex-Verschachtelung)."""
+        if _depth > 1 or max_urls <= 0:
+            return []
+        try:
+            resp = self._session.get(sitemap_url, timeout=(5, 15), verify=self.tls_verify)
+            if resp.status_code != 200:
+                return []
+            text = resp.text
+        except Exception:
+            return []
+
+        locs = self._RE_SITEMAP_LOC.findall(text)
+        if "<sitemapindex" in text.lower():
+            out: List[str] = []
+            for child in locs[:10]:
+                out.extend(self._sitemap_urls(child, max_urls - len(out), _depth + 1))
+                if len(out) >= max_urls:
+                    break
+            return out[:max_urls]
+        return locs[:max_urls]
+
     def _polite_sleep(self, domain: str) -> None:
         if not domain or self.min_delay_seconds_per_domain <= 0:
             return
@@ -240,53 +323,78 @@ class Engine:
                 time.sleep(self.min_delay_seconds_per_domain - dt)
         self._last_request_ts_by_domain[domain] = time.time()
 
-    def fetch(self, url: str) -> FetchResult:
+    _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+    def fetch(self, url: str, max_attempts: int = 3) -> FetchResult:
+        """Fetch mit Retry + Backoff für transiente Fehler (Timeout, 429, 5xx).
+
+        Ohne Retry 'verbrennt' ein einzelner transienter Fehler die URL
+        bis zum nächsten kompletten Re-Run.
+        """
         _, domain = self._scheme_domain(url)
-        self._polite_sleep(domain)
-
         lim_bytes = int(self.limits.max_file_size_mb) * 1024 * 1024
-        body = b""
 
-        try:
-            with self._session.get(
-                url,
-                timeout=(self.timeout_connect, self.timeout_read),
-                allow_redirects=True,
-                headers={"Connection": "close"},
-                verify=False,
-                stream=True,  # stream; enforce hard size limit below
-            ) as resp:
-                status = int(resp.status_code)
-                headers = {str(k): str(v) for k, v in (resp.headers or {}).items()}
-                content_type = str(resp.headers.get("Content-Type") or "") or None
-                url_final = str(resp.url)
+        last_err: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            self._polite_sleep(domain)
+            try:
+                with self._session.get(
+                    url,
+                    timeout=(self.timeout_connect, self.timeout_read),
+                    allow_redirects=True,
+                    headers={"Connection": "close"},
+                    verify=self.tls_verify,
+                    stream=True,  # stream; enforce hard size limit below
+                ) as resp:
+                    status = int(resp.status_code)
+                    headers = {str(k): str(v) for k, v in (resp.headers or {}).items()}
+                    content_type = str(resp.headers.get("Content-Type") or "") or None
+                    url_final = str(resp.url)
 
-                cl = headers.get("Content-Length")
-                if cl and cl.isdigit() and int(cl) > lim_bytes:
-                    body = b""
-                else:
-                    data = bytearray()
-                    for chunk in resp.iter_content(chunk_size=1024 * 64):
-                        if not chunk:
-                            break
-                        data.extend(chunk)
-                        if len(data) > lim_bytes:
-                            data = bytearray()
-                            break
-                    body = bytes(data)
+                    # Transienter Serverfehler → Backoff und neuer Versuch
+                    if status in self._RETRYABLE_STATUS and attempt < max_attempts - 1:
+                        retry_after = headers.get("Retry-After", "")
+                        delay = int(retry_after) if retry_after.isdigit() else 2 ** attempt
+                        time.sleep(min(delay, 30))
+                        continue
 
-            return FetchResult(
-                url_final=url_final,
-                status_code=status,
-                content_type=content_type,
-                body=body,
-                headers=headers,
-            )
+                    cl = headers.get("Content-Length")
+                    if cl and cl.isdigit() and int(cl) > lim_bytes:
+                        body = b""
+                    else:
+                        data = bytearray()
+                        for chunk in resp.iter_content(chunk_size=1024 * 64):
+                            if not chunk:
+                                break
+                            data.extend(chunk)
+                            if len(data) > lim_bytes:
+                                data = bytearray()
+                                break
+                        body = bytes(data)
 
-        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
-            raise RuntimeError(f"timeout:{type(e).__name__}") from e
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"request_error:{type(e).__name__}:{e}") from e
+                return FetchResult(
+                    url_final=url_final,
+                    status_code=status,
+                    content_type=content_type,
+                    body=body,
+                    headers=headers,
+                )
+
+            except (
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+            ) as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"timeout:{type(e).__name__}") from e
+            except requests.exceptions.RequestException as e:
+                # Nicht-transient (z.B. TooManyRedirects, InvalidURL) → sofort raus
+                raise RuntimeError(f"request_error:{type(e).__name__}:{e}") from e
+
+        raise RuntimeError(f"timeout:{type(last_err).__name__ if last_err else 'unknown'}")
 
     def _over_size_limit(self, fr: FetchResult) -> bool:
         lim_bytes = int(self.limits.max_file_size_mb) * 1024 * 1024
@@ -335,6 +443,8 @@ class Engine:
         # pages_since_last_pdf is tracked per-municipality to prevent one
         # PDF-poor municipality from triggering autostop for the next one.
         pages_since_last_pdf: Dict[str, int] = {}
+        aborted_munis: Set[str] = set()
+        self._enqueued = set()
 
         for muni_id, url in seeds:
             muni_id = str(muni_id)
@@ -351,25 +461,52 @@ class Engine:
                 continue
 
             self.scheduler.enqueue(CrawlTask(muni_id, url, depth=0), 100)
+            self._enqueued.add(url_c_seed)
 
             # Enqueue additional seed paths (e.g. /klima, /energie, /haushalt)
             for path in self.seed_additional_paths:
                 extra_url = _urljoin(url.rstrip("/") + "/", path.lstrip("/"))
                 extra_c = canon(extra_url)
-                if extra_c and self._is_allowed(muni_id, extra_c):
+                if extra_c and extra_c not in self._enqueued and self._is_allowed(muni_id, extra_c):
                     self.scheduler.enqueue(
                         CrawlTask(muni_id, extra_c, depth=1, parent_url=url_c_seed),
                         80,
                     )
+                    self._enqueued.add(extra_c)
+
+            # Sitemaps aus robots.txt: schnellster Weg zu relevanten Seiten.
+            # Nur thematisch passende URLs (Impact-Keywords oder PDFs) einreihen.
+            _, sitemaps = self._load_robots(url)
+            n_sitemap = 0
+            for sm_url in sitemaps[:5]:
+                for su in self._sitemap_urls(sm_url):
+                    sc = canon(su)
+                    if (not sc or sc in self._enqueued
+                            or not self._is_allowed(muni_id, sc)
+                            or _is_trap(sc, 1)):
+                        continue
+                    if not (HIGH_IMPACT_REGEX.search(sc) or sc.lower().endswith(".pdf")):
+                        continue
+                    self.scheduler.enqueue(
+                        CrawlTask(muni_id, sc, depth=1, parent_url=url_c_seed),
+                        self.score(sc, None),
+                    )
+                    self._enqueued.add(sc)
+                    n_sitemap += 1
+            if n_sitemap:
+                print(f"[sitemap] {muni_id}: {n_sitemap} relevante URLs aus Sitemaps eingereiht",
+                      flush=True)
 
         while self.scheduler.has_next():
             task = self.scheduler.next()
-            muni_pdf_count = pages_since_last_pdf.get(task.municipality_id, 0)
 
-            if muni_pdf_count >= autostop_threshold:
-                print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} Seiten kein PDF. Breche Kommune ab.", flush=True)
-                # Drain remaining tasks for this municipality from the scheduler
-                # by simply skipping — the per-muni page count won't advance further.
+            # Autostop: Kommune einmal markieren, restliche Tasks in O(1) verwerfen
+            if task.municipality_id in aborted_munis:
+                continue
+            if pages_since_last_pdf.get(task.municipality_id, 0) >= autostop_threshold:
+                print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} "
+                      f"Seiten kein PDF. Breche Kommune ab.", flush=True)
+                aborted_munis.add(task.municipality_id)
                 continue
 
             if task.depth > max_depth:
@@ -387,22 +524,27 @@ class Engine:
             if not url_c:
                 continue
 
-            if self.storage.is_visited(url_c):
-                doc_id = self.storage.get_document_id_by_canonical_url(url_c)
+            if not self._robots_allowed(task.url):
+                self.storage.mark_visited(url_c, -1, "robots disallow")
+                continue
+
+            # Ein Query statt vier: visited-Status, Fehler-Flag und doc_id
+            visited, errored, doc_id = self.storage.get_visited_status(url_c)
+            if visited:
                 if doc_id is not None:
                     self.storage.link_document_to_municipality(task.municipality_id, doc_id)
-
-                if self.storage.is_visited_with_error(url_c):
+                if errored:
                     print(f"[retry] {task.url} (previously errored)", flush=True)
                 else:
                     print(f"[skip] {task.url} (already visited)", flush=True)
                     continue
 
             try:
-                print(f"[fetch] depth={task.depth} muni={task.municipality_id} url={task.url}", flush=True)
+                print(f"[fetch] depth={task.depth} muni={task.municipality_id} "
+                      f"url={task.url}", flush=True)
 
                 fr = self.fetch(task.url)
-                
+
                 muni = task.municipality_id
                 if self._looks_like_pdf(task.url, fr.content_type):
                     pages_since_last_pdf[muni] = 0
@@ -430,31 +572,35 @@ class Engine:
                         parse_result = parse_html(fr, fr.url_final)
 
                         if len(parse_result.segments) > 0:
-                            self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+                            self.storage.store_segments_scored(
+                                doc_id, parse_result.segments, _segment_features)
 
                         # Store HTML meta tags (description, date, author, ...)
                         if parse_result.meta:
                             self.storage.update_document_meta(doc_id, parse_result.meta)
 
+                        # Links EINMAL kanonisieren; Ergebnis für Outlink-Store
+                        # und Enqueue wiederverwenden
+                        canonical_links: list[tuple[str, str]] = []
+                        for link in parse_result.out_links:
+                            link_url = (link[0] if isinstance(link, tuple)
+                                        else getattr(link, "url", link))
+                            anchor = (link[1] if isinstance(link, tuple)
+                                      else getattr(link, "anchor", ""))
+                            lc = canon(link_url)
+                            if lc:
+                                canonical_links.append((lc, anchor))
+
                         # Persist outlinks for GraphRAG document link graph
-                        if parse_result.out_links:
-                            canonical_links = []
-                            for link in parse_result.out_links:
-                                link_url = link[0] if isinstance(link, tuple) else getattr(link, "url", link)
-                                anchor = link[1] if isinstance(link, tuple) else getattr(link, "anchor", "")
-                                lc = canon(link_url)
-                                if lc:
-                                    canonical_links.append((lc, anchor))
+                        if canonical_links:
                             self.storage.store_outlinks(doc_id, canonical_links)
 
                         next_depth = task.depth + 1
                         if next_depth <= max_depth:
-                            for link in parse_result.out_links:
-                                link_url = getattr(link, "url", link[0] if isinstance(link, tuple) else link)
-                                anchor = getattr(link, "anchor", link[1] if isinstance(link, tuple) else "")
-
-                                link_c = canon(link_url)
-                                if not link_c or not self._is_allowed(task.municipality_id, link_c):
+                            for link_c, anchor in canonical_links:
+                                if link_c in self._enqueued:
+                                    continue
+                                if not self._is_allowed(task.municipality_id, link_c):
                                     continue
 
                                 prio = self.score(link_c, anchor)
@@ -468,13 +614,15 @@ class Engine:
                                     ),
                                     prio,
                                 )
+                                self._enqueued.add(link_c)
 
                     elif self._looks_like_pdf(task.url, fr.content_type):
                         print(f"[parse] Extrahiere PDF: {fr.url_final}", flush=True)
                         parse_result = parse_pdf(fr, fr.url_final)
 
                         if len(parse_result.segments) > 0:
-                            self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+                            self.storage.store_segments_scored(
+                                doc_id, parse_result.segments, _segment_features)
 
                     self.storage.mark_visited(url_c, status)
 

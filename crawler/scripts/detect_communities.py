@@ -30,15 +30,20 @@ import argparse
 import json
 import sqlite3
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from crawler.core.config import (
-    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_URL, OLLAMA_MODEL, GDS_GRAPH_NAME,
+    DB_PATH,
+    GDS_GRAPH_NAME,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -57,8 +62,10 @@ class KeyClaim(BaseModel):
 class CommunityReport(BaseModel):
     title:       str = Field(description="Prägnanter Titel (max. 10 Wörter)")
     summary:     str = Field(description="3-5 Sätze: Kernaussagen der Community")
-    importance:  int = Field(ge=1, le=10, description="Wichtigkeit für das Forschungsprojekt (1-10)")
-    domain:      Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen", "Governance", "Gemischt"]
+    importance:  int = Field(ge=1, le=10,
+                             description="Wichtigkeit für das Forschungsprojekt (1-10)")
+    domain:      Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen",
+                         "Governance", "Gemischt"]
     key_claims:  list[KeyClaim] = Field(default_factory=list, max_length=5)
     key_entities: list[str]    = Field(default_factory=list, max_length=10)
 
@@ -66,7 +73,8 @@ class CommunityReport(BaseModel):
 SYSTEM_REPORT = """\
 Du bist Experte für kommunale Klimaschutzpolitik in Bayern.
 Analysiere die gegebene Gruppe von Entitäten und Beziehungen aus einem Kommunal-Datensatz.
-Erstelle einen strukturierten Community-Report, der die Kernaussagen und Zusammenhänge zusammenfasst.
+Erstelle einen strukturierten Community-Report, der die Kernaussagen und
+Zusammenhänge zusammenfasst.
 Antworte ausschließlich mit einem JSON-Objekt – kein erklärender Text.
 """
 
@@ -216,7 +224,7 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
                 {"role": "user",   "content": prompt},
             ],
             "stream":  False,
-            "options": {"temperature": 0.1, "num_predict": 1024},
+            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
             "format":  "json",
         }).encode()
         req = urllib.request.Request(
@@ -236,7 +244,8 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
                 {"role": "user",   "content": prompt},
             ],
             response_format=CommunityReport,
-            temperature=0.1,
+            temperature=LLM_TEMPERATURE,
+            seed=LLM_SEED,
         )
         return resp.choices[0].message.parsed
 
@@ -277,7 +286,9 @@ def store_report_neo4j(session, community_id: int, report: CommunityReport) -> N
     )
 
 
-def store_report_sqlite(conn: sqlite3.Connection, community_id: int, report: CommunityReport) -> None:
+def store_report_sqlite(
+    conn: sqlite3.Connection, community_id: int, report: CommunityReport
+) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS community_reports (
@@ -320,6 +331,7 @@ def main(
     llm_backend: str = "ollama",
     max_communities: int = 500,
     sleep_between: float = 0.3,
+    parallel: int = 1,
 ) -> None:
     from neo4j import GraphDatabase
 
@@ -327,32 +339,56 @@ def main(
     conn   = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
 
     with driver.session() as session:
-        print(f"📐 Projiziere Entity-Graph in GDS…")
+        print("📐 Projiziere Entity-Graph in GDS…")
         project_gds_graph(session, algorithm)
 
         print(f"🔍 Führe {algorithm.capitalize()} Community Detection durch…")
         communities = run_community_detection(session, algorithm, min_community_size)
         print(f"   {len(communities)} Communities gefunden (min_size={min_community_size})")
 
-        ok = 0
-        for comm in communities[:max_communities]:
-            cid  = int(comm["communityId"])
-            size = int(comm["size"])
-            print(f"\n⚙️  Community {cid} (size={size})")
+        # Phase 1: Kontexte sequenziell laden (Neo4j-Session ist nicht threadsafe)
+        selected = communities[:max_communities]
+        prompts: list[tuple[int, str]] = []
+        for comm in selected:
+            cid = int(comm["communityId"])
             try:
-                ctx    = get_community_context(session, cid)
-                prompt = build_report_prompt(ctx)
-                report = call_llm(prompt, llm_backend)
-
-                store_report_neo4j(session, cid, report)
-                store_report_sqlite(conn, cid, report)
-
-                print(f"   🟢 [{report.domain}] {report.title}  importance={report.importance}")
-                ok += 1
+                ctx = get_community_context(session, cid)
+                prompts.append((cid, build_report_prompt(ctx)))
             except Exception as ex:
-                print(f"   🔴 Fehler: {ex}")
+                print(f"   🔴 Kontext-Fehler Community {cid}: {ex}")
 
-            time.sleep(sleep_between)
+        # Phase 2: LLM-Reports parallel generieren (embarrassingly parallel),
+        # Phase 3: Writes seriell im Hauptthread
+        ok = 0
+        if parallel <= 1:
+            for cid, prompt in prompts:
+                print(f"\n⚙️  Community {cid}")
+                try:
+                    report = call_llm(prompt, llm_backend)
+                    store_report_neo4j(session, cid, report)
+                    store_report_sqlite(conn, cid, report)
+                    print(f"   🟢 [{report.domain}] {report.title}  importance={report.importance}")
+                    ok += 1
+                except Exception as ex:
+                    print(f"   🔴 Fehler: {ex}")
+                time.sleep(sleep_between)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=parallel) as pool:
+                futures = {
+                    pool.submit(call_llm, prompt, llm_backend): cid
+                    for cid, prompt in prompts
+                }
+                for fut in as_completed(futures):
+                    cid = futures[fut]
+                    try:
+                        report = fut.result()
+                        store_report_neo4j(session, cid, report)
+                        store_report_sqlite(conn, cid, report)
+                        print(f"   🟢 Community {cid}: [{report.domain}] {report.title}")
+                        ok += 1
+                    except Exception as ex:
+                        print(f"   🔴 Fehler Community {cid}: {ex}")
 
         # Drop projected graph to free GDS memory
         try:
@@ -370,8 +406,11 @@ if __name__ == "__main__":
     ap.add_argument("--algorithm",  choices=["leiden", "louvain"], default="leiden")
     ap.add_argument("--min-size",   type=int,   default=3,       help="Minimale Community-Größe")
     ap.add_argument("--llm",        choices=["ollama", "openai"], default="ollama")
-    ap.add_argument("--max",        type=int,   default=500,     help="Max. Communities für Reports")
+    ap.add_argument("--max",        type=int,   default=500,
+                    help="Max. Communities für Reports")
     ap.add_argument("--sleep",      type=float, default=0.3)
+    ap.add_argument("--parallel",   type=int,   default=1,
+                    help="Gleichzeitige LLM-Anfragen für Reports (HPC: 4-8)")
     args = ap.parse_args()
     main(
         algorithm=args.algorithm,
@@ -379,4 +418,5 @@ if __name__ == "__main__":
         llm_backend=args.llm,
         max_communities=args.max,
         sleep_between=args.sleep,
+        parallel=args.parallel,
     )

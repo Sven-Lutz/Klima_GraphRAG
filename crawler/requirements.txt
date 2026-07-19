@@ -1,20 +1,19 @@
+# Alle Versionen gegen tatsächliche Imports abgeglichen (siehe docs/PIPELINE.md).
+# Ollama wird über die REST-API angesprochen (httpx/urllib) — kein Python-Paket nötig.
+
 # ── Crawler core ───────────────────────────────────────────────────────────────
 requests>=2.32.0
 httpx>=0.27.0
 beautifulsoup4>=4.12.0
-lxml>=5.0.0
+lxml>=5.0.0                        # Parser-Backend für BeautifulSoup
 pandas>=2.0.0
 
 # ── Stage 1 – Chunking ─────────────────────────────────────────────────────────
 tiktoken>=0.7.0                    # token-aware chunking (600 tok / 60 tok overlap)
 
 # ── Stage 2 – GraphRAG Indexing ────────────────────────────────────────────────
-ollama>=0.3.0                      # local LLM inference (privacy-compliant)
-langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-neo4j>=0.3.0             # Neo4j vector store + graph chain
-pydantic>=2.0.0
-openai>=1.0.0                      # fallback / cloud extraction
+pydantic>=2.0.0                    # KnowledgeGraph-Schema-Validierung
+openai>=1.0.0                      # Cloud-Fallback (--llm openai) + legacy script
 
 # ── Stage 2 – Embeddings ───────────────────────────────────────────────────────
 sentence-transformers>=3.0.0       # local embedding model (paraphrase-multilingual-*)
@@ -25,11 +24,13 @@ numpy>=1.26.0
 neo4j>=5.0.0                       # Neo4j Python driver
 
 # ── Stage 3 – Topic Modeling / Semantic Anchoring ──────────────────────────────
-bertopic>=0.16.0
+bertopic>=0.16.0                   # zieht umap-learn + hdbscan als Dependencies
 scikit-learn>=1.4.0
-umap-learn>=0.5.0
-hdbscan>=0.8.0
 
-# ── Stage 5 – Evaluation ───────────────────────────────────────────────────────
-ragas>=0.2.0                       # RAG evaluation (Context Recall, Faithfulness, …)
+# ── Stage 5 – Evaluation (geplant für Benchmarking-Phase) ──────────────────────
+# ragas>=0.2.0                     # aktivieren, sobald evaluate.py RAGAS nutzt
 # claimify – install from GitHub: pip install git+https://github.com/…/claimify
+
+# ── Demo (demo/run_poc.sh installiert diese selbst) ────────────────────────────
+# spacy                            # + python -m spacy download de_core_news_sm
+# pyvis                            # interaktive Graph-Visualisierung

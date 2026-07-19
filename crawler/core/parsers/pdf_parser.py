@@ -1,9 +1,9 @@
 # crawler/core/parsers/pdf_parser.py
 from __future__ import annotations
 
-import subprocess
 import logging
 import re
+import subprocess
 from typing import Any
 
 from crawler.core.models import ParseResult, Segment

@@ -21,9 +21,8 @@ import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pathlib import Path
 
-DB_PATH = Path("crawler/data/db/crawl.sqlite")
+from crawler.core.config import DB_PATH
 
 # ---------------------------------------------------------------------------
 # Normalisation rules
@@ -57,6 +56,57 @@ def normalise_entity_name(name: str) -> str:
 def similarity(a: str, b: str) -> float:
     """Quick string similarity via SequenceMatcher."""
     return SequenceMatcher(None, a, b).ratio()
+
+
+# ---------------------------------------------------------------------------
+# Kuratierte Aliase — bekannte Programme/Institutionen, die in vielen
+# Schreibweisen auftauchen. Wird VOR der Fuzzy-Logik angewandt und ist die
+# verlässlichste Form der Entity Resolution.
+# ---------------------------------------------------------------------------
+
+CURATED_ALIASES: dict[str, str] = {
+    "kfw": "KfW",
+    "kfw bank": "KfW",
+    "kfw-bank": "KfW",
+    "kfw bankengruppe": "KfW",
+    "kfw förderbank": "KfW",
+    "kreditanstalt für wiederaufbau": "KfW",
+    "bafa": "BAFA",
+    "bundesamt für wirtschaft und ausfuhrkontrolle": "BAFA",
+    "nki": "NKI",
+    "nationale klimaschutzinitiative": "NKI",
+    "nationalen klimaschutzinitiative": "NKI",
+    "efre": "EFRE",
+    "europäischer fonds für regionale entwicklung": "EFRE",
+    "beg": "BEG",
+    "bundesförderung für effiziente gebäude": "BEG",
+    "bmwk": "BMWK",
+    "bundesministerium für wirtschaft und klimaschutz": "BMWK",
+    "eu": "Europäische Union",
+    "europäische union": "Europäische Union",
+}
+
+
+_YEAR_RE = re.compile(r"\b\d{4}\b")
+
+
+def substring_merge_ok(shorter: str, longer: str) -> bool:
+    """Konservative Substring-Regel für den Fuzzy-Merge.
+
+    Verhindert Über-Zusammenführung:
+    - nur ganze Token-Folgen (Wortgrenzen), kein Teilwort-Match
+    - der kürzere Name braucht >= 2 Tokens
+      ('stadtwerke' darf NICHT 'stadtwerke münchen' schlucken)
+    - Jahreszahlen im längeren Namen, die im kürzeren fehlen, blocken
+      ('klimaschutzkonzept' ← 'klimaschutzkonzept 2030' sind verschiedene Dinge)
+    """
+    if len(shorter.split()) < 2:
+        return False
+    if f" {shorter} " not in f" {longer} ":
+        return False
+    if set(_YEAR_RE.findall(longer)) - set(_YEAR_RE.findall(shorter)):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +228,9 @@ def resolve(
                 norm_j = normalise_entity_name(unique[j])
                 if not norm_i or not norm_j:
                     continue
-                # Check if one is substring of the other, or high similarity
-                is_substring = norm_i in norm_j or norm_j in norm_i
+                # Substring nur mit Guards (Token-Grenzen, >=2 Tokens, Jahreszahlen);
+                # unique ist nach Länge absteigend sortiert → norm_j ist der kürzere
+                is_substring = substring_merge_ok(norm_j, norm_i)
                 is_similar = similarity(norm_i, norm_j) >= sim_threshold
                 if is_substring or is_similar:
                     # Merge j into i (i is longer/more specific)
@@ -191,6 +242,15 @@ def resolve(
         canonical = mapping[key]
         if canonical in merge_map:
             mapping[key] = merge_map[canonical]
+
+    # Kuratierte Aliase überschreiben alles — sie sind die verlässlichste Quelle.
+    # Schlüssel durch DIESELBE Normalisierung schicken wie die Entitätsnamen,
+    # damit z.B. "Kreditanstalt für Wiederaufbau" (→ ohne "für") trifft.
+    alias_lookup = {normalise_entity_name(k): v for k, v in CURATED_ALIASES.items()}
+    for key in mapping:
+        alias = alias_lookup.get(normalise_entity_name(key[0]))
+        if alias:
+            mapping[key] = alias
 
     return mapping
 
@@ -214,8 +274,6 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
     print("🔗 Starte Entity Resolution…")
     mapping = resolve(entities, sim_threshold=sim_threshold)
 
-    # Count unique original → canonical pairs
-    unique_pairs = set(mapping.items())
     n_originals = len(set(k[0] for k in mapping))
     n_canonicals = len(set(mapping.values()))
     n_merged = n_originals - n_canonicals
@@ -258,7 +316,7 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
     # Show top merges
     merges = [(o, c) for (o, et, cat), c in mapping.items() if o != c]
     if merges:
-        print(f"\n🔀 Beispiel-Zusammenführungen (Top 20):")
+        print("\n🔀 Beispiel-Zusammenführungen (Top 20):")
         for orig, canon in sorted(set(merges), key=lambda x: x[0])[:20]:
             print(f"   '{orig}' → '{canon}'")
 
@@ -267,7 +325,8 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Entity Resolution für den KlimaCrawler Knowledge Graph.")
+    parser = argparse.ArgumentParser(
+        description="Entity Resolution für den KlimaCrawler Knowledge Graph.")
     parser.add_argument("--similarity", type=float, default=0.85, help="Fuzzy-Schwelle (0.0-1.0)")
     parser.add_argument("--min-freq", type=int, default=1, help="Min. Häufigkeit für Aufnahme")
     args = parser.parse_args()

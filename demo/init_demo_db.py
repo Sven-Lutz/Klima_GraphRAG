@@ -6,7 +6,6 @@ Zielkommunen: Ingolstadt, Regensburg, Augsburg
 """
 from __future__ import annotations
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -19,7 +18,8 @@ TARGET_MUNIS = {"Ingolstadt", "Regensburg", "Augsburg"}
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import csv
-from crawler.core.seed_jobs import upsert_seed_jobs
+
+from crawler.core.seeds import upsert_seed_jobs
 
 DEMO_DB.parent.mkdir(parents=True, exist_ok=True)
 

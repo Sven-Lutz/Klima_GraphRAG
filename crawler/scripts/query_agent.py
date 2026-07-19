@@ -46,15 +46,20 @@ import json
 import re
 import sqlite3
 import struct
-from pathlib import Path
-from typing import Any, Optional
 
 import numpy as np
 
 from crawler.core.config import (
-    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_URL, OLLAMA_MODEL, MAX_CRITIC_LOOPS,
-    LOCAL_SEARCH_TOP_K, GLOBAL_SEARCH_MAX_COMMUNITIES,
+    DB_PATH,
+    EMBED_MODEL,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    MAX_CRITIC_LOOPS,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -73,7 +78,7 @@ def _call_ollama(system: str, user: str, json_mode: bool = False) -> str:
             {"role": "user",   "content": user},
         ],
         "stream":  False,
-        "options": {"temperature": 0.0, "num_predict": 2048},
+        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
         **({"format": "json"} if json_mode else {}),
     }).encode()
     req = urllib.request.Request(
@@ -94,7 +99,8 @@ def _call_openai(system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user",   "content": user},
         ],
-        temperature=0.0,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED,
     )
     return resp.choices[0].message.content or ""
 
@@ -115,10 +121,58 @@ Beantworte die Frage präzise und detailliert anhand der gegebenen Kontexte.
 Zitiere konkrete Fakten, Zahlen und Quellen wo möglich.
 """
 
+_EMBED_MODEL_CACHE = None
+
+
 def _embed_query(query: str) -> np.ndarray:
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    return model.encode([query], normalize_embeddings=True)[0].astype(np.float32)
+    # Modell einmal laden — im Critic-Loop und in der Evaluation wird
+    # local_search mehrfach aufgerufen, Reload kostet Sekunden pro Query
+    global _EMBED_MODEL_CACHE
+    if _EMBED_MODEL_CACHE is None:
+        from sentence_transformers import SentenceTransformer
+        _EMBED_MODEL_CACHE = SentenceTransformer(EMBED_MODEL)
+    return _EMBED_MODEL_CACHE.encode([query], normalize_embeddings=True)[0].astype(np.float32)
+
+
+# Chunk-Korpus-Cache: {sig, chunk_ids, texts, headings, matrix}
+# Die Vektorsuche läuft über ALLE eingebetteten Chunks — ein impact_score-
+# Vorfilter würde relevante, aber impact-schwache Chunks systematisch
+# unauffindbar machen und das Benchmarking verzerren.
+_CHUNK_CORPUS: dict = {"sig": None}
+
+
+# Community-Report-Embeddings: einmal pro (Report, Textstand) berechnen
+_REPORT_EMB_CACHE: dict = {}
+
+
+def _report_embedding(community_id: int, text: str) -> np.ndarray:
+    key = (community_id, hash(text))
+    if key not in _REPORT_EMB_CACHE:
+        _REPORT_EMB_CACHE[key] = _embed_query(text)
+    return _REPORT_EMB_CACHE[key]
+
+
+def _load_chunk_corpus(conn: sqlite3.Connection) -> dict:
+    sig = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM chunks WHERE embedding IS NOT NULL"
+    ).fetchone()
+    sig = (int(sig[0]), int(sig[1]))
+    if _CHUNK_CORPUS["sig"] == sig:
+        return _CHUNK_CORPUS
+
+    rows = conn.execute(
+        "SELECT chunk_id, text, heading_context, embedding FROM chunks "
+        "WHERE embedding IS NOT NULL"
+    ).fetchall()
+
+    _CHUNK_CORPUS["sig"] = sig
+    _CHUNK_CORPUS["chunk_ids"] = [r[0] for r in rows]
+    _CHUNK_CORPUS["texts"] = [r[1] for r in rows]
+    _CHUNK_CORPUS["headings"] = [r[2] for r in rows]
+    _CHUNK_CORPUS["matrix"] = (
+        np.stack([_blob_to_vec(r[3]) for r in rows]) if rows else None
+    )
+    return _CHUNK_CORPUS
 
 
 def _blob_to_vec(blob: bytes) -> np.ndarray:
@@ -131,30 +185,36 @@ def local_search(
     backend: str,
     top_k: int = 8,
     hop: int = 1,
-) -> str:
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
     """
     1. Embed query → cosine similarity over chunks table
     2. Retrieve top-K chunks (vector search in SQLite)
     3. Expand: pull entities mentioned in those chunks + their neighbors
     4. Synthesise answer
+
+    Mit return_context=True wird (answer, context_parts) zurückgegeben —
+    die Evaluation braucht den echten Retrieval-Kontext für Faithfulness.
     """
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
 
-    # Vector search (brute-force cosine in Python)
+    # Vector search über das GESAMTE Korpus (Matrix gecacht, Matmul ist schnell)
     q_vec = _embed_query(query)
-    rows = conn.execute(
-        "SELECT chunk_id, text, heading_context, impact_score, embedding FROM chunks "
-        "WHERE embedding IS NOT NULL ORDER BY impact_score DESC LIMIT 2000"
-    ).fetchall()
+    corpus = _load_chunk_corpus(conn)
 
-    if not rows:
+    if corpus.get("matrix") is None:
         conn.close()
-        return "[LocalSearch] Keine eingebetteten Chunks gefunden. Bitte generate_embeddings.py ausführen."
+        msg = ("[LocalSearch] Keine eingebetteten Chunks gefunden. "
+               "Bitte generate_embeddings.py ausführen.")
+        return (msg, []) if return_context else msg
 
-    chunk_ids, texts, headings, scores, blobs = zip(*rows)
-    vecs = np.stack([_blob_to_vec(b) for b in blobs])
-    sims = vecs @ q_vec
-    top_idx = np.argsort(sims)[::-1][:top_k]
+    chunk_ids = corpus["chunk_ids"]
+    texts     = corpus["texts"]
+    headings  = corpus["headings"]
+    sims = corpus["matrix"] @ q_vec
+    k = min(top_k, len(sims))
+    top_idx = np.argpartition(sims, -k)[-k:]
+    top_idx = top_idx[np.argsort(sims[top_idx])[::-1]]
 
     context_parts = []
     for i in top_idx:
@@ -192,7 +252,8 @@ def local_search(
 
     context = "\n\n---\n\n".join(context_parts)
     user_prompt = f"FRAGE: {query}\n\nKONTEXTE:\n{context}"
-    return llm(SYSTEM_LOCAL, user_prompt, backend)
+    result = llm(SYSTEM_LOCAL, user_prompt, backend)
+    return (result, context_parts) if return_context else result
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +272,12 @@ Fasse die gegebenen Teilantworten zu einer kohärenten, umfassenden Gesamtantwor
 Priorisiere Antworten mit hohem Wichtigkeits-Score. Nenne konkrete Fakten und Beispiele.
 """
 
-def global_search(query: str, backend: str, max_communities: int = 50) -> str:
+def global_search(
+    query: str,
+    backend: str,
+    max_communities: int = 50,
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
     """
     LazyGraphRAG Map-Reduce:
     1. Pre-filter community reports by keyword overlap (Lazy: skip irrelevant ones)
@@ -232,27 +298,33 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
         ).fetchall()
     except Exception:
         conn.close()
-        return "[GlobalSearch] Keine Community Reports. Bitte detect_communities.py ausführen."
+        msg = "[GlobalSearch] Keine Community Reports. Bitte detect_communities.py ausführen."
+        return (msg, []) if return_context else msg
 
     conn.close()
 
     if not reports:
-        return "[GlobalSearch] Keine Community Reports gefunden."
+        msg = "[GlobalSearch] Keine Community Reports gefunden."
+        return (msg, []) if return_context else msg
 
-    # LazyGraphRAG: pre-filter by keyword overlap to skip irrelevant communities
-    query_words = set(re.findall(r"\w{4,}", query.lower()))
-    relevant = []
+    # LazyGraphRAG: Vorfilter über Embedding-Ähnlichkeit statt Wort-Overlap.
+    # Token-Overlap scheitert an Synonymen/Flexion („PV" vs „Photovoltaik",
+    # „Wärmepumpe" vs „Wärmepumpen") und fiel dann auf thematisch beliebige
+    # Top-Importance-Communities zurück.
+    q_vec = _embed_query(query)
+    scored = []
     for cid, title, summary, importance, key_entities_json in reports:
-        report_text = f"{title} {summary} {key_entities_json or ''}".lower()
-        report_words = set(re.findall(r"\w{4,}", report_text))
-        overlap = len(query_words & report_words)
-        if overlap > 0:
-            relevant.append((cid, title, summary, importance, overlap))
+        report_text = f"{title}. {summary or ''} {key_entities_json or ''}"[:1000]
+        r_vec = _report_embedding(cid, report_text)
+        sim = float(r_vec @ q_vec)
+        scored.append((cid, title, summary, importance, sim))
 
-    relevant.sort(key=lambda x: (-x[3], -x[4]))  # sort by importance then overlap
-
+    scored.sort(key=lambda x: -x[4])  # Relevanz zuerst; importance zählt im Reduce
+    relevant = [s for s in scored if s[4] >= 0.25][:20]
     if not relevant:
-        relevant = [(r[0], r[1], r[2], r[3], 0) for r in reports[:10]]
+        relevant = scored[:10]
+
+    query_words = set(re.findall(r"\w{4,}", query.lower()))
 
     # Augment with document summaries that overlap with query keywords
     conn2 = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
@@ -270,25 +342,42 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
         pass
     conn2.close()
 
-    # Map phase
+    # Map phase — Reports sind unabhängig, LLM-Calls laufen parallel
+    from concurrent.futures import ThreadPoolExecutor
+
+    extra = ""
+    if doc_summaries:
+        extra = "\n\nRELEVANTE DOKUMENTEN-ZUSAMMENFASSUNGEN:\n" + "\n".join(doc_summaries[:5])
+
+    map_inputs = [
+        (importance, f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}{extra}")
+        for cid, title, summary, importance, _ in relevant[:20]
+    ]
+
+    def _map_one(item: tuple) -> tuple:
+        importance, report_ctx = item
+        ans = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
+        return importance, report_ctx, ans
+
     partial_answers = []
-    for cid, title, summary, importance, _ in relevant[:20]:
-        extra = ""
-        if doc_summaries:
-            extra = "\n\nRELEVANTE DOKUMENTEN-ZUSAMMENFASSUNGEN:\n" + "\n".join(doc_summaries[:5])
-        report_ctx = f"COMMUNITY: {title} (Wichtigkeit: {importance}/10)\n\n{summary}{extra}"
-        answer = llm(SYSTEM_MAP, f"FRAGE: {query}\n\n{report_ctx}", backend)
-        if "NICHT_RELEVANT" not in answer:
-            partial_answers.append((importance, answer))
+    used_contexts: list[str] = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for importance, report_ctx, answer in pool.map(_map_one, map_inputs):
+            if "NICHT_RELEVANT" not in answer:
+                partial_answers.append((importance, answer))
+                used_contexts.append(report_ctx)
 
     if not partial_answers:
-        return "[GlobalSearch] Keine relevanten Community Reports für diese Frage gefunden."
+        msg = "[GlobalSearch] Keine relevanten Community Reports für diese Frage gefunden."
+        return (msg, []) if return_context else msg
 
     partial_answers.sort(key=lambda x: -x[0])
-    combined = "\n\n---\n\n".join(f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
+    combined = "\n\n---\n\n".join(
+        f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
 
     # Reduce phase
-    return llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
+    result = llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
+    return (result, used_contexts) if return_context else result
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +387,8 @@ def global_search(query: str, backend: str, max_communities: int = 50) -> str:
 SCHEMA_DESCRIPTION = """\
 Neo4j Schema:
 Nodes: Municipality(id), Document(id), Segment(rowid, impact_score, text, heading_context),
-       Chunk(chunk_id, text, impact_score, embedding), Entity(key, name, type, category, status, metrics),
+       Chunk(chunk_id, text, impact_score, embedding),
+       Entity(key, name, type, category, status, metrics),
        CommunityReport(community_id, title, summary, importance, domain)
 Relationships: Municipality-[:HAS_DOCUMENT]->Document, Document-[:HAS_SEGMENT]->Segment,
                Document-[:HAS_CHUNK]->Chunk, Segment-[:MENTIONS]->Entity,
@@ -316,13 +406,18 @@ Antworte NUR mit der Cypher-Abfrage – ohne Erklärung, ohne Markdown-Fences.
 
 Beispiele:
 - Frage: "Wie viele Gemeinden haben Klimaschutzkonzepte?"
-  Cypher: MATCH (d:Document)-[:HAS_SEGMENT]->(s:Segment) WHERE s.heading_context CONTAINS 'Klimaschutz' RETURN count(DISTINCT d.id) AS anzahl
+  Cypher: MATCH (d:Document)-[:HAS_SEGMENT]->(s:Segment)
+          WHERE s.heading_context CONTAINS 'Klimaschutz'
+          RETURN count(DISTINCT d.id) AS anzahl
 
 - Frage: "Welche Entitäten vom Typ Förderprogramm wurden am häufigsten erwähnt?"
-  Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment) RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
+  Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment)
+          RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
 """
 
-def text2cypher(query: str, backend: str) -> str:
+def text2cypher(
+    query: str, backend: str, return_context: bool = False
+) -> str | tuple[str, list[str]]:
     """Translate natural language to Cypher; execute; format result."""
     cypher = llm(SYSTEM_CYPHER, query, backend).strip()
     # Strip any accidental markdown
@@ -337,19 +432,22 @@ def text2cypher(query: str, backend: str) -> str:
             rows = result.data()
         driver.close()
     except Exception as e:
-        return f"[Text2Cypher] Cypher-Fehler: {e}\nQuery: {cypher}"
+        msg = f"[Text2Cypher] Cypher-Fehler: {e}\nQuery: {cypher}"
+        return (msg, []) if return_context else msg
 
     if not rows:
-        return f"[Text2Cypher] Keine Ergebnisse.\nCypher: {cypher}"
+        msg = f"[Text2Cypher] Keine Ergebnisse.\nCypher: {cypher}"
+        return (msg, []) if return_context else msg
 
     # Format result as markdown table
-    if rows:
-        keys = list(rows[0].keys())
-        header = " | ".join(keys)
-        sep    = " | ".join(["---"] * len(keys))
-        body   = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
-        return f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{cypher}`"
-    return ""
+    keys = list(rows[0].keys())
+    header = " | ".join(keys)
+    sep    = " | ".join(["---"] * len(keys))
+    body   = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
+    formatted = f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{cypher}`"
+    # Kontext = das faktische Query-Ergebnis, gegen das die Antwort geprüft wird
+    ctx = [f"CYPHER: {cypher}", f"ERGEBNIS:\n{header}\n{body}"]
+    return (formatted, ctx) if return_context else formatted
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +459,8 @@ Du bist ein Retrieval-Router für ein GraphRAG-System über kommunale Klimadaten
 Analysiere die Frage und wähle das beste Werkzeug:
 
 - local_search:  Spezifische Detail-Fragen zu konkreten Gemeinden, Projekten, Maßnahmen
-- global_search: Abstrakte Übersichts-Fragen ("Was sind die wichtigsten Trends?", "Welche Gemeinden...")
+- global_search: Abstrakte Übersichts-Fragen
+  ("Was sind die wichtigsten Trends?", "Welche Gemeinden...")
 - text2cypher:   Exakte Zählungen, Aggregationen, Auflistungen ("Wie viele...", "Welche haben...")
 
 Antworte NUR mit einem JSON-Objekt: {"tool": "local_search"|"global_search"|"text2cypher"}
@@ -403,16 +502,29 @@ def critic_check(question: str, answer: str, backend: str) -> dict:
     try:
         return json.loads(raw)
     except Exception:
-        return {"is_complete": True, "confidence": 0.5, "missing_aspects": [], "follow_up_query": None}
+        return {"is_complete": True, "confidence": 0.5,
+                "missing_aspects": [], "follow_up_query": None}
 
 
 # ---------------------------------------------------------------------------
 # Main query loop
 # ---------------------------------------------------------------------------
 
-def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
+def answer(
+    query: str,
+    backend: str = "ollama",
+    verbose: bool = False,
+    return_context: bool = False,
+) -> str | tuple[str, list[str]]:
+    """Beantwortet eine Frage über den Router.
+
+    Mit return_context=True wird (answer, contexts) zurückgegeben — die
+    Liste aller Retrieval-Kontexte über sämtliche Critic-Loops hinweg.
+    Die Evaluation braucht diese für Faithfulness/Context-Recall.
+    """
     current_query = query
     all_answers   = []
+    all_contexts: list[str] = []
 
     for loop in range(MAX_CRITIC_LOOPS):
         # Route
@@ -422,13 +534,14 @@ def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
 
         # Execute
         if tool == "local_search":
-            result = local_search(current_query, backend)
+            result, ctx = local_search(current_query, backend, return_context=True)
         elif tool == "global_search":
-            result = global_search(current_query, backend)
+            result, ctx = global_search(current_query, backend, return_context=True)
         else:
-            result = text2cypher(current_query, backend)
+            result, ctx = text2cypher(current_query, backend, return_context=True)
 
         all_answers.append(result)
+        all_contexts.extend(ctx)
 
         # Critic
         review = critic_check(query, result, backend)
@@ -454,8 +567,9 @@ def answer(query: str, backend: str = "ollama", verbose: bool = False) -> str:
             f"URSPRUNGSFRAGE: {query}\n\nTEILANTWORTEN:\n{combined}",
             backend,
         )
-        return final
-    return all_answers[0]
+    else:
+        final = all_answers[0]
+    return (final, all_contexts) if return_context else final
 
 
 # ---------------------------------------------------------------------------

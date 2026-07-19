@@ -9,7 +9,7 @@ Visual overview of the full index-time and query-time flows.
 ```mermaid
 flowchart TD
     subgraph CRAWL["🕷️ Stage 0 — Distributed Crawl"]
-        S0A[seed_jobs table\nATOMIC municipality claim] --> S0B[Fetcher\nasync · polite delay · robots.txt]
+        S0A[seed_jobs table\nATOMIC municipality claim] --> S0B[Fetcher\npolite delay · robots.txt · Retry/Backoff]
         S0B --> S0C{Content-Type?}
         S0C -->|text/html| S0D[HTML Parser\nmeta tags · heading_context h1–h6\noutlinks → document_links]
         S0C -->|application/pdf| S0E[PDF Parser\nper-page sub-chunking\n≤3000 chars → paragraph split]
