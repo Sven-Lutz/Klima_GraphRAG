@@ -189,3 +189,9 @@ Test-Suite aus.
 - Große Crawls: Standby des Rechners verhindern (sonst bricht der Lauf ab)
 - Datenbank liegt unter `crawler/data/db/` — oder per `KLIMA_DB_PATH` umbiegen
 - Ollama nötig für Graph-Extraktion/Query/Evaluation; die Demo läuft ohne
+
+---
+
+## 📄 Lizenz
+
+[MIT](LICENSE)
