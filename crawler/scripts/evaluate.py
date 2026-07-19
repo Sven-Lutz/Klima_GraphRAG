@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -36,8 +35,12 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from crawler.core.config import (
-    DB_PATH, OLLAMA_URL, OLLAMA_MODEL,
-    LLM_SEED, LLM_TEMPERATURE, PROMPT_VERSION,
+    DB_PATH,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
+    PROMPT_VERSION,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -261,7 +264,8 @@ Antworte mit JSON: {"factual_correctness": 0.0-1.0, "completeness": 0.0-1.0}
 
 def score_faithfulness(answer: str, context: list[str], backend: str) -> float:
     ctx = "\n---\n".join(context[:5])
-    raw = _llm(SYSTEM_FAITHFULNESS, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}", backend, json_mode=True)
+    raw = _llm(SYSTEM_FAITHFULNESS, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}",
+               backend, json_mode=True)
     try:
         return float(json.loads(raw).get("score", 0.5))
     except Exception:
@@ -270,7 +274,8 @@ def score_faithfulness(answer: str, context: list[str], backend: str) -> float:
 
 def score_context_recall(answer: str, context: list[str], backend: str) -> float:
     ctx = "\n---\n".join(context[:5])
-    raw = _llm(SYSTEM_CONTEXT_RECALL, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}", backend, json_mode=True)
+    raw = _llm(SYSTEM_CONTEXT_RECALL, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}",
+               backend, json_mode=True)
     try:
         return float(json.loads(raw).get("score", 0.5))
     except Exception:
@@ -305,7 +310,8 @@ def claimify(answer: str, context: list[str], backend: str) -> tuple[int, int]:
     supported = 0
     for claim in claims[:10]:  # cap to avoid excessive LLM calls
         try:
-            r = _llm(SYSTEM_CLAIM_VERIFY, f"CLAIM: {claim}\n\nKONTEXT:\n{ctx}", backend, json_mode=True)
+            r = _llm(SYSTEM_CLAIM_VERIFY, f"CLAIM: {claim}\n\nKONTEXT:\n{ctx}",
+                     backend, json_mode=True)
             if json.loads(r).get("supported", False):
                 supported += 1
         except Exception:
@@ -325,7 +331,10 @@ Vergleiche die beiden Antworten auf die gegebene Frage hinsichtlich:
   3. Quellenvertrauen (Faithfulness): Keine Halluzinationen?
 
 Wähle die bessere Antwort und begründe kurz.
-Antworte mit JSON: {"winner": "A"|"B"|"tie", "scores_A": {"completeness":0-10,"diversity":0-10,"faithfulness":0-10}, "scores_B": {...}, "reasoning": "..."}
+Antworte mit JSON:
+{"winner": "A"|"B"|"tie",
+ "scores_A": {"completeness":0-10,"diversity":0-10,"faithfulness":0-10},
+ "scores_B": {...}, "reasoning": "..."}
 """
 
 
@@ -469,9 +478,12 @@ def run_evaluation(
 
         if context_snippets:
             try:
-                result.faithfulness    = score_faithfulness(system_answer, context_snippets, backend)
-                result.context_recall  = score_context_recall(system_answer, context_snippets, backend)
-                result.n_claims, result.n_supported_claims = claimify(system_answer, context_snippets, backend)
+                result.faithfulness = score_faithfulness(
+                    system_answer, context_snippets, backend)
+                result.context_recall = score_context_recall(
+                    system_answer, context_snippets, backend)
+                result.n_claims, result.n_supported_claims = claimify(
+                    system_answer, context_snippets, backend)
                 print(f"   faithfulness={result.faithfulness:.2f}  "
                       f"ctx_recall={result.context_recall:.2f}  "
                       f"claims={result.n_supported_claims}/{result.n_claims}")
@@ -580,7 +592,8 @@ if __name__ == "__main__":
                   f"{'' if r.get('consistent', True) else '  (positions-inkonsistent → tie)'}")
         print(f"\n🏆 AutoE Ergebnis: A={wins['A']}  B={wins['B']}  Tie={wins['tie']}")
         if n_inconsistent:
-            print(f"   {n_inconsistent} Urteile waren positionsabhängig und wurden als Tie gewertet")
+            print(f"   {n_inconsistent} Urteile waren positionsabhängig "
+                  f"und wurden als Tie gewertet")
     else:
         n = args.questions
         run_evaluation(

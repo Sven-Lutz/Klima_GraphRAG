@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 import posixpath
 import re
-from typing import Iterable, Optional
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 # OPTIMIERUNG 3: slots=True hinzugefügt für besseres RAM-Management
@@ -18,7 +18,7 @@ class CanonicalizeResult:
 class Canonicalizer:
 
     _RE_MULTI_SLASH = re.compile(r"/{2,}")
-    _RE_DEFAULT_PORT = re.compile(r"^(?P<host>\[[^\]]+\]|[^:]+):(?P<port>\d+)$")  
+    _RE_DEFAULT_PORT = re.compile(r"^(?P<host>\[[^\]]+\]|[^:]+):(?P<port>\d+)$")
 
     def __init__(
         self,
@@ -116,7 +116,7 @@ class Canonicalizer:
                 # Geänderte Logik: Regex statt For-Schleife
                 if self._prefix_re and self._prefix_re.match(kl):
                     continue
-                    
+
                 kept.append((k, v))
 
         kept.sort(key=lambda kv: (kv[0].lower(), kv[1]))

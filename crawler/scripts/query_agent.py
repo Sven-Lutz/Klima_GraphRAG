@@ -46,16 +46,20 @@ import json
 import re
 import sqlite3
 import struct
-from pathlib import Path
-from typing import Any, Optional
 
 import numpy as np
 
 from crawler.core.config import (
-    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_URL, OLLAMA_MODEL, MAX_CRITIC_LOOPS,
-    LOCAL_SEARCH_TOP_K, GLOBAL_SEARCH_MAX_COMMUNITIES,
-    EMBED_MODEL, LLM_SEED, LLM_TEMPERATURE,
+    DB_PATH,
+    EMBED_MODEL,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    MAX_CRITIC_LOOPS,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -200,7 +204,8 @@ def local_search(
 
     if corpus.get("matrix") is None:
         conn.close()
-        msg = "[LocalSearch] Keine eingebetteten Chunks gefunden. Bitte generate_embeddings.py ausführen."
+        msg = ("[LocalSearch] Keine eingebetteten Chunks gefunden. "
+               "Bitte generate_embeddings.py ausführen.")
         return (msg, []) if return_context else msg
 
     chunk_ids = corpus["chunk_ids"]
@@ -367,7 +372,8 @@ def global_search(
         return (msg, []) if return_context else msg
 
     partial_answers.sort(key=lambda x: -x[0])
-    combined = "\n\n---\n\n".join(f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
+    combined = "\n\n---\n\n".join(
+        f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
 
     # Reduce phase
     result = llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
@@ -381,7 +387,8 @@ def global_search(
 SCHEMA_DESCRIPTION = """\
 Neo4j Schema:
 Nodes: Municipality(id), Document(id), Segment(rowid, impact_score, text, heading_context),
-       Chunk(chunk_id, text, impact_score, embedding), Entity(key, name, type, category, status, metrics),
+       Chunk(chunk_id, text, impact_score, embedding),
+       Entity(key, name, type, category, status, metrics),
        CommunityReport(community_id, title, summary, importance, domain)
 Relationships: Municipality-[:HAS_DOCUMENT]->Document, Document-[:HAS_SEGMENT]->Segment,
                Document-[:HAS_CHUNK]->Chunk, Segment-[:MENTIONS]->Entity,
@@ -399,10 +406,13 @@ Antworte NUR mit der Cypher-Abfrage – ohne Erklärung, ohne Markdown-Fences.
 
 Beispiele:
 - Frage: "Wie viele Gemeinden haben Klimaschutzkonzepte?"
-  Cypher: MATCH (d:Document)-[:HAS_SEGMENT]->(s:Segment) WHERE s.heading_context CONTAINS 'Klimaschutz' RETURN count(DISTINCT d.id) AS anzahl
+  Cypher: MATCH (d:Document)-[:HAS_SEGMENT]->(s:Segment)
+          WHERE s.heading_context CONTAINS 'Klimaschutz'
+          RETURN count(DISTINCT d.id) AS anzahl
 
 - Frage: "Welche Entitäten vom Typ Förderprogramm wurden am häufigsten erwähnt?"
-  Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment) RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
+  Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment)
+          RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
 """
 
 def text2cypher(
@@ -449,7 +459,8 @@ Du bist ein Retrieval-Router für ein GraphRAG-System über kommunale Klimadaten
 Analysiere die Frage und wähle das beste Werkzeug:
 
 - local_search:  Spezifische Detail-Fragen zu konkreten Gemeinden, Projekten, Maßnahmen
-- global_search: Abstrakte Übersichts-Fragen ("Was sind die wichtigsten Trends?", "Welche Gemeinden...")
+- global_search: Abstrakte Übersichts-Fragen
+  ("Was sind die wichtigsten Trends?", "Welche Gemeinden...")
 - text2cypher:   Exakte Zählungen, Aggregationen, Auflistungen ("Wie viele...", "Welche haben...")
 
 Antworte NUR mit einem JSON-Objekt: {"tool": "local_search"|"global_search"|"text2cypher"}
@@ -491,7 +502,8 @@ def critic_check(question: str, answer: str, backend: str) -> dict:
     try:
         return json.loads(raw)
     except Exception:
-        return {"is_complete": True, "confidence": 0.5, "missing_aspects": [], "follow_up_query": None}
+        return {"is_complete": True, "confidence": 0.5,
+                "missing_aspects": [], "follow_up_query": None}
 
 
 # ---------------------------------------------------------------------------

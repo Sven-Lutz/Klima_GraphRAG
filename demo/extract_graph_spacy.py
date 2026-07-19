@@ -336,7 +336,7 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
     conn.close()
 
     print(f"\n{'═'*55}")
-    print(f" Graph-Extraktion abgeschlossen (spaCy)")
+    print(" Graph-Extraktion abgeschlossen (spaCy)")
     print(f" Chunks verarbeitet : {len(rows)}")
     print(f" Entitäten          : {total_e}")
     print(f" Beziehungen        : {total_r}")

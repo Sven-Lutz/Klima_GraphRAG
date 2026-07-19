@@ -21,7 +21,6 @@ import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pathlib import Path
 
 from crawler.core.config import DB_PATH
 
@@ -275,8 +274,6 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
     print("🔗 Starte Entity Resolution…")
     mapping = resolve(entities, sim_threshold=sim_threshold)
 
-    # Count unique original → canonical pairs
-    unique_pairs = set(mapping.items())
     n_originals = len(set(k[0] for k in mapping))
     n_canonicals = len(set(mapping.values()))
     n_merged = n_originals - n_canonicals
@@ -319,7 +316,7 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
     # Show top merges
     merges = [(o, c) for (o, et, cat), c in mapping.items() if o != c]
     if merges:
-        print(f"\n🔀 Beispiel-Zusammenführungen (Top 20):")
+        print("\n🔀 Beispiel-Zusammenführungen (Top 20):")
         for orig, canon in sorted(set(merges), key=lambda x: x[0])[:20]:
             print(f"   '{orig}' → '{canon}'")
 
@@ -328,7 +325,8 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Entity Resolution für den KlimaCrawler Knowledge Graph.")
+    parser = argparse.ArgumentParser(
+        description="Entity Resolution für den KlimaCrawler Knowledge Graph.")
     parser.add_argument("--similarity", type=float, default=0.85, help="Fuzzy-Schwelle (0.0-1.0)")
     parser.add_argument("--min-freq", type=int, default=1, help="Min. Häufigkeit für Aufnahme")
     args = parser.parse_args()

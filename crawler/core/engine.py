@@ -1,18 +1,17 @@
 # crawler/core/engine.py
 from __future__ import annotations
 
-import time
 import re
+import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib import robotparser
+from urllib.parse import urljoin as _urljoin
 from urllib.parse import urlsplit
 
 import requests
-from requests.adapters import HTTPAdapter
 import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from requests.adapters import HTTPAdapter
 
 from crawler.core.canonical import Canonicalizer
 from crawler.core.models import CrawlTask, FetchResult
@@ -21,28 +20,33 @@ from crawler.core.parsers.pdf_parser import parse_pdf
 from crawler.core.scheduler import PriorityScheduler
 from crawler.core.storage import Storage, default_worker_id
 
-from urllib.parse import urljoin as _urljoin
+# Kommunale Server haben oft kaputte Zertifikatsketten; wir fetchen mit
+# verify=False und unterdrücken die zugehörige Warnung
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _HIGH_IMPACT_WORDS = [
     r'klima\w*', r'klimaschutz\w*', r'klimaanpassung\w*', r'klimaneutral\w*',
     r'co2\b', r'thg\b', r'treibhausgas\w*', r'emission\w*', r'treibhausgasbilanz\w*',
     r'energiebericht\w*', r'klimabericht\w*', r'klimaschutzkonzept\w*', r'klimafahrplan\w*',
     r'energie-?\s?und\s?klimakonzept\w*', r'energie\w*', r'erneuerbar\w*', r'fernw(?:ä|ae)rme\w*',
-    r'nahw(?:ä|ae)rme\w*', r'w(?:ä|ae)rmenetz\w*', r'bhkw\b', r'blockheizkraftwerk\w*', r'w(?:ä|ae)rmepump\w*',
+    r'nahw(?:ä|ae)rme\w*', r'w(?:ä|ae)rmenetz\w*', r'bhkw\b', r'blockheizkraftwerk\w*',
+    r'w(?:ä|ae)rmepump\w*',
     r'geotherm\w*', r'biogas\w*', r'wasserkraft\w*', r'wasserstoff\b', r'h2\b',
     r'solar\w*', r'photovoltaik\w*', r'pv\b', r'windkraft\w*', r'windenergie\w*',
     r'speicher\w*', r'stromnetz\w*', r'smart\s?grid\w*', r'led\b', r'strombeschaffung\w*',
     r'sanier\w*', r'd(?:ä|ae)mm\w*', r'energieeffizienz\w*', r'passivhaus\w*',
     r'effizienzhaus\w*', r'kfw-\d+', r'geg\b', r'geb(?:ä|ae)udeenergiegesetz\w*',
     r'quartierskonzept\w*', r'fl(?:ä|ae)chennutzungsplan\w*', r'fnp\b', r'bebauungsplan\w*',
-    r'nachverdichtung\w*', r'mobilit(?:ä|ae)t\w*', r'verkehr\w*', r'verkehrswende\w*', r'emobilit(?:ä|ae)t\w*',
+    r'nachverdichtung\w*', r'mobilit(?:ä|ae)t\w*', r'verkehr\w*', r'verkehrswende\w*',
+    r'emobilit(?:ä|ae)t\w*',
     r'elektromobilit(?:ä|ae)t\w*', r'radverkehr\w*', r'radweg\w*', r'fahrrad\w*',
     r'verkehrsentwicklungsplan\w*', r'vep\b', r'lades(?:ä|ae)ul\w*', r'wallbox\w*',
     r'ladinfrastruktur\w*', r'carsharing\w*', r'(?:ö|oe)pnv\b', r'f(?:ö|oe)rder\w*',
     r'zuschuss\w*', r'mittel\w*', r'finanz\w*', r'investition\w*',
     r'projekttr(?:ä|ae)ger\w*', r'f(?:ö|oe)rderprogramm\w*', r'bewilligungsbescheid\w*',
     r'eigenanteil\w*', r'nki\b', r'kfw\b', r'bafa\b', r'efre\b', r'eler\b',
-    r'eu-?f(?:ö|oe)rder\w*', r'beschluss\w*', r'beschlussvorlage\w*', r'antrag\w*', r'drucksache\w*',
+    r'eu-?f(?:ö|oe)rder\w*', r'beschluss\w*', r'beschlussvorlage\w*', r'antrag\w*',
+    r'drucksache\w*',
     r'vorlage\w*', r'tagesordnungspunkt\w*', r'sitzung\w*', r'niederschrift\w*',
     r'protokoll\w*', r'klimabeirat\w*', r'umweltbeirat\w*', r'stadtwerk\w*'
 ]
@@ -75,7 +79,8 @@ def _segment_features(text: str) -> Tuple[int, int, int]:
 try:
     from crawler.core.traps import TrapDetector
     _trap_detector = TrapDetector(
-        block_extensions=["jpg", "jpeg", "png", "gif", "svg", "mp4", "zip", "rar", "css", "js", "xml", "exe", "doc", "docx"],
+        block_extensions=["jpg", "jpeg", "png", "gif", "svg", "mp4", "zip", "rar",
+                          "css", "js", "xml", "exe", "doc", "docx"],
         block_path_patterns=[
             '/kalender', 'veranstaltungen', 'termine', 'sitzungskalender',
             'monat=', 'jahr=', 'month=', 'year=', 'datum=',
@@ -140,7 +145,8 @@ class Engine:
         self.canon = canonicalizer or Canonicalizer(
             strip_fragment=True,
             drop_query_prefixes=["utm_", "pk_"],
-            drop_query_keys=["fbclid", "gclid", "session", "jsessionid", "sid", "phpsessid", "msclkid"],
+            drop_query_keys=["fbclid", "gclid", "session", "jsessionid", "sid",
+                             "phpsessid", "msclkid"],
             normalize_trailing_slash=True,
         )
 
@@ -485,7 +491,8 @@ class Engine:
                     self._enqueued.add(sc)
                     n_sitemap += 1
             if n_sitemap:
-                print(f"[sitemap] {muni_id}: {n_sitemap} relevante URLs aus Sitemaps eingereiht", flush=True)
+                print(f"[sitemap] {muni_id}: {n_sitemap} relevante URLs aus Sitemaps eingereiht",
+                      flush=True)
 
         while self.scheduler.has_next():
             task = self.scheduler.next()
@@ -494,7 +501,8 @@ class Engine:
             if task.municipality_id in aborted_munis:
                 continue
             if pages_since_last_pdf.get(task.municipality_id, 0) >= autostop_threshold:
-                print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} Seiten kein PDF. Breche Kommune ab.", flush=True)
+                print(f"🛑 Autostop für {task.municipality_id}: Seit {autostop_threshold} "
+                      f"Seiten kein PDF. Breche Kommune ab.", flush=True)
                 aborted_munis.add(task.municipality_id)
                 continue
 
@@ -529,10 +537,11 @@ class Engine:
                     continue
 
             try:
-                print(f"[fetch] depth={task.depth} muni={task.municipality_id} url={task.url}", flush=True)
+                print(f"[fetch] depth={task.depth} muni={task.municipality_id} "
+                      f"url={task.url}", flush=True)
 
                 fr = self.fetch(task.url)
-                
+
                 muni = task.municipality_id
                 if self._looks_like_pdf(task.url, fr.content_type):
                     pages_since_last_pdf[muni] = 0
@@ -560,7 +569,8 @@ class Engine:
                         parse_result = parse_html(fr, fr.url_final)
 
                         if len(parse_result.segments) > 0:
-                            self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+                            self.storage.store_segments_scored(
+                                doc_id, parse_result.segments, _segment_features)
 
                         # Store HTML meta tags (description, date, author, ...)
                         if parse_result.meta:
@@ -570,8 +580,10 @@ class Engine:
                         # und Enqueue wiederverwenden
                         canonical_links: list[tuple[str, str]] = []
                         for link in parse_result.out_links:
-                            link_url = link[0] if isinstance(link, tuple) else getattr(link, "url", link)
-                            anchor = link[1] if isinstance(link, tuple) else getattr(link, "anchor", "")
+                            link_url = (link[0] if isinstance(link, tuple)
+                                        else getattr(link, "url", link))
+                            anchor = (link[1] if isinstance(link, tuple)
+                                      else getattr(link, "anchor", ""))
                             lc = canon(link_url)
                             if lc:
                                 canonical_links.append((lc, anchor))
@@ -606,7 +618,8 @@ class Engine:
                         parse_result = parse_pdf(fr, fr.url_final)
 
                         if len(parse_result.segments) > 0:
-                            self.storage.store_segments_scored(doc_id, parse_result.segments, _segment_features)
+                            self.storage.store_segments_scored(
+                                doc_id, parse_result.segments, _segment_features)
 
                     self.storage.mark_visited(url_c, status)
 

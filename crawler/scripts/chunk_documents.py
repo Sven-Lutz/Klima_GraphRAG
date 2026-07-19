@@ -33,15 +33,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from crawler.core.config import DB_PATH
 from crawler.core.segmentation.chunker import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_OVERLAP,
     chunk_text,
-    count_tokens,
 )
-
-from crawler.core.config import DB_PATH
-
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -196,7 +193,8 @@ def main(
     conn = sqlite3.connect(str(_db), timeout=60.0, isolation_level=None)
     setup_db(conn)
 
-    print(f"⚙️  Chunking segments  (size={chunk_size} tok, overlap={overlap} tok, min_score={min_score})")
+    print(f"⚙️  Chunking segments  (size={chunk_size} tok, overlap={overlap} tok, "
+          f"min_score={min_score})")
 
     with conn:
         segs, chunks = process_segments(

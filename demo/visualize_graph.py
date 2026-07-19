@@ -22,7 +22,7 @@ import argparse
 import json
 import sqlite3
 import webbrowser
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 

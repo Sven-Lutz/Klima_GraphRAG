@@ -166,7 +166,7 @@ def vacuum(con: sqlite3.Connection, into: str | None, db_path: Path) -> None:
         print(f"  VACUUM INTO {target} … (kann dauern)")
         con.execute("VACUUM INTO ?", (str(target),))
         print(f"  ✓ Kompakte Kopie: {target} ({_mb(target.stat().st_size)})")
-        print(f"    Original unverändert. Nach Prüfung manuell ersetzen:")
+        print("    Original unverändert. Nach Prüfung manuell ersetzen:")
         print(f"    mv {target} {db_path}")
     else:
         # In-place VACUUM braucht transient bis zu 2x DB-Größe freien Platz!
@@ -179,9 +179,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Arbeits-DB verkleinern (Report ohne Flags)")
     ap.add_argument("--db", default=str(DB_PATH))
     ap.add_argument("--mark-boilerplate", action="store_true",
-                    help="Seitenübergreifend identische Segmente (Menüs/Footer) als is_negative markieren")
+                    help="Seitenübergreifend identische Segmente (Menüs/Footer) "
+                         "als is_negative markieren")
     ap.add_argument("--boilerplate-min-docs", type=int, default=5,
-                    help="Ab wie vielen Dokumenten pro Kommune ein Segment als Boilerplate gilt (default: 5)")
+                    help="Ab wie vielen Dokumenten pro Kommune ein Segment "
+                         "als Boilerplate gilt (default: 5)")
     ap.add_argument("--prune-negative", action="store_true",
                     help="Segmente mit is_negative=1 löschen (nie gechunkt)")
     ap.add_argument("--clear-chunked-segment-text", action="store_true",

@@ -20,14 +20,16 @@ import json
 import sqlite3
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from crawler.core.config import (
-    DB_PATH, OLLAMA_URL, OLLAMA_MODEL,
-    LLM_SEED, LLM_TEMPERATURE,
+    DB_PATH,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -57,7 +59,8 @@ class DocumentSummary(BaseModel):
     ]
     key_topics: List[str] = Field(
         default_factory=list,
-        description="Bis zu 5 Themenstichwörter, z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']",
+        description=("Bis zu 5 Themenstichwörter, "
+                     "z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']"),
     )
     key_entities: List[str] = Field(
         default_factory=list,
@@ -85,7 +88,8 @@ SYSTEM_MSG_JSON = SYSTEM_MSG + """
 Antworte NUR mit einem JSON-Objekt in exakt diesem Format:
 {
   "summary": "3-5 Sätze Kernaussagen (bzw. 1 Satz Begründung wenn nicht klimarelevant)",
-  "document_type": "Klimaschutzkonzept|Energiebericht|Wärmeplanung|Beschluss|Haushalt|Bauleitplanung|Förderbescheid|Bericht|Sonstiges",
+  "document_type": "Klimaschutzkonzept|Energiebericht|Wärmeplanung|Beschluss\
+|Haushalt|Bauleitplanung|Förderbescheid|Bericht|Sonstiges",
   "key_topics": ["bis zu 5 Themenstichwörter"],
   "key_entities": ["bis zu 5 wichtige Akteure/Programme"],
   "year_range": "z.B. 2023-2030 oder null",

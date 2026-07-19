@@ -1,0 +1,28 @@
+[project]
+name = "kit-klimacrawler"
+version = "1.0.0"
+description = "GraphRAG-System für kommunale Klimaschutzdaten: Crawl, Wissensgraph und natürlichsprachige Suche über 2.056 bayerische Kommunen"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Laufzeit-Abhängigkeiten: siehe crawler/requirements.txt (nach Stages gruppiert)
+# Entwicklungs-Abhängigkeiten: requirements-dev.txt
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E/W: pycodestyle (PEP8) · F: pyflakes · I: Import-Sortierung · N: Naming
+select = ["E", "W", "F", "I", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+# Demo-Skripte manipulieren sys.path vor den crawler-Imports (bewusst)
+"demo/*.py" = ["E402"]
+# Reiner Content-Generator: lange Fließtext-Strings sind hier Daten, kein Code
+"docs/create_onepagers.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
