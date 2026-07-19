@@ -4,16 +4,14 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 try:
     from neo4j import GraphDatabase
 except ImportError:  # Modul bleibt für Tests/Tools ohne Neo4j importierbar
     GraphDatabase = None
 
-from crawler.core.config import DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
-
+from crawler.core.config import DB_PATH, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 # ---------- normalization / keys ----------
 _WS = re.compile(r"\s+")
@@ -72,7 +70,9 @@ class TripletRow:
     segment_rowid: int
     graph_json: str
 
-def iter_graph_triplets(conn: sqlite3.Connection, limit: Optional[int] = None) -> Iterable[TripletRow]:
+def iter_graph_triplets(
+    conn: sqlite3.Connection, limit: Optional[int] = None
+) -> Iterable[TripletRow]:
     sql = """
     SELECT municipality_id, document_id, segment_rowid, graph_json
     FROM graph_triplets
@@ -96,7 +96,8 @@ def get_segment_meta(
 ) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     """Returns (impact_score, text_snippet, heading_context) for a segment."""
     cur = conn.execute(
-        "SELECT COALESCE(impact_score,0), text, heading_context FROM segments WHERE rowid=? LIMIT 1",
+        "SELECT COALESCE(impact_score,0), text, heading_context "
+        "FROM segments WHERE rowid=? LIMIT 1",
         (int(segment_rowid),),
     )
     row = cur.fetchone()
@@ -236,7 +237,8 @@ def main(limit: Optional[int] = None):
         for stmt in SCHEMA_CYPHER:
             session.run(stmt)
 
-        # Optional: ensure APOC exists if you keep the metrics merge (otherwise remove UPSERT_ENTITY usage of apoc)
+        # Optional: ensure APOC exists if you keep the metrics merge
+        # (otherwise remove UPSERT_ENTITY usage of apoc)
         # session.run("RETURN apoc.version()")
 
         n_rows = 0
@@ -244,7 +246,7 @@ def main(limit: Optional[int] = None):
         n_rels = 0
         n_dangling = 0
 
-        BATCH_SIZE = 200  # Triplets pro Flush
+        batch_size = 200  # Triplets pro Flush
         base_batch: List[dict] = []
         entity_batch: List[dict] = []
         rel_batches: Dict[str, List[dict]] = {}
@@ -325,7 +327,7 @@ def main(limit: Optional[int] = None):
                 })
                 n_rels += 1
 
-            if n_rows % BATCH_SIZE == 0:
+            if n_rows % batch_size == 0:
                 flush()
                 print(f"[neo4j] processed {n_rows} triplets...")
 
@@ -333,7 +335,8 @@ def main(limit: Optional[int] = None):
 
         print(f"✅ Done. triplets={n_rows}, entities_upserts~={n_entities}, rel_upserts~={n_rels}")
         if n_dangling:
-            print(f"   ⚠  {n_dangling} Relationships verworfen (Endpunkt keine extrahierte Entität)")
+            print(f"   ⚠  {n_dangling} Relationships verworfen "
+                  f"(Endpunkt keine extrahierte Entität)")
 
         # Export document link graph (LINKS_TO edges)
         n_links = 0

@@ -8,18 +8,19 @@ import pandas as pd
 import torch
 from bertopic import BERTopic
 from bertopic.representation import KeyBERTInspired
-from sklearn.feature_extraction.text import CountVectorizer
 from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import CountVectorizer
 
 from crawler.core.config import DB_PATH
+
 OUT_DIR = Path("topic_out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 1. NEU: Erweiterte Liste für deutsche Stoppwörter (Behörden-Rauschen filtern)
 GERMAN_STOP_WORDS = [
-    "der", "die", "das", "und", "in", "den", "von", "zu", "im", "für", "mit", 
-    "auf", "des", "sich", "als", "ein", "eine", "ist", "werden", "aus", "dem", 
-    "bei", "um", "zur", "oder", "über", "sind", "auch", "am", "an", "nach", 
+    "der", "die", "das", "und", "in", "den", "von", "zu", "im", "für", "mit",
+    "auf", "des", "sich", "als", "ein", "eine", "ist", "werden", "aus", "dem",
+    "bei", "um", "zur", "oder", "über", "sind", "auch", "am", "an", "nach",
     "wie", "wir", "dass", "durch", "zum", "es", "nicht", "noch", "was", "wird",
     "da", "kann", "können", "mehr", "nur", "so", "hat", "haben", "bis", "sehr"
 ]
@@ -85,7 +86,9 @@ def main():
         per_doc=6,
     )
     if df.empty:
-        raise RuntimeError("Keine Segmente gefunden! Stelle sicher, dass der Crawler mit Scores gelaufen ist.")
+        raise RuntimeError(
+            "Keine Segmente gefunden! Stelle sicher, dass der Crawler mit Scores gelaufen ist."
+        )
 
     docs = df["text"].tolist()
     print(f"{len(docs):,} bewertete Segmente für das Topic Modeling geladen.")
@@ -97,7 +100,7 @@ def main():
         device = "mps"   # Apple Silicon (M1/M2/M3)
     else:
         device = "cpu"   # Fallback
-        
+
     print(f"Embedding Device erkannt: {device}")
 
     print("Lade Modell für Vektorisierung...")
@@ -106,7 +109,6 @@ def main():
 
     # Precompute embeddings (schneller & reproduzierbarer)
     print("Berechne Embeddings (dein Mac wird jetzt kurz warm)...")
-    batch_size = 256 if device in ["cuda", "mps"] else 64
     embeddings = embedding_model.encode(
         docs,
         batch_size=256 if device == "cuda" else 64,
@@ -152,7 +154,8 @@ def main():
     out.to_parquet(OUT_DIR / "segment_topics.parquet", index=False)
 
     topic_model.visualize_topics().write_html(str(OUT_DIR / "topic_map.html"))
-    topic_model.visualize_barchart(top_n_topics=15).write_html(str(OUT_DIR / "topic_bar_chart.html"))
+    topic_model.visualize_barchart(top_n_topics=15).write_html(
+        str(OUT_DIR / "topic_bar_chart.html"))
 
     print(f"🎉 Fertig! Die Visualisierungen und Datensätze liegen im Ordner: {OUT_DIR.resolve()}")
 

@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-
 WIKIPEDIA_API = "https://de.wikipedia.org/w/api.php"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 
@@ -412,7 +411,9 @@ def sparql_post_json(client: httpx.Client, query: str, retries: int) -> dict[str
                 return r.json()
             except Exception as e:
                 body = (r.text or "")[:2000].replace("\n", " ")
-                raise RuntimeError(f"SPARQL non-JSON response (HTTP {r.status_code}): {body}") from e
+                raise RuntimeError(
+                    f"SPARQL non-JSON response (HTTP {r.status_code}): {body}"
+                ) from e
 
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
             last_err = e
@@ -537,7 +538,8 @@ SELECT DISTINCT ?item ?itemLabel ?ags ?website ?coord ?pop ?popTime ?adminLabel 
                         rec["population"] = pop_val
                         rec["population_date"] = pop_time
                     else:
-                        if pop_time and (rec["population_date"] is None or pop_time > rec["population_date"]):
+                        if pop_time and (rec["population_date"] is None
+                                         or pop_time > rec["population_date"]):
                             rec["population"] = pop_val
                             rec["population_date"] = pop_time
 
@@ -625,7 +627,10 @@ def write_municipalities_csv(path: Path, rows: list[MunicipalityRow]) -> None:
         for r in rows:
             d = {k: getattr(r, k) for k in CSV_FIELDS}
             d["ags"] = normalize_ags(d.get("ags")) or ""
-            d["allowed_domains"] = "|".join(sorted({x.strip().lower() for x in (d.get("allowed_domains") or "").split("|") if x.strip()}))
+            d["allowed_domains"] = "|".join(sorted({
+                x.strip().lower()
+                for x in (d.get("allowed_domains") or "").split("|") if x.strip()
+            }))
             w.writerow(d)
     tmp.replace(path)
 
@@ -680,7 +685,10 @@ def write_municipalities_sqlite(db_path: Path, rows: list[MunicipalityRow]) -> N
                 r.population,
                 r.population_date,
                 r.homepage_url,
-                "|".join(sorted({x.strip().lower() for x in (r.allowed_domains or "").split("|") if x.strip()})),
+                "|".join(sorted({
+                    x.strip().lower()
+                    for x in (r.allowed_domains or "").split("|") if x.strip()
+                })),
                 r.lat,
                 r.lon,
                 r.wikipedia_url,
@@ -721,7 +729,8 @@ def main() -> None:
     timeout_wd = httpx.Timeout(args.timeout * 6, connect=args.timeout * 3)
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
 
-    with httpx.Client(headers=HTTP_HEADERS, timeout=timeout_mw, limits=limits) as mw_client, httpx.Client(
+    with httpx.Client(headers=HTTP_HEADERS, timeout=timeout_mw,
+                      limits=limits) as mw_client, httpx.Client(
         headers=SPARQL_HEADERS, timeout=timeout_wd, limits=limits
     ) as wd_client:
         wt = fetch_wikipedia_wikitext(mw_client, cache_dir)
@@ -820,7 +829,9 @@ def main() -> None:
                 wikidata_qid=m.qid,
                 wikipedia_revision=m.revid,
                 last_checked=last_checked,
-                source="wikipedia(wikitext section) + wikidata(P439,P856,P625,P1082,P585,P131) + wikidata(P131* RB fill)",
+                source=("wikipedia(wikitext section) "
+                        "+ wikidata(P439,P856,P625,P1082,P585,P131) "
+                        "+ wikidata(P131* RB fill)"),
             )
         )
 

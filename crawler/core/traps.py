@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Iterable
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +53,7 @@ class TrapDetector:
         )
 
         self._block_ext = set(self.cfg.block_extensions)
-        
+
         if self.cfg.block_path_patterns:
             escaped_paths = [re.escape(p) for p in self.cfg.block_path_patterns]
             self._path_block_re = re.compile("|".join(escaped_paths), re.IGNORECASE)
@@ -117,7 +116,7 @@ class TrapDetector:
                         return True
                 except ValueError:
                     pass
-            
+
             if depth > self.cfg.max_pagination_depth:
                 return True
 

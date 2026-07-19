@@ -4,7 +4,6 @@ import tiktoken
 
 from crawler.core.segmentation.chunker import (
     ENCODING_NAME,
-    Chunk,
     chunk_text,
     count_tokens,
 )

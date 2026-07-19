@@ -28,13 +28,16 @@ import argparse
 import sqlite3
 import struct
 from datetime import datetime, timezone
-from typing import Optional
 
 import numpy as np
 
 from crawler.core.config import (
-    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    EMBED_MODEL, EMBED_BATCH_SIZE,
+    DB_PATH,
+    EMBED_BATCH_SIZE,
+    EMBED_MODEL,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
 )
 
 DEFAULT_MODEL = EMBED_MODEL
@@ -261,6 +264,7 @@ if __name__ == "__main__":
     ap.add_argument("--model",    default=DEFAULT_MODEL, help="SentenceTransformers Modell-Name")
     ap.add_argument("--batch",    type=int, default=DEFAULT_BATCH)
     ap.add_argument("--limit",    type=int, default=50_000, help="Max. Chunks pro Lauf")
-    ap.add_argument("--neo4j",    action="store_true",     help="Chunks + Vektoren nach Neo4j exportieren")
+    ap.add_argument("--neo4j",    action="store_true",
+                    help="Chunks + Vektoren nach Neo4j exportieren")
     args = ap.parse_args()
     main(model_name=args.model, batch_size=args.batch, limit=args.limit, push_neo4j=args.neo4j)

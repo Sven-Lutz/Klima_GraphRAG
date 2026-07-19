@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sqlite3
+import sys
 import threading
 import time
-import logging
-import sys
 from datetime import timedelta
 
 from crawler.core.engine import Engine, EngineLimits
@@ -34,13 +34,13 @@ HEARTBEAT_EVERY_SECONDS = 30.0
 
 KLIMA_KEYWORDS = {
     "positive": [
-        "klima", "klimaschutz", "energie", "waermeplanung", "wärmeplanung", 
-        "co2", "thg", "solar", "photovoltaik", "pv", "wind", 
-        "förder", "foerder", "zuschuss", "mittel", "haushalt", "finanz", 
+        "klima", "klimaschutz", "energie", "waermeplanung", "wärmeplanung",
+        "co2", "thg", "solar", "photovoltaik", "pv", "wind",
+        "förder", "foerder", "zuschuss", "mittel", "haushalt", "finanz",
         "investition", "nki", "kfw", "eu-mittel", "efre", "beschluss", "vorlage"
     ],
     "negative": [
-        "impressum", "datenschutz", "barrierefreiheit", "leichte-sprache", 
+        "impressum", "datenschutz", "barrierefreiheit", "leichte-sprache",
         "login", "karriere", "stellenangebot", "jubiläum", "veranstaltung",
         "tourismus", "museum", "sport"
     ]
@@ -61,7 +61,9 @@ SEED_ADDITIONAL_PATHS = [
     "/ratsinfo", "/bekanntmachungen",
 ]
 
-def _heartbeat_loop(db_path: str, municipality_id: str, worker_id: str, stop: threading.Event) -> None:
+def _heartbeat_loop(
+    db_path: str, municipality_id: str, worker_id: str, stop: threading.Event
+) -> None:
     con = sqlite3.connect(db_path, timeout=60.0, isolation_level=None)
     try:
         con.execute("PRAGMA busy_timeout=60000;")
@@ -107,7 +109,8 @@ def _worker_loop(
     try:
         while not shutdown.is_set():
             with limit_lock:
-                if limit_counter["limit"] is not None and limit_counter["claimed"] >= limit_counter["limit"]:
+                if (limit_counter["limit"] is not None
+                        and limit_counter["claimed"] >= limit_counter["limit"]):
                     break
                 job = claim_next_job(con, worker_id=worker_id, stale_after_seconds=stale_after)
                 if job is not None:

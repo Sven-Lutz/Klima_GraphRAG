@@ -32,14 +32,18 @@ import hashlib
 import json
 import sqlite3
 import time
-from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
 from crawler.core.config import (
-    DB_PATH, OLLAMA_URL, OLLAMA_MODEL as _DEFAULT_MODEL,
-    LLM_SEED, LLM_TEMPERATURE,
+    DB_PATH,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    OLLAMA_URL,
+)
+from crawler.core.config import (
+    OLLAMA_MODEL as _DEFAULT_MODEL,
 )
 
 MODEL_NAME = _DEFAULT_MODEL
@@ -93,7 +97,8 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt im folgenden Format:
   ],
   "relationships": [
     {"source_entity": "...",
-     "relation_type": "FÖRDERT|BAUT|BESCHLIESST|IMPLEMENTIERT|PLANT|GEHÖRT_ZU|KOOPERIERT_MIT|FINANZIERT_DURCH|BEZIEHT_SICH_AUF",
+     "relation_type": "FÖRDERT|BAUT|BESCHLIESST|IMPLEMENTIERT|PLANT|GEHÖRT_ZU\
+|KOOPERIERT_MIT|FINANZIERT_DURCH|BEZIEHT_SICH_AUF",
      "target_entity": "...",
      "evidence": "exakter Originaltext (max. 200 Zeichen)"}
   ]
@@ -417,7 +422,8 @@ def main(
     if parallel <= 1:
         # Sequenziell (Default) — identisches Verhalten wie bisher
         for row in rows:
-            print(f"⚙️  muni={row['municipality_id']}  rowid={row['rowid']}  score={row['impact_score']}")
+            print(f"⚙️  muni={row['municipality_id']}  rowid={row['rowid']}  "
+                  f"score={row['impact_score']}")
             try:
                 _store(row, _extract_one(row))
             except Exception as ex:
@@ -447,8 +453,10 @@ if __name__ == "__main__":
     ap.add_argument("--gleaning",    type=int,   default=1,   help="Anzahl Gleaning-Runden")
     ap.add_argument("--limit",       type=int,   default=200)
     ap.add_argument("--min-score",   type=int,   default=15)
-    ap.add_argument("--chunk-mode",  action="store_true",     help="Aus chunks-Tabelle statt segments lesen")
-    ap.add_argument("--sleep",       type=float, default=0.0, help="Pause zwischen Anfragen (Sekunden)")
+    ap.add_argument("--chunk-mode",  action="store_true",
+                    help="Aus chunks-Tabelle statt segments lesen")
+    ap.add_argument("--sleep",       type=float, default=0.0,
+                    help="Pause zwischen Anfragen (Sekunden)")
     ap.add_argument("--parallel",    type=int,   default=1,
                     help="Gleichzeitige LLM-Anfragen (HPC: 4-8, abhängig von VRAM)")
     args = ap.parse_args()

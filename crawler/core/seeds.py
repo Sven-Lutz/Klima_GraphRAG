@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
+from crawler.core.config import DB_PATH as DEFAULT_CRAWL_DB_PATH
+
 DEFAULT_MUNI_SQLITE_PATH = Path("crawler/data/db/municipalities.sqlite")
 DEFAULT_CSV_PATH = Path("crawler/data/seeds/municipalities.csv")
-from crawler.core.config import DB_PATH as DEFAULT_CRAWL_DB_PATH
+
 
 def _is_valid_url(url: str) -> bool:
     try:
@@ -61,15 +63,15 @@ def load_seeds_from_sqlite(
     if not db_path.exists():
         raise FileNotFoundError(f"municipalities.sqlite not found: {db_path}")
 
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) 
-    
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+
     query = """
         SELECT ags, homepage_url, allowed_domains
         FROM municipalities
         WHERE homepage_url IS NOT NULL AND homepage_url != ''
         ORDER BY ags
     """
-    
+
     params = []
     if limit is not None or start > 0:
         query += " LIMIT ? OFFSET ?"
@@ -78,7 +80,7 @@ def load_seeds_from_sqlite(
 
     try:
         cur = con.execute(query, params)
-        
+
         seeds_all: List[Tuple[str, str]] = []
         allowed: Dict[str, Set[str]] = {}
 
@@ -94,7 +96,7 @@ def load_seeds_from_sqlite(
                 str(allowed_domains) if allowed_domains is not None else None,
                 homepage,
             )
-            
+
         return seeds_all, allowed
     finally:
         con.close()
@@ -182,21 +184,21 @@ def upsert_seed_jobs(
         return 0
 
     print("upsert_seed_jobs -> crawl_db_path =", crawl_db_path)
-    
+
     con = sqlite3.connect(
-        str(crawl_db_path), 
-        timeout=60.0, 
+        str(crawl_db_path),
+        timeout=60.0,
         isolation_level=None
     )
-    
+
     try:
         con.execute("PRAGMA journal_mode=WAL;")
         con.execute("PRAGMA busy_timeout=60000;")
-        
-        ensure_seed_jobs_schema(con)  
+
+        ensure_seed_jobs_schema(con)
         before = con.total_changes
-        
-        con.execute("BEGIN TRANSACTION;") 
+
+        con.execute("BEGIN TRANSACTION;")
         try:
             con.executemany(
                 """
@@ -215,7 +217,7 @@ def upsert_seed_jobs(
         except Exception:
             con.execute("ROLLBACK;")
             raise
-            
+
         after = con.total_changes
         return max(0, after - before)
     finally:

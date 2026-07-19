@@ -204,7 +204,8 @@ class Storage:
         # --- indices for fast top-segment retrieval ---
         try:
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_segments_doc_score ON segments(document_id, impact_score DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_segments_doc_score "
+                "ON segments(document_id, impact_score DESC)"
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_segments_score ON segments(impact_score DESC)"
@@ -234,10 +235,12 @@ class Storage:
                 """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg ON graph_triplets(segment_rowid)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg "
+                "ON graph_triplets(segment_rowid)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni ON graph_triplets(municipality_id)"
+                "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni "
+                "ON graph_triplets(municipality_id)"
             )
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_graph_triplets_doc ON graph_triplets(document_id)"
@@ -255,15 +258,18 @@ class Storage:
                     target_document_id TEXT,
                     anchor_text TEXT,
                     PRIMARY KEY (source_document_id, target_url_canonical),
-                    FOREIGN KEY(source_document_id) REFERENCES documents_raw(document_id) ON DELETE CASCADE
+                    FOREIGN KEY(source_document_id)
+                        REFERENCES documents_raw(document_id) ON DELETE CASCADE
                 )
                 """
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doclinks_target ON document_links(target_url_canonical)"
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target "
+                "ON document_links(target_url_canonical)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doclinks_target_doc ON document_links(target_document_id)"
+                "CREATE INDEX IF NOT EXISTS idx_doclinks_target_doc "
+                "ON document_links(target_document_id)"
             )
         except Exception:
             pass
@@ -289,10 +295,12 @@ class Storage:
                 """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_doc_summaries ON document_summaries(document_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_doc_summaries "
+                "ON document_summaries(document_id)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_doc_summaries_muni ON document_summaries(municipality_id)"
+                "CREATE INDEX IF NOT EXISTS idx_doc_summaries_muni "
+                "ON document_summaries(municipality_id)"
             )
         except Exception:
             pass
@@ -450,7 +458,8 @@ class Storage:
         before = self.conn.total_changes
         self.conn.executemany(
             """
-            INSERT OR IGNORE INTO document_links (source_document_id, target_url_canonical, anchor_text)
+            INSERT OR IGNORE INTO document_links
+                (source_document_id, target_url_canonical, anchor_text)
             VALUES (?, ?, ?)
             """,
             rows,
@@ -534,10 +543,12 @@ class Storage:
         return max(0, after - before)
 
     def mark_visited(self, url_canonical: str, status: int, error: Optional[str] = None) -> None:
-        self.conn.execute(self._sql_mark_visited, (url_canonical, _utc_now_iso(), int(status), error))
+        self.conn.execute(self._sql_mark_visited,
+                          (url_canonical, _utc_now_iso(), int(status), error))
 
     def is_visited(self, url_canonical: str) -> bool:
-        cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1", (url_canonical,))
+        cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1",
+                                (url_canonical,))
         return cur.fetchone() is not None
 
     def get_visited_status(self, url_canonical: str) -> Tuple[bool, bool, Optional[str]]:

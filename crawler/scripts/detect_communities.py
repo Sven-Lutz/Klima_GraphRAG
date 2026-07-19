@@ -30,16 +30,20 @@ import argparse
 import json
 import sqlite3
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from crawler.core.config import (
-    DB_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_URL, OLLAMA_MODEL, GDS_GRAPH_NAME,
-    LLM_SEED, LLM_TEMPERATURE,
+    DB_PATH,
+    GDS_GRAPH_NAME,
+    LLM_SEED,
+    LLM_TEMPERATURE,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -58,8 +62,10 @@ class KeyClaim(BaseModel):
 class CommunityReport(BaseModel):
     title:       str = Field(description="Prägnanter Titel (max. 10 Wörter)")
     summary:     str = Field(description="3-5 Sätze: Kernaussagen der Community")
-    importance:  int = Field(ge=1, le=10, description="Wichtigkeit für das Forschungsprojekt (1-10)")
-    domain:      Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen", "Governance", "Gemischt"]
+    importance:  int = Field(ge=1, le=10,
+                             description="Wichtigkeit für das Forschungsprojekt (1-10)")
+    domain:      Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen",
+                         "Governance", "Gemischt"]
     key_claims:  list[KeyClaim] = Field(default_factory=list, max_length=5)
     key_entities: list[str]    = Field(default_factory=list, max_length=10)
 
@@ -67,7 +73,8 @@ class CommunityReport(BaseModel):
 SYSTEM_REPORT = """\
 Du bist Experte für kommunale Klimaschutzpolitik in Bayern.
 Analysiere die gegebene Gruppe von Entitäten und Beziehungen aus einem Kommunal-Datensatz.
-Erstelle einen strukturierten Community-Report, der die Kernaussagen und Zusammenhänge zusammenfasst.
+Erstelle einen strukturierten Community-Report, der die Kernaussagen und
+Zusammenhänge zusammenfasst.
 Antworte ausschließlich mit einem JSON-Objekt – kein erklärender Text.
 """
 
@@ -279,7 +286,9 @@ def store_report_neo4j(session, community_id: int, report: CommunityReport) -> N
     )
 
 
-def store_report_sqlite(conn: sqlite3.Connection, community_id: int, report: CommunityReport) -> None:
+def store_report_sqlite(
+    conn: sqlite3.Connection, community_id: int, report: CommunityReport
+) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS community_reports (
@@ -330,7 +339,7 @@ def main(
     conn   = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
 
     with driver.session() as session:
-        print(f"📐 Projiziere Entity-Graph in GDS…")
+        print("📐 Projiziere Entity-Graph in GDS…")
         project_gds_graph(session, algorithm)
 
         print(f"🔍 Führe {algorithm.capitalize()} Community Detection durch…")
@@ -397,7 +406,8 @@ if __name__ == "__main__":
     ap.add_argument("--algorithm",  choices=["leiden", "louvain"], default="leiden")
     ap.add_argument("--min-size",   type=int,   default=3,       help="Minimale Community-Größe")
     ap.add_argument("--llm",        choices=["ollama", "openai"], default="ollama")
-    ap.add_argument("--max",        type=int,   default=500,     help="Max. Communities für Reports")
+    ap.add_argument("--max",        type=int,   default=500,
+                    help="Max. Communities für Reports")
     ap.add_argument("--sleep",      type=float, default=0.3)
     ap.add_argument("--parallel",   type=int,   default=1,
                     help="Gleichzeitige LLM-Anfragen für Reports (HPC: 4-8)")

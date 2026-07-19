@@ -3,12 +3,11 @@ Creates two OnePager PowerPoint files:
   1. docs/PreThesis_Todos.pptx  — team tasks before Bachelor's thesis starts
   2. docs/Bachelorarbeit_Ausschreibung.pptx — thesis announcement for professor
 """
+
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Cm
-import copy
+from pptx.util import Cm, Inches, Pt
 
 # ── colour palette ────────────────────────────────────────────────────────────
 C_DARK   = RGBColor(0x1A, 0x1A, 0x2E)   # dark navy
@@ -50,8 +49,8 @@ def add_rect(slide, left, top, width, height, fill_rgb, alpha=None):
 def add_textbox(slide, text, left, top, width, height,
                 font_size=12, bold=False, color=C_TEXT,
                 align=PP_ALIGN.LEFT, wrap=True):
-    txBox = slide.shapes.add_textbox(left, top, width, height)
-    tf = txBox.text_frame
+    txt_box = slide.shapes.add_textbox(left, top, width, height)
+    tf = txt_box.text_frame
     tf.word_wrap = wrap
     p = tf.paragraphs[0]
     p.alignment = align
@@ -60,7 +59,7 @@ def add_textbox(slide, text, left, top, width, height,
     run.font.size = Pt(font_size)
     run.font.bold = bold
     run.font.color.rgb = color
-    return txBox
+    return txt_box
 
 
 def section_header(slide, text, top, accent=C_ACCENT):

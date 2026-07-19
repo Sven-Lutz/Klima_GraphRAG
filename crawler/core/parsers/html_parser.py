@@ -6,11 +6,14 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
-from crawler.core.models import ParseResult, Segment, FetchResult
+from crawler.core.models import FetchResult, ParseResult, Segment
 
 MIN_SEGMENT_LENGTH = 30
 
-_ASSET_EXT_PATTERN = r"\.(jpg|jpeg|png|gif|webp|svg|mp4|mp3|avi|mov|mkv|zip|rar|7z|tar|gz|css|js|woff|woff2|ttf|ico)(?:\?|$)"
+_ASSET_EXT_PATTERN = (
+    r"\.(jpg|jpeg|png|gif|webp|svg|mp4|mp3|avi|mov|mkv|zip|rar|7z"
+    r"|tar|gz|css|js|woff|woff2|ttf|ico)(?:\?|$)"
+)
 _RE_ASSET = re.compile(_ASSET_EXT_PATTERN, re.IGNORECASE)
 
 DROP_TAGS_AND_SECTIONS = ["script", "style", "noscript", "svg", "nav", "footer", "aside"]
@@ -24,7 +27,8 @@ def _clean_text(text: str) -> str:
 
 
 def _build_heading_context(path: list[tuple[int, str]]) -> str | None:
-    """Build a breadcrumb string from the current heading path, e.g. 'Klimaschutz > Solarenergie'."""
+    """Build a breadcrumb string from the current heading path,
+    e.g. 'Klimaschutz > Solarenergie'."""
     if not path:
         return None
     return " > ".join(txt for _, txt in path)
@@ -62,7 +66,7 @@ def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
         if name.startswith("h") and len(name) == 2 and name[1].isdigit():
             level = int(name[1])
             # Drop any deeper headings from the path, then append this one
-            heading_path = [(l, t) for l, t in heading_path if l < level]
+            heading_path = [(lvl, t) for lvl, t in heading_path if lvl < level]
             heading_path.append((level, txt))
             seg_type = "heading"
             heading_ctx = None  # headings don't need context — they ARE context
@@ -126,7 +130,7 @@ def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
         meta["content_type"] = fetch_result.content_type
 
     # Extract structured metadata from <meta> tags — free enrichment for GraphRAG
-    _META_MAP = {
+    _meta_map = {
         "description": "description",
         "og:description": "description",
         "og:title": "og_title",
@@ -144,7 +148,7 @@ def parse_html(fetch_result: FetchResult, base_url: str) -> ParseResult:
         content = (meta_tag.get("content") or "").strip()
         if not attr_name or not content:
             continue
-        mapped = _META_MAP.get(attr_name)
+        mapped = _meta_map.get(attr_name)
         if mapped:
             meta.setdefault(mapped, content)
 

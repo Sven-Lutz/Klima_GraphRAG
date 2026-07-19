@@ -6,7 +6,6 @@ from crawler.scripts.resolve_entities import (
     substring_merge_ok,
 )
 
-
 # ── Substring-Guards ─────────────────────────────────────────────────────────
 
 def test_single_token_never_swallows_specific_name():

@@ -20,11 +20,9 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
-      # Nur harte Fehler: Syntax (E9), ungültige Vergleiche/f-strings (F63),
-      # kaputte Kontrollflüsse (F7), undefinierte Namen (F82).
-      # Stil-Regeln bewusst NICHT erzwungen — Legacy-Code wird schrittweise sauber.
-      - name: Lint (ruff — nur kritische Fehler)
-        run: ruff check crawler demo tests --select E9,F63,F7,F82
+      # Voller PEP8-Gate (Regelsatz aus pyproject.toml: E, W, F, I, N @ 100 Zeichen)
+      - name: Lint (ruff)
+        run: ruff check crawler demo tests docs
 
       - name: Tests
         run: python -m pytest

@@ -1,9 +1,10 @@
 # crawler/core/models.py
 from __future__ import annotations
 
+from collections.abc import Set as AbcSet
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
-from collections.abc import Set as AbcSet
+
 
 @dataclass(frozen=True, slots=True)
 class CrawlTask:
@@ -36,7 +37,7 @@ class FetchResult:
 
     def header(self, name: str, default: str = "") -> str:
         """
-        O(1) Header-Lookup. 
+        O(1) Header-Lookup.
         Voraussetzung: Dem FetchResult wurden bereits lowercased Keys übergeben!
         """
         return self.headers.get(name.lower(), default)

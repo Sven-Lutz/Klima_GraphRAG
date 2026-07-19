@@ -42,7 +42,7 @@ def main(db: Path, top: int) -> None:
         "SELECT municipality_id, COUNT(*), SUM(entity_count), SUM(relationship_count) "
         "FROM graph_triplets GROUP BY municipality_id ORDER BY SUM(entity_count) DESC"
     ).fetchall()
-    print(f"\n  Pro Kommune:")
+    print("\n  Pro Kommune:")
     for muni, chunks, ents, rels in rows:
         print(f"    {muni:12s}  chunks={chunks:4d}  entities={ents:5d}  rels={rels:4d}")
 
@@ -64,16 +64,16 @@ def main(db: Path, top: int) -> None:
         for rel in kg.get("relationships", []):
             rel_types[rel.get("relation_type", "?")] += 1
 
-    print(f"\n  Entitätstypen:")
+    print("\n  Entitätstypen:")
     for etype, cnt in entity_types.most_common():
         bar = "█" * min(cnt // 5 + 1, 30)
         print(f"    {etype:20s}  {cnt:5d}  {bar}")
 
-    print(f"\n  Kategorien:")
+    print("\n  Kategorien:")
     for cat, cnt in entity_cats.most_common():
         print(f"    {cat:15s}  {cnt:5d}")
 
-    print(f"\n  Beziehungstypen:")
+    print("\n  Beziehungstypen:")
     for rtype, cnt in rel_types.most_common():
         print(f"    {rtype:25s}  {cnt:5d}")
 
@@ -82,9 +82,10 @@ def main(db: Path, top: int) -> None:
         print(f"    {cnt:4d}×  {name}")
 
     # ── sample relationships ───────────────────────────────────────────────────
-    print(f"\n  Beispiel-Beziehungen (erste 10 mit evidence):")
+    print("\n  Beispiel-Beziehungen (erste 10 mit evidence):")
     shown = 0
-    for (graph_json,) in con.execute("SELECT graph_json FROM graph_triplets WHERE relationship_count > 0"):
+    for (graph_json,) in con.execute(
+            "SELECT graph_json FROM graph_triplets WHERE relationship_count > 0"):
         kg = json.loads(graph_json)
         for rel in kg.get("relationships", []):
             if shown >= 10:
