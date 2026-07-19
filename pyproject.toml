@@ -3,6 +3,7 @@ name = "kit-klimacrawler"
 version = "1.0.0"
 description = "GraphRAG-System für kommunale Klimaschutzdaten: Crawl, Wissensgraph und natürlichsprachige Suche über 2.056 bayerische Kommunen"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 
 # Laufzeit-Abhängigkeiten: siehe crawler/requirements.txt (nach Stages gruppiert)
