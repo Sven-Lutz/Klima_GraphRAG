@@ -39,10 +39,12 @@ Usage:
     python -m crawler.scripts.query_agent --interactive
     python -m crawler.scripts.query_agent --llm openai "Was kostet die Energiewende in Bayern?"
 """
+
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sqlite3
 import struct
@@ -60,27 +62,43 @@ from crawler.core.config import (
     NEO4J_USER,
     OLLAMA_MODEL,
     OLLAMA_URL,
+    TEXT2CYPHER_ENABLED,
+    TEXT2CYPHER_MAX_RESULTS,
+    TEXT2CYPHER_READONLY_PASSWORD,
+    TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED,
+    TEXT2CYPHER_READONLY_USER,
+    TEXT2CYPHER_TIMEOUT_SECONDS,
+)
+from crawler.core.cypher_safety import (
+    CypherValidationError,
+    append_platform_limit,
+    validate_read_only_cypher,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
 # LLM helpers
 # ---------------------------------------------------------------------------
 
+
 def _call_ollama(system: str, user: str, json_mode: bool = False) -> str:
     import urllib.request
-    payload = json.dumps({
-        "model":    OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": user},
-        ],
-        "stream":  False,
-        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
-        **({"format": "json"} if json_mode else {}),
-    }).encode()
+
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
+            **({"format": "json"} if json_mode else {}),
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=payload,
@@ -92,12 +110,13 @@ def _call_ollama(system: str, user: str, json_mode: bool = False) -> str:
 
 def _call_openai(system: str, user: str) -> str:
     from openai import OpenAI
+
     client = OpenAI()
     resp = client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
             {"role": "system", "content": system},
-            {"role": "user",   "content": user},
+            {"role": "user", "content": user},
         ],
         temperature=LLM_TEMPERATURE,
         seed=LLM_SEED,
@@ -130,6 +149,7 @@ def _embed_query(query: str) -> np.ndarray:
     global _EMBED_MODEL_CACHE
     if _EMBED_MODEL_CACHE is None:
         from sentence_transformers import SentenceTransformer
+
         _EMBED_MODEL_CACHE = SentenceTransformer(EMBED_MODEL)
     return _EMBED_MODEL_CACHE.encode([query], normalize_embeddings=True)[0].astype(np.float32)
 
@@ -161,17 +181,14 @@ def _load_chunk_corpus(conn: sqlite3.Connection) -> dict:
         return _CHUNK_CORPUS
 
     rows = conn.execute(
-        "SELECT chunk_id, text, heading_context, embedding FROM chunks "
-        "WHERE embedding IS NOT NULL"
+        "SELECT chunk_id, text, heading_context, embedding FROM chunks WHERE embedding IS NOT NULL"
     ).fetchall()
 
     _CHUNK_CORPUS["sig"] = sig
     _CHUNK_CORPUS["chunk_ids"] = [r[0] for r in rows]
     _CHUNK_CORPUS["texts"] = [r[1] for r in rows]
     _CHUNK_CORPUS["headings"] = [r[2] for r in rows]
-    _CHUNK_CORPUS["matrix"] = (
-        np.stack([_blob_to_vec(r[3]) for r in rows]) if rows else None
-    )
+    _CHUNK_CORPUS["matrix"] = np.stack([_blob_to_vec(r[3]) for r in rows]) if rows else None
     return _CHUNK_CORPUS
 
 
@@ -204,13 +221,15 @@ def local_search(
 
     if corpus.get("matrix") is None:
         conn.close()
-        msg = ("[LocalSearch] Keine eingebetteten Chunks gefunden. "
-               "Bitte generate_embeddings.py ausführen.")
+        msg = (
+            "[LocalSearch] Keine eingebetteten Chunks gefunden. "
+            "Bitte generate_embeddings.py ausführen."
+        )
         return (msg, []) if return_context else msg
 
     chunk_ids = corpus["chunk_ids"]
-    texts     = corpus["texts"]
-    headings  = corpus["headings"]
+    texts = corpus["texts"]
+    headings = corpus["headings"]
     sims = corpus["matrix"] @ q_vec
     k = min(top_k, len(sims))
     top_idx = np.argpartition(sims, -k)[-k:]
@@ -225,6 +244,7 @@ def local_search(
     # Expand with entity neighborhood from Neo4j
     try:
         from neo4j import GraphDatabase
+
         driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         chunk_id_list = [chunk_ids[i] for i in top_idx]
         with driver.session() as session:
@@ -271,6 +291,7 @@ Du bist ein Experte für kommunale Klimaschutzpolitik in Bayern.
 Fasse die gegebenen Teilantworten zu einer kohärenten, umfassenden Gesamtantwort zusammen.
 Priorisiere Antworten mit hohem Wichtigkeits-Score. Nenne konkrete Fakten und Beispiele.
 """
+
 
 def global_search(
     query: str,
@@ -373,7 +394,8 @@ def global_search(
 
     partial_answers.sort(key=lambda x: -x[0])
     combined = "\n\n---\n\n".join(
-        f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10])
+        f"[Wichtigkeit: {imp}]\n{ans}" for imp, ans in partial_answers[:10]
+    )
 
     # Reduce phase
     result = llm(SYSTEM_REDUCE, f"FRAGE: {query}\n\nTEILANTWORTEN:\n{combined}", backend)
@@ -399,8 +421,12 @@ Relationships: Municipality-[:HAS_DOCUMENT]->Document, Document-[:HAS_SEGMENT]->
 
 SYSTEM_CYPHER = f"""\
 Du bist ein Neo4j Cypher-Experte für kommunale Klimadaten.
-Übersetze die Nutzerfrage in eine valide Cypher-Abfrage.
+Übersetze die Nutzerfrage in eine valide, minimale read-only Cypher-Abfrage.
 Antworte NUR mit der Cypher-Abfrage – ohne Erklärung, ohne Markdown-Fences.
+
+Erlaubt ist ausschließlich: ein `MATCH`, optional ein `WHERE`, ein `RETURN`
+und optional ein `ORDER BY`. Verwende KEIN `LIMIT`; das System fügt eine harte
+Ergebnisgrenze an. Verwende keine Prozeduren, Subqueries oder Schreiboperationen.
 
 {SCHEMA_DESCRIPTION}
 
@@ -412,41 +438,95 @@ Beispiele:
 
 - Frage: "Welche Entitäten vom Typ Förderprogramm wurden am häufigsten erwähnt?"
   Cypher: MATCH (e:Entity {{type: 'Förderprogramm'}})<-[:MENTIONS]-(s:Segment)
-          RETURN e.name, count(s) AS mentions ORDER BY mentions DESC LIMIT 10
+          RETURN e.name, count(s) AS mentions ORDER BY mentions DESC
 """
+
+
+def _text2cypher_readiness_error() -> str | None:
+    """Return a safe reason when experimental Text2Cypher may not run."""
+    if not TEXT2CYPHER_ENABLED:
+        return "[Text2Cypher] Diese experimentelle Funktion ist standardmäßig deaktiviert."
+    if not (
+        TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED
+        and TEXT2CYPHER_READONLY_USER
+        and TEXT2CYPHER_READONLY_PASSWORD
+        and TEXT2CYPHER_READONLY_USER != NEO4J_USER
+    ):
+        return (
+            "[Text2Cypher] Ausführung erfordert eine separat konfigurierte, "
+            "datenbankseitig schreibgeschützte Neo4j-Identität."
+        )
+    if not 1 <= TEXT2CYPHER_MAX_RESULTS <= 1000 or TEXT2CYPHER_TIMEOUT_SECONDS <= 0:
+        return "[Text2Cypher] Die Sicherheitsgrenzen sind ungültig konfiguriert."
+    return None
+
+
+def _open_text2cypher_driver():
+    """Create a driver only after read-only configuration has been checked."""
+    from neo4j import GraphDatabase
+
+    return GraphDatabase.driver(
+        NEO4J_URI,
+        auth=(TEXT2CYPHER_READONLY_USER, TEXT2CYPHER_READONLY_PASSWORD),
+    )
+
+
+def _execute_read_only_cypher(cypher: str) -> list[dict]:
+    """Execute validated Cypher with driver read mode, timeout, and hard limit."""
+    from neo4j import READ_ACCESS
+
+    bounded_query, parameters = append_platform_limit(cypher, TEXT2CYPHER_MAX_RESULTS)
+    driver = _open_text2cypher_driver()
+    try:
+        with driver.session(default_access_mode=READ_ACCESS) as session:
+            return session.run(
+                bounded_query,
+                parameters=parameters,
+                timeout=TEXT2CYPHER_TIMEOUT_SECONDS,
+            ).data()
+    finally:
+        driver.close()
+
 
 def text2cypher(
     query: str, backend: str, return_context: bool = False
 ) -> str | tuple[str, list[str]]:
-    """Translate natural language to Cypher; execute; format result."""
+    """Translate and execute only a validated, bounded read-only query."""
+    readiness_error = _text2cypher_readiness_error()
+    if readiness_error:
+        return (readiness_error, []) if return_context else readiness_error
+
     cypher = llm(SYSTEM_CYPHER, query, backend).strip()
     # Strip any accidental markdown
     if cypher.startswith("```"):
         cypher = cypher.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
     try:
-        from neo4j import GraphDatabase
-        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-        with driver.session() as session:
-            result = session.run(cypher)
-            rows = result.data()
-        driver.close()
-    except Exception as e:
-        msg = f"[Text2Cypher] Cypher-Fehler: {e}\nQuery: {cypher}"
+        validated_cypher = validate_read_only_cypher(cypher)
+    except CypherValidationError as exc:
+        logger.debug("Text2Cypher rejected query: %s (%s)", cypher, exc)
+        msg = "[Text2Cypher] Die erzeugte Abfrage liegt außerhalb des erlaubten read-only Umfangs."
+        return (msg, []) if return_context else msg
+
+    try:
+        rows = _execute_read_only_cypher(validated_cypher)
+    except Exception as exc:
+        logger.warning("Text2Cypher execution failed: %s", type(exc).__name__)
+        msg = "[Text2Cypher] Die schreibgeschützte Abfrage konnte nicht ausgeführt werden."
         return (msg, []) if return_context else msg
 
     if not rows:
-        msg = f"[Text2Cypher] Keine Ergebnisse.\nCypher: {cypher}"
+        msg = "[Text2Cypher] Keine Ergebnisse."
         return (msg, []) if return_context else msg
 
     # Format result as markdown table
     keys = list(rows[0].keys())
     header = " | ".join(keys)
-    sep    = " | ".join(["---"] * len(keys))
-    body   = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
-    formatted = f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{cypher}`"
+    sep = " | ".join(["---"] * len(keys))
+    body = "\n".join(" | ".join(str(r.get(k, "")) for k in keys) for r in rows[:50])
+    formatted = f"```\n{header}\n{sep}\n{body}\n```\n\n_Cypher_: `{validated_cypher}`"
     # Kontext = das faktische Query-Ergebnis, gegen das die Antwort geprüft wird
-    ctx = [f"CYPHER: {cypher}", f"ERGEBNIS:\n{header}\n{body}"]
+    ctx = [f"CYPHER: {validated_cypher}", f"ERGEBNIS:\n{header}\n{body}"]
     return (formatted, ctx) if return_context else formatted
 
 
@@ -465,6 +545,7 @@ Analysiere die Frage und wähle das beste Werkzeug:
 
 Antworte NUR mit einem JSON-Objekt: {"tool": "local_search"|"global_search"|"text2cypher"}
 """
+
 
 def route(query: str, backend: str) -> str:
     raw = llm(SYSTEM_ROUTER, query, backend, json_mode=True)
@@ -496,19 +577,25 @@ Antworte mit JSON:
 }
 """
 
+
 def critic_check(question: str, answer: str, backend: str) -> dict:
     prompt = f"FRAGE: {question}\n\nANTWORT: {answer[:2000]}"
     raw = llm(SYSTEM_CRITIC, prompt, backend, json_mode=True)
     try:
         return json.loads(raw)
     except Exception:
-        return {"is_complete": True, "confidence": 0.5,
-                "missing_aspects": [], "follow_up_query": None}
+        return {
+            "is_complete": True,
+            "confidence": 0.5,
+            "missing_aspects": [],
+            "follow_up_query": None,
+        }
 
 
 # ---------------------------------------------------------------------------
 # Main query loop
 # ---------------------------------------------------------------------------
+
 
 def answer(
     query: str,
@@ -523,14 +610,14 @@ def answer(
     Die Evaluation braucht diese für Faithfulness/Context-Recall.
     """
     current_query = query
-    all_answers   = []
+    all_answers = []
     all_contexts: list[str] = []
 
     for loop in range(MAX_CRITIC_LOOPS):
         # Route
         tool = route(current_query, backend)
         if verbose:
-            print(f"[loop {loop+1}] Tool: {tool}")
+            print(f"[loop {loop + 1}] Tool: {tool}")
 
         # Execute
         if tool == "local_search":
@@ -546,8 +633,10 @@ def answer(
         # Critic
         review = critic_check(query, result, backend)
         if verbose:
-            print(f"[critic] complete={review.get('is_complete')}  "
-                  f"confidence={review.get('confidence', 0):.2f}")
+            print(
+                f"[critic] complete={review.get('is_complete')}  "
+                f"confidence={review.get('confidence', 0):.2f}"
+            )
 
         if review.get("is_complete", True) or review.get("confidence", 0) >= 0.8:
             break
@@ -576,12 +665,13 @@ def answer(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="GraphRAG Multi-Agent Query System (Stage 4)")
-    ap.add_argument("query", nargs="?",  default=None, help="Suchanfrage")
+    ap.add_argument("query", nargs="?", default=None, help="Suchanfrage")
     ap.add_argument("--llm", choices=["ollama", "openai"], default="ollama")
     ap.add_argument("--interactive", "-i", action="store_true")
-    ap.add_argument("--verbose",     "-v", action="store_true")
+    ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args()
 
     if args.interactive:

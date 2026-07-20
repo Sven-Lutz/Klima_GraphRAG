@@ -104,3 +104,15 @@ GDS_GRAPH_NAME: str = "klimaEntities"
 MAX_CRITIC_LOOPS: int = 3
 LOCAL_SEARCH_TOP_K: int = 8
 GLOBAL_SEARCH_MAX_COMMUNITIES: int = 50
+
+# ---------------------------------------------------------------------------
+# Text2Cypher (experimental; disabled by default)
+# ---------------------------------------------------------------------------
+TEXT2CYPHER_ENABLED: bool = os.environ.get("KLIMA_TEXT2CYPHER_ENABLED", "0") == "1"
+TEXT2CYPHER_READONLY_USER: str = os.environ.get("KLIMA_TEXT2CYPHER_READONLY_USER", "")
+TEXT2CYPHER_READONLY_PASSWORD: str = os.environ.get("KLIMA_TEXT2CYPHER_READONLY_PASSWORD", "")
+TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED: bool = (
+    os.environ.get("KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED", "0") == "1"
+)
+TEXT2CYPHER_TIMEOUT_SECONDS: float = float(os.environ.get("KLIMA_TEXT2CYPHER_TIMEOUT_SECONDS", "5"))
+TEXT2CYPHER_MAX_RESULTS: int = int(os.environ.get("KLIMA_TEXT2CYPHER_MAX_RESULTS", "50"))

@@ -206,6 +206,14 @@ Retriever-Router: Ein LLM entscheidet pro Anfrage, welches Werkzeug passt —
 Ein Answer Critic prüft die Antwort auf Vollständigkeit und stößt bei Bedarf
 eine neue Suchrunde an (max. `MAX_CRITIC_LOOPS = 3`).
 
+> **Status: experimentell, standardmäßig deaktiviert.** Text2Cypher wird nur
+> mit `KLIMA_TEXT2CYPHER_ENABLED=1`, einer separat konfigurierten und
+> datenbankseitig schreibgeschützten Neo4j-Identität sowie
+> `KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED=1` ausgeführt. Die Anwendung
+> beschränkt Cypher auf einen kleinen read-only-Unterraum und erzwingt Timeout
+> und Ergebnislimit. Diese Kontrollen ergänzen, ersetzen aber nicht, die
+> Datenbankberechtigungen.
+
 ```bash
 python -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
 python -m crawler.scripts.query_agent --llm openai "..."   # Cloud-Fallback

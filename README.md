@@ -180,6 +180,13 @@ Umgebungsvariable — kein Skript hat hartkodierte Pfade:
 | `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
 | `KLIMA_TLS_VERIFY` | `0` | TLS-Zertifikate beim Crawlen prüfen (Default aus: viele kommunale Server haben kaputte Zertifikatsketten) |
 
+**Text2Cypher ist experimentell und standardmäßig deaktiviert.** Eine Aktivierung
+erfordert `KLIMA_TEXT2CYPHER_ENABLED=1`, separat konfigurierte Credentials für
+einen **datenbankseitig read-only** Neo4j-Principal sowie die explizite
+Bestätigung `KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED=1`. Die Anwendung
+akzeptiert nur einen kleinen read-only-Cypher-Unterraum und erzwingt Timeout
+sowie Ergebnislimit; dies ersetzt keine Neo4j-Berechtigungen.
+
 ---
 
 ## 🧪 Tests & CI
