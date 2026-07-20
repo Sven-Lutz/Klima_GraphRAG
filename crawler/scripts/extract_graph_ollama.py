@@ -25,6 +25,7 @@ Usage:
     python -m crawler.scripts.extract_graph_ollama --model qwen2.5:14b --gleaning 2
     python -m crawler.scripts.extract_graph_ollama --chunk-mode  # use chunks table
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ import hashlib
 import json
 import sqlite3
 import time
+import uuid
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
@@ -41,9 +43,17 @@ from crawler.core.config import (
     LLM_SEED,
     LLM_TEMPERATURE,
     OLLAMA_URL,
+    PROMPT_VERSION,
 )
 from crawler.core.config import (
     OLLAMA_MODEL as _DEFAULT_MODEL,
+)
+from crawler.core.provenance import (
+    GraphProvenance,
+    ProvenanceError,
+    ensure_provenance_schema,
+    finish_extraction_run,
+    start_extraction_run,
 )
 
 MODEL_NAME = _DEFAULT_MODEL
@@ -53,11 +63,16 @@ MODEL_NAME = _DEFAULT_MODEL
 # Pydantic schema (same as extract_graph.py for compatibility)
 # ---------------------------------------------------------------------------
 
+
 class Entity(BaseModel):
     name: str
     type: Literal[
-        "Akteur", "Infrastruktur", "Förderprogramm",
-        "Maßnahme", "Konzept/Ziel", "Dokument",
+        "Akteur",
+        "Infrastruktur",
+        "Förderprogramm",
+        "Maßnahme",
+        "Konzept/Ziel",
+        "Dokument",
     ]
     category: Literal["Mobilität", "Wärme", "Strom", "Finanzen", "Governance", "Sonstiges"]
     status: Literal["Geplant", "In Umsetzung", "Abgeschlossen", "Existierend", "Unbekannt"]
@@ -67,8 +82,15 @@ class Entity(BaseModel):
 class Relationship(BaseModel):
     source_entity: str
     relation_type: Literal[
-        "FÖRDERT", "BAUT", "BESCHLIESST", "IMPLEMENTIERT",
-        "PLANT", "GEHÖRT_ZU", "KOOPERIERT_MIT", "FINANZIERT_DURCH", "BEZIEHT_SICH_AUF",
+        "FÖRDERT",
+        "BAUT",
+        "BESCHLIESST",
+        "IMPLEMENTIERT",
+        "PLANT",
+        "GEHÖRT_ZU",
+        "KOOPERIERT_MIT",
+        "FINANZIERT_DURCH",
+        "BEZIEHT_SICH_AUF",
     ]
     target_entity: str
     evidence: str
@@ -142,6 +164,7 @@ def _user_gleaning_prompt(text: str, first_extraction: KnowledgeGraph) -> str:
 # Ollama client
 # ---------------------------------------------------------------------------
 
+
 def _call_ollama(model: str, system: str, user: str, max_retries: int = 3) -> str:
     """Call Ollama REST API; returns raw model response text.
 
@@ -150,16 +173,18 @@ def _call_ollama(model: str, system: str, user: str, max_retries: int = 3) -> st
     """
     import urllib.request
 
-    payload = json.dumps({
-        "model":    model,
-        "messages": [
-            {"role": "system",  "content": system},
-            {"role": "user",    "content": user},
-        ],
-        "stream":   False,
-        "options":  {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
-        "format":   "json",   # Ollama structured output mode
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
+            "format": "json",  # Ollama structured output mode
+        }
+    ).encode()
 
     last_err: Exception = RuntimeError("unreachable")
     for attempt in range(max_retries):
@@ -175,7 +200,7 @@ def _call_ollama(model: str, system: str, user: str, max_retries: int = 3) -> st
         except Exception as ex:
             last_err = ex
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # 1s, 2s
+                time.sleep(2**attempt)  # 1s, 2s
     raise last_err
 
 
@@ -190,7 +215,7 @@ def _parse_kg(raw: str) -> KnowledgeGraph:
     except (ValidationError, json.JSONDecodeError):
         # Fallback: try to extract the JSON object manually
         start = raw.find("{")
-        end   = raw.rfind("}") + 1
+        end = raw.rfind("}") + 1
         if start != -1 and end > start:
             return KnowledgeGraph.model_validate_json(raw[start:end])
         return KnowledgeGraph()
@@ -211,7 +236,7 @@ def extract_with_gleaning(
     # --- Round 1: initial extraction ---
     user_prompt = _user_extraction_prompt(text, heading_context, url)
     raw = _call_ollama(model, SYSTEM_EXTRACTION, user_prompt)
-    kg  = _parse_kg(raw)
+    kg = _parse_kg(raw)
 
     # --- Gleaning rounds: self-reflection ---
     for _ in range(gleaning_rounds):
@@ -219,7 +244,7 @@ def extract_with_gleaning(
             break  # nothing to reflect on
         glean_prompt = _user_gleaning_prompt(text, kg)
         raw2 = _call_ollama(model, SYSTEM_GLEANING, glean_prompt)
-        kg2  = _parse_kg(raw2)
+        kg2 = _parse_kg(raw2)
 
         # Merge new findings, deduplicating by name
         existing_names = {e.name.lower() for e in kg.entities}
@@ -246,6 +271,7 @@ def extract_with_gleaning(
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
+
 
 def setup_db(cur: sqlite3.Cursor) -> None:
     cur.executescript(
@@ -287,7 +313,11 @@ def get_chunks_for_extraction(
         query = """
         WITH ranked AS (
           SELECT
-            c.rowid         AS rowid,
+            c.rowid         AS legacy_rowid,
+            'chunk'         AS source_type,
+            c.chunk_id      AS source_id,
+            c.segment_id,
+            c.chunk_id,
             c.chunk_index   AS order_index,
             c.municipality_id,
             c.document_id,
@@ -303,9 +333,15 @@ def get_chunks_for_extraction(
           JOIN documents_raw d ON d.document_id = c.document_id
           WHERE length(c.text) >= ?
             AND COALESCE(c.impact_score, 0) >= ?
-            AND c.rowid NOT IN (SELECT segment_rowid FROM graph_triplets)
+            AND NOT EXISTS (
+              SELECT 1 FROM graph_triplets g
+              WHERE g.source_type = 'chunk'
+                AND g.source_id = c.chunk_id
+                AND g.provenance_status = 'verified'
+            )
         )
-        SELECT rowid, order_index, municipality_id, document_id, url_canonical,
+        SELECT legacy_rowid, source_type, source_id, segment_id, chunk_id,
+               order_index, municipality_id, document_id, url_canonical,
                text, heading_context, impact_score
         FROM ranked WHERE rn <= ?
         ORDER BY impact_score DESC LIMIT ?
@@ -314,7 +350,11 @@ def get_chunks_for_extraction(
         query = """
         WITH ranked AS (
           SELECT
-            s.rowid         AS rowid,
+            s.rowid         AS legacy_rowid,
+            'segment'       AS source_type,
+            s.segment_id    AS source_id,
+            s.segment_id,
+            NULL            AS chunk_id,
             s.order_index,
             d.municipality_id,
             d.document_id,
@@ -331,22 +371,41 @@ def get_chunks_for_extraction(
           WHERE length(s.text) >= ?
             AND COALESCE(s.is_negative, 0) = 0
             AND COALESCE(s.impact_score, 0) >= ?
-            AND s.rowid NOT IN (SELECT segment_rowid FROM graph_triplets)
+            AND NOT EXISTS (
+              SELECT 1 FROM graph_triplets g
+              WHERE g.source_type = 'segment'
+                AND g.source_id = s.segment_id
+                AND g.provenance_status = 'verified'
+            )
         )
-        SELECT rowid, order_index, municipality_id, document_id, url_canonical,
+        SELECT legacy_rowid, source_type, source_id, segment_id, chunk_id,
+               order_index, municipality_id, document_id, url_canonical,
                text, heading_context, impact_score
         FROM ranked WHERE rn <= ?
         ORDER BY impact_score DESC LIMIT ?
         """
     cur.execute(query, (min_len, min_score, per_doc, limit))
-    cols = ["rowid", "order_index", "municipality_id", "document_id",
-            "url_canonical", "text", "heading_context", "impact_score"]
+    cols = [
+        "legacy_rowid",
+        "source_type",
+        "source_id",
+        "segment_id",
+        "chunk_id",
+        "order_index",
+        "municipality_id",
+        "document_id",
+        "url_canonical",
+        "text",
+        "heading_context",
+        "impact_score",
+    ]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main(
     model: str = MODEL_NAME,
@@ -358,8 +417,9 @@ def main(
     parallel: int = 1,
 ) -> None:
     conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
-    cur  = conn.cursor()
+    cur = conn.cursor()
     setup_db(cur)
+    ensure_provenance_schema(conn)
 
     # Build canonical name map from resolve_entities output (if available)
     canonical_map: dict[str, str] = {}
@@ -380,8 +440,18 @@ def main(
         return
 
     mode = "chunks" if use_chunks_table else "segments"
-    print(f"🚀 Extrahiere Graph via Ollama ({model}) für {len(rows)} {mode} "
-          f"| gleaning={gleaning_rounds} | parallel={parallel}\n")
+    run_id = str(uuid.uuid4())
+    start_extraction_run(
+        conn,
+        run_id=run_id,
+        extraction_model=model,
+        prompt_version=PROMPT_VERSION,
+        source_type="chunk" if use_chunks_table else "segment",
+    )
+    print(
+        f"🚀 Extrahiere Graph via Ollama ({model}) für {len(rows)} {mode} "
+        f"| gleaning={gleaning_rounds} | parallel={parallel}\n"
+    )
 
     def _extract_one(row: dict):
         """LLM-Extraktion für eine Zeile — läuft im Worker-Thread, kein DB-Zugriff."""
@@ -403,6 +473,20 @@ def main(
 
     def _store(row: dict, kg) -> None:
         """DB-Write — läuft ausschließlich im Hauptthread."""
+        provenance = GraphProvenance(
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            segment_id=row["segment_id"],
+            chunk_id=row["chunk_id"],
+            document_id=row["document_id"],
+            municipality_id=row["municipality_id"],
+            source_url=row["url_canonical"],
+            source_text=row["text"],
+            extraction_model=model,
+            prompt_version=PROMPT_VERSION,
+            extraction_run_id=run_id,
+        )
+        provenance.validate()
         graph_json = kg.model_dump_json(ensure_ascii=False)
         e, r = len(kg.entities), len(kg.relationships)
         seg_hash = hashlib.sha256((row["text"] or "").encode()).hexdigest()
@@ -410,55 +494,91 @@ def main(
             """
             INSERT OR IGNORE INTO graph_triplets (
                 municipality_id, document_id, segment_rowid, segment_hash,
-                model_name, graph_json, entity_count, relationship_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                model_name, graph_json, entity_count, relationship_count,
+                source_type, source_id, segment_id, chunk_id, source_url, source_text,
+                extraction_model, prompt_version, extraction_run_id, provenance_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (row["municipality_id"], row["document_id"], int(row["rowid"]),
-             seg_hash, model, graph_json, e, r),
+            (
+                provenance.municipality_id,
+                provenance.document_id,
+                int(row["legacy_rowid"]),
+                seg_hash,
+                model,
+                graph_json,
+                e,
+                r,
+                provenance.source_type,
+                provenance.source_id,
+                provenance.segment_id,
+                provenance.chunk_id,
+                provenance.source_url,
+                provenance.source_text,
+                provenance.extraction_model,
+                provenance.prompt_version,
+                provenance.extraction_run_id,
+                "verified",
+            ),
         )
-        print(f"   🟢 rowid={row['rowid']}  muni={row['municipality_id']}  "
-              f"entities={e}  relationships={r}")
+        print(
+            f"   🟢 source={row['source_type']}:{row['source_id']}  "
+            f"muni={row['municipality_id']}  entities={e}  relationships={r}"
+        )
 
     if parallel <= 1:
         # Sequenziell (Default) — identisches Verhalten wie bisher
         for row in rows:
-            print(f"⚙️  muni={row['municipality_id']}  rowid={row['rowid']}  "
-                  f"score={row['impact_score']}")
+            print(
+                f"⚙️  muni={row['municipality_id']}  source={row['source_id']}  "
+                f"score={row['impact_score']}"
+            )
             try:
                 _store(row, _extract_one(row))
+            except ProvenanceError:
+                finish_extraction_run(conn, run_id, status="failed")
+                raise
             except Exception as ex:
-                print(f"   🔴 Fehler rowid={row['rowid']}: {ex}")
+                print(f"   🔴 Fehler source={row['source_id']}: {ex}")
             if sleep_between > 0:
                 time.sleep(sleep_between)
     else:
         # Parallel: Ollama verarbeitet mehrere Requests gleichzeitig.
         # LLM-Calls in Threads, Writes seriell im Hauptthread (SQLite).
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         with ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = {pool.submit(_extract_one, row): row for row in rows}
             for fut in as_completed(futures):
                 row = futures[fut]
                 try:
                     _store(row, fut.result())
+                except ProvenanceError:
+                    finish_extraction_run(conn, run_id, status="failed")
+                    raise
                 except Exception as ex:
-                    print(f"   🔴 Fehler rowid={row['rowid']}: {ex}")
+                    print(f"   🔴 Fehler source={row['source_id']}: {ex}")
 
+    finish_extraction_run(conn, run_id, status="completed")
     conn.close()
     print("\n🏁 Done.")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Ollama Graph Extraktion mit Gleaning (Stage 2b)")
-    ap.add_argument("--model",       default=MODEL_NAME)
-    ap.add_argument("--gleaning",    type=int,   default=1,   help="Anzahl Gleaning-Runden")
-    ap.add_argument("--limit",       type=int,   default=200)
-    ap.add_argument("--min-score",   type=int,   default=15)
-    ap.add_argument("--chunk-mode",  action="store_true",
-                    help="Aus chunks-Tabelle statt segments lesen")
-    ap.add_argument("--sleep",       type=float, default=0.0,
-                    help="Pause zwischen Anfragen (Sekunden)")
-    ap.add_argument("--parallel",    type=int,   default=1,
-                    help="Gleichzeitige LLM-Anfragen (HPC: 4-8, abhängig von VRAM)")
+    ap.add_argument("--model", default=MODEL_NAME)
+    ap.add_argument("--gleaning", type=int, default=1, help="Anzahl Gleaning-Runden")
+    ap.add_argument("--limit", type=int, default=200)
+    ap.add_argument("--min-score", type=int, default=15)
+    ap.add_argument(
+        "--chunk-mode", action="store_true", help="Aus chunks-Tabelle statt segments lesen"
+    )
+    ap.add_argument("--sleep", type=float, default=0.0, help="Pause zwischen Anfragen (Sekunden)")
+    ap.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Gleichzeitige LLM-Anfragen (HPC: 4-8, abhängig von VRAM)",
+    )
     args = ap.parse_args()
     main(
         model=args.model,

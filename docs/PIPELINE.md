@@ -134,7 +134,12 @@ python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4   # HPC
 
 | Liest | Schreibt |
 |---|---|
-| `chunks` | `graph_triplets` (graph_json, entity_count, relationship_count) |
+| `chunks` oder `segments` | `graph_triplets` mit vollständiger Source-Provenance und `graph_extraction_runs` |
+
+Jede neue Extraktion speichert stabilen Source-Typ und Source-ID, Segment-/Chunk-
+Hierarchie, Dokument-URL und -Text sowie Modell-, Prompt- und Run-Metadaten.
+Legacy-Zeilen ohne diese Angaben bleiben erhalten, werden aber nicht als
+zitierfähige Evidenz exportiert.
 
 **Alternative:**
 - `demo/extract_graph_spacy.py` — Offline-Fallback (spaCy NER + Keywords), gleiche Zieltabelle, deutlich geringere Qualität. Nur für Demos ohne GPU/Ollama.
