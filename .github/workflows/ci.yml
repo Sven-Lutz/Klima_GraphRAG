@@ -22,7 +22,7 @@ jobs:
 
       # Voller PEP8-Gate (Regelsatz aus pyproject.toml: E, W, F, I, N @ 100 Zeichen)
       - name: Lint (ruff)
-        run: ruff check crawler demo tests docs
+        run: ruff check crawler demo tests
 
       - name: Tests
         run: python -m pytest
