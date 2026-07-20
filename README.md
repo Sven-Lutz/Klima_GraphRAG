@@ -193,6 +193,9 @@ Preflight-Prüfung aus. Der Worker benötigt eine vorhandene, vollständige
 prüft zusätzlich die konfigurierte read-only-Neo4j-Verbindung und vorhandene
 `Entity`-Knoten. Fehler verlangen ausdrücklich den jeweiligen Vorgänger-Schritt
 und erzeugen weder Ersatzdatenbanken noch partielle Stage-Ergebnisse.
+Die Worker-Schema-Prüfung liest die SQLite-Datei direkt, damit ein Datenbank-
+Artefakt im WAL-Modus keine `-wal`- oder `-shm`-Dateien durch einen bloßen
+Preflight erhält.
 
 ---
 

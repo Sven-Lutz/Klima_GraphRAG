@@ -44,7 +44,9 @@ Worker-Ausführung (Job-Claiming, Heartbeats und Crawl-Speicher). Ohne `--db`
 wird `KLIMA_DB_PATH` erst beim Start des Workers aufgelöst. Die ausgewählte
 Datei muss bereits existieren; zuvor `init_seed_jobs --db <pfad>` ausführen.
 Vor dem Start prüft der Worker die `seed_jobs`-Schema-Voraussetzungen
-schreibgeschützt und bricht bei Abweichungen explizit ab.
+schreibgeschützt und bricht bei Abweichungen explizit ab. Diese Schema-Prüfung
+liest die SQLite-Datei direkt statt eine SQLite-Verbindung zu öffnen; sie legt
+damit auch bei einer Datenbank im WAL-Modus keine `-wal`- oder `-shm`-Dateien an.
 
 ---
 

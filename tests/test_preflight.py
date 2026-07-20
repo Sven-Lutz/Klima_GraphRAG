@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from crawler.core import preflight
 from crawler.core.preflight import (
     PreflightError,
     validate_query_preflight,
@@ -42,6 +43,19 @@ def test_worker_preflight_validates_required_schema(tmp_path):
     assert validate_worker_preflight(db_path) == db_path
 
 
+def test_worker_preflight_does_not_open_a_sqlite_connection(monkeypatch, tmp_path):
+    db_path = tmp_path / "worker.sqlite"
+    _create_worker_database(db_path)
+
+    monkeypatch.setattr(
+        preflight.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail("worker preflight must inspect files directly"),
+    )
+
+    assert validate_worker_preflight(db_path) == db_path
+
+
 def test_worker_preflight_rejects_incomplete_schema(tmp_path):
     db_path = tmp_path / "worker.sqlite"
     with sqlite3.connect(db_path) as connection:
@@ -65,6 +79,20 @@ def test_query_preflight_requires_embedded_predecessor_output(tmp_path):
     _create_query_database(db_path, with_embedding=False)
 
     with pytest.raises(PreflightError, match="chunks.embedding"):
+        validate_query_preflight(db_path)
+
+
+def test_query_preflight_missing_table_does_not_open_a_sqlite_connection(monkeypatch, tmp_path):
+    db_path = tmp_path / "stage_zero.sqlite"
+    _create_worker_database(db_path)
+
+    monkeypatch.setattr(
+        preflight.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail("missing-table preflight must not open SQLite"),
+    )
+
+    with pytest.raises(PreflightError, match="missing required table 'chunks'"):
         validate_query_preflight(db_path)
 
 
