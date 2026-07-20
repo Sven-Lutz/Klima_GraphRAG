@@ -39,6 +39,11 @@ export KLIMA_DB_PATH=demo/demo.sqlite
 python -m crawler.scripts.chunk_documents
 ```
 
+Für den Crawl-Worker ist `--db` die autoritative Auswahl für die gesamte
+Worker-Ausführung (Job-Claiming, Heartbeats und Crawl-Speicher). Ohne `--db`
+wird `KLIMA_DB_PATH` erst beim Start des Workers aufgelöst. Die ausgewählte
+Datei muss bereits existieren; zuvor `init_seed_jobs --db <pfad>` ausführen.
+
 ---
 
 ## Stage 0 — Crawl

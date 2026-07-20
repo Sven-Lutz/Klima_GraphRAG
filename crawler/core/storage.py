@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-from crawler.core.config import DB_PATH
+from crawler.core.config import resolve_db_path
 
 RAW_DIR = Path("crawler/data/raw")
 
@@ -34,8 +34,8 @@ class RawWriteResult:
 
 
 class Storage:
-    def __init__(self, db_path: Path = DB_PATH, raw_dir: Path = RAW_DIR) -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: str | Path | None = None, raw_dir: Path = RAW_DIR) -> None:
+        self.db_path = resolve_db_path(db_path)
         self.raw_dir = Path(raw_dir)
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,8 +43,8 @@ class Storage:
 
         self.conn = sqlite3.connect(
             str(self.db_path),
-            timeout=60.0,        # wait longer on locks
-            isolation_level=None # AUTOCOMMIT (minimizes lock duration)
+            timeout=60.0,  # wait longer on locks
+            isolation_level=None,  # AUTOCOMMIT (minimizes lock duration)
         )
         self.conn.row_factory = sqlite3.Row
 
@@ -376,14 +376,12 @@ class Storage:
 
         headers = self._extract_headers(fetch_result)
 
-        url_final = (
-            str(getattr(fetch_result, "url_final", "") or "")
-            or str(getattr(fetch_result, "url", "") or "")
+        url_final = str(getattr(fetch_result, "url_final", "") or "") or str(
+            getattr(fetch_result, "url", "") or ""
         )
         status_code = int(getattr(fetch_result, "status_code", 0) or 0)
-        content_type = (
-            str(getattr(fetch_result, "content_type", "") or "")
-            or str(headers.get("Content-Type") or "")
+        content_type = str(getattr(fetch_result, "content_type", "") or "") or str(
+            headers.get("Content-Type") or ""
         )
 
         raw_ext = self._guess_ext(content_type, url_final)
@@ -404,8 +402,17 @@ class Storage:
                     raw_hash=?, raw_path=?, raw_ext=?, content_length=?
                 WHERE document_id=?
                 """,
-                (url_final, _utc_now_iso(), status_code, content_type,
-                 raw_hash, str(raw_path), raw_ext, int(content_length), doc_id),
+                (
+                    url_final,
+                    _utc_now_iso(),
+                    status_code,
+                    content_type,
+                    raw_hash,
+                    str(raw_path),
+                    raw_ext,
+                    int(content_length),
+                    doc_id,
+                ),
             )
             if content_changed:
                 self.conn.execute("DELETE FROM segments WHERE document_id=?", (doc_id,))
@@ -500,8 +507,16 @@ class Storage:
         """
         rows: List[
             Tuple[
-                str, str, int, str, str, str, Optional[str],
-                Optional[int], Optional[int], Optional[int]
+                str,
+                str,
+                int,
+                str,
+                str,
+                str,
+                Optional[str],
+                Optional[int],
+                Optional[int],
+                Optional[int],
             ]
         ] = []
         sha256 = hashlib.sha256
@@ -543,12 +558,14 @@ class Storage:
         return max(0, after - before)
 
     def mark_visited(self, url_canonical: str, status: int, error: Optional[str] = None) -> None:
-        self.conn.execute(self._sql_mark_visited,
-                          (url_canonical, _utc_now_iso(), int(status), error))
+        self.conn.execute(
+            self._sql_mark_visited, (url_canonical, _utc_now_iso(), int(status), error)
+        )
 
     def is_visited(self, url_canonical: str) -> bool:
-        cur = self.conn.execute("SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1",
-                                (url_canonical,))
+        cur = self.conn.execute(
+            "SELECT 1 FROM visited WHERE url_canonical=? LIMIT 1", (url_canonical,)
+        )
         return cur.fetchone() is not None
 
     def get_visited_status(self, url_canonical: str) -> Tuple[bool, bool, Optional[str]]:
@@ -683,8 +700,16 @@ class Storage:
         """
         rows: List[
             Tuple[
-                str, str, int, str, str, str, Optional[str],
-                Optional[int], Optional[int], Optional[int]
+                str,
+                str,
+                int,
+                str,
+                str,
+                str,
+                Optional[str],
+                Optional[int],
+                Optional[int],
+                Optional[int],
             ]
         ] = []
         sha256 = hashlib.sha256
