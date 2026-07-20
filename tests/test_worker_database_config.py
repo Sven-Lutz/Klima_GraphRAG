@@ -14,6 +14,17 @@ from crawler.core.seed_jobs import SeedJob
 from crawler.core.storage import Storage
 
 
+def _create_seed_jobs_database(db_path):
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE seed_jobs (municipality_id TEXT PRIMARY KEY, seed_url TEXT, "
+        "status TEXT, claimed_by TEXT, claimed_at TEXT, done_at TEXT, "
+        "heartbeat_at TEXT, last_error TEXT, attempt_count INTEGER)"
+    )
+    con.commit()
+    con.close()
+
+
 def test_worker_module_imports():
     module = importlib.import_module("crawler.scripts.run_worker")
     assert module.resolve_worker_db_path
@@ -63,7 +74,7 @@ def test_cli_passes_explicit_database_to_workers(monkeypatch, tmp_path):
     from crawler.scripts import run_worker
 
     db_path = tmp_path / "crawl.sqlite"
-    db_path.touch()
+    _create_seed_jobs_database(db_path)
     captured = {}
 
     def worker_loop(db_path, *args, **kwargs):
@@ -82,13 +93,7 @@ def test_worker_passes_one_database_to_engine_and_job_claiming(monkeypatch, tmp_
     from crawler.scripts import run_worker
 
     db_path = tmp_path / "crawl.sqlite"
-    con = sqlite3.connect(db_path)
-    con.execute(
-        "CREATE TABLE seed_jobs (municipality_id TEXT PRIMARY KEY, seed_url TEXT, "
-        "status TEXT, claimed_by TEXT, done_at TEXT, heartbeat_at TEXT, last_error TEXT)"
-    )
-    con.commit()
-    con.close()
+    _create_seed_jobs_database(db_path)
 
     captured = {}
 

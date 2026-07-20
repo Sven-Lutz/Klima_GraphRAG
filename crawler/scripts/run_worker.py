@@ -12,6 +12,7 @@ from pathlib import Path
 
 from crawler.core.config import resolve_db_path
 from crawler.core.engine import Engine, EngineLimits
+from crawler.core.preflight import PreflightError, validate_worker_preflight
 from crawler.core.seed_jobs import (
     claim_next_job,
     default_worker_id,
@@ -227,6 +228,10 @@ def main() -> None:
     args = ap.parse_args()
 
     db_path = resolve_worker_db_path(args.db)
+    try:
+        validate_worker_preflight(db_path)
+    except PreflightError as exc:
+        ap.error(str(exc))
 
     _, allowed = load_seeds_from_sqlite()
 

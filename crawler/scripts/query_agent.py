@@ -48,11 +48,11 @@ import logging
 import re
 import sqlite3
 import struct
+from pathlib import Path
 
 import numpy as np
 
 from crawler.core.config import (
-    DB_PATH,
     EMBED_MODEL,
     LLM_SEED,
     LLM_TEMPERATURE,
@@ -68,15 +68,22 @@ from crawler.core.config import (
     TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED,
     TEXT2CYPHER_READONLY_USER,
     TEXT2CYPHER_TIMEOUT_SECONDS,
+    resolve_db_path,
 )
 from crawler.core.cypher_safety import (
     CypherValidationError,
     append_platform_limit,
     validate_read_only_cypher,
 )
+from crawler.core.preflight import PreflightError, validate_query_preflight
 
 OPENAI_MODEL = "gpt-4o-mini"
 logger = logging.getLogger(__name__)
+
+
+def _query_db_path(value: str | Path | None = None) -> Path:
+    """Resolve the query database at runtime for one invocation."""
+    return resolve_db_path(value)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +210,7 @@ def local_search(
     top_k: int = 8,
     hop: int = 1,
     return_context: bool = False,
+    db_path: str | Path | None = None,
 ) -> str | tuple[str, list[str]]:
     """
     1. Embed query → cosine similarity over chunks table
@@ -213,7 +221,7 @@ def local_search(
     Mit return_context=True wird (answer, context_parts) zurückgegeben —
     die Evaluation braucht den echten Retrieval-Kontext für Faithfulness.
     """
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
+    conn = sqlite3.connect(str(_query_db_path(db_path)), timeout=30.0, isolation_level=None)
 
     # Vector search über das GESAMTE Korpus (Matrix gecacht, Matmul ist schnell)
     q_vec = _embed_query(query)
@@ -298,6 +306,7 @@ def global_search(
     backend: str,
     max_communities: int = 50,
     return_context: bool = False,
+    db_path: str | Path | None = None,
 ) -> str | tuple[str, list[str]]:
     """
     LazyGraphRAG Map-Reduce:
@@ -305,7 +314,8 @@ def global_search(
     2. Map: ask LLM to answer from each relevant report
     3. Reduce: synthesise all partial answers into one
     """
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
+    resolved_db_path = _query_db_path(db_path)
+    conn = sqlite3.connect(str(resolved_db_path), timeout=30.0, isolation_level=None)
 
     try:
         reports = conn.execute(
@@ -348,7 +358,7 @@ def global_search(
     query_words = set(re.findall(r"\w{4,}", query.lower()))
 
     # Augment with document summaries that overlap with query keywords
-    conn2 = sqlite3.connect(str(DB_PATH), timeout=30.0, isolation_level=None)
+    conn2 = sqlite3.connect(str(resolved_db_path), timeout=30.0, isolation_level=None)
     doc_summaries: list[str] = []
     try:
         rows = conn2.execute(
@@ -488,13 +498,61 @@ def _execute_read_only_cypher(cypher: str) -> list[dict]:
         driver.close()
 
 
+def validate_text2cypher_preflight(db_path: str | Path | None = None) -> Path:
+    """Verify the required retrieval output and read-only graph service.
+
+    This fixed query is not LLM-generated. It establishes that the selected
+    SQLite pipeline state and Neo4j Entity export both exist before a natural
+    language query is sent to an LLM.
+    """
+    selected_db_path = validate_query_preflight(_query_db_path(db_path))
+    from neo4j import READ_ACCESS
+
+    driver = _open_text2cypher_driver()
+    try:
+        with driver.session(default_access_mode=READ_ACCESS) as session:
+            record = session.run(
+                "MATCH (entity:Entity) RETURN count(entity) AS entity_count LIMIT 1",
+                timeout=TEXT2CYPHER_TIMEOUT_SECONDS,
+            ).single()
+    except Exception as exc:
+        raise PreflightError(
+            "The configured read-only Neo4j service is unavailable or incompatible. "
+            "Verify its network reachability, dedicated read-only principal, and graph export."
+        ) from exc
+    finally:
+        driver.close()
+
+    try:
+        entity_count = int(record["entity_count"]) if record else 0
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PreflightError(
+            "The configured Neo4j service returned an incompatible graph preflight response."
+        ) from exc
+    if entity_count == 0:
+        raise PreflightError(
+            "The Neo4j graph has no Entity nodes. Run the graph export predecessor stage first."
+        )
+    return selected_db_path
+
+
 def text2cypher(
-    query: str, backend: str, return_context: bool = False
+    query: str,
+    backend: str,
+    return_context: bool = False,
+    db_path: str | Path | None = None,
 ) -> str | tuple[str, list[str]]:
     """Translate and execute only a validated, bounded read-only query."""
     readiness_error = _text2cypher_readiness_error()
     if readiness_error:
         return (readiness_error, []) if return_context else readiness_error
+
+    try:
+        validate_text2cypher_preflight(db_path)
+    except PreflightError as exc:
+        logger.warning("Text2Cypher preflight failed: %s", type(exc).__name__)
+        msg = "[Text2Cypher] Voraussetzungen für die schreibgeschützte Abfrage sind nicht erfüllt."
+        return (msg, []) if return_context else msg
 
     cypher = llm(SYSTEM_CYPHER, query, backend).strip()
     # Strip any accidental markdown
@@ -602,6 +660,7 @@ def answer(
     backend: str = "ollama",
     verbose: bool = False,
     return_context: bool = False,
+    db_path: str | Path | None = None,
 ) -> str | tuple[str, list[str]]:
     """Beantwortet eine Frage über den Router.
 
@@ -609,6 +668,8 @@ def answer(
     Liste aller Retrieval-Kontexte über sämtliche Critic-Loops hinweg.
     Die Evaluation braucht diese für Faithfulness/Context-Recall.
     """
+    selected_db_path = validate_query_preflight(_query_db_path(db_path))
+    logger.info("query_database=%s", selected_db_path)
     current_query = query
     all_answers = []
     all_contexts: list[str] = []
@@ -621,11 +682,17 @@ def answer(
 
         # Execute
         if tool == "local_search":
-            result, ctx = local_search(current_query, backend, return_context=True)
+            result, ctx = local_search(
+                current_query, backend, return_context=True, db_path=selected_db_path
+            )
         elif tool == "global_search":
-            result, ctx = global_search(current_query, backend, return_context=True)
+            result, ctx = global_search(
+                current_query, backend, return_context=True, db_path=selected_db_path
+            )
         else:
-            result, ctx = text2cypher(current_query, backend, return_context=True)
+            result, ctx = text2cypher(
+                current_query, backend, return_context=True, db_path=selected_db_path
+            )
 
         all_answers.append(result)
         all_contexts.extend(ctx)
@@ -670,6 +737,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="GraphRAG Multi-Agent Query System (Stage 4)")
     ap.add_argument("query", nargs="?", default=None, help="Suchanfrage")
     ap.add_argument("--llm", choices=["ollama", "openai"], default="ollama")
+    ap.add_argument(
+        "--db",
+        default=None,
+        help="Crawl SQLite database; overrides KLIMA_DB_PATH for this invocation",
+    )
     ap.add_argument("--interactive", "-i", action="store_true")
     ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args()
@@ -681,11 +753,18 @@ def main() -> None:
                 q = input("Frage: ").strip()
                 if not q:
                     continue
-                print("\n" + answer(q, backend=args.llm, verbose=args.verbose) + "\n")
+                print(
+                    "\n" + answer(q, backend=args.llm, verbose=args.verbose, db_path=args.db) + "\n"
+                )
+            except PreflightError as exc:
+                print(f"[Preflight] {exc}")
             except KeyboardInterrupt:
                 break
     elif args.query:
-        print(answer(args.query, backend=args.llm, verbose=args.verbose))
+        try:
+            print(answer(args.query, backend=args.llm, verbose=args.verbose, db_path=args.db))
+        except PreflightError as exc:
+            ap.error(str(exc))
     else:
         ap.print_help()
 

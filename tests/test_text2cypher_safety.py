@@ -11,6 +11,7 @@ from crawler.core.cypher_safety import (
     append_platform_limit,
     validate_read_only_cypher,
 )
+from crawler.core.preflight import PreflightError
 from crawler.scripts import query_agent
 
 VALID_QUERY = "MATCH (e:Entity) RETURN e.name ORDER BY e.name ASC"
@@ -43,6 +44,24 @@ def test_explicit_enablement_requires_dedicated_readonly_identity(monkeypatch):
     result = query_agent.text2cypher("Wie viele?", "ollama")
 
     assert "schreibgeschützte Neo4j-Identität" in result
+
+
+def test_preflight_failure_is_safe_and_skips_llm(monkeypatch):
+    monkeypatch.setattr(query_agent, "TEXT2CYPHER_ENABLED", True)
+    monkeypatch.setattr(query_agent, "TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED", True)
+    monkeypatch.setattr(query_agent, "TEXT2CYPHER_READONLY_USER", "graph_reader")
+    monkeypatch.setattr(query_agent, "TEXT2CYPHER_READONLY_PASSWORD", "secret")
+    monkeypatch.setattr(
+        query_agent,
+        "validate_text2cypher_preflight",
+        lambda *args: (_ for _ in ()).throw(PreflightError("bolt://secret-host")),
+    )
+    monkeypatch.setattr(query_agent, "llm", lambda *args, **kwargs: pytest.fail("LLM called"))
+
+    result = query_agent.text2cypher("Wie viele?", "ollama")
+
+    assert "Voraussetzungen" in result
+    assert "secret-host" not in result
 
 
 @pytest.mark.parametrize(
@@ -125,6 +144,7 @@ def test_execution_errors_do_not_expose_connection_details(monkeypatch):
     monkeypatch.setattr(query_agent, "TEXT2CYPHER_READONLY_USER", "graph_reader")
     monkeypatch.setattr(query_agent, "TEXT2CYPHER_READONLY_PASSWORD", "secret")
     monkeypatch.setattr(query_agent, "llm", lambda *args, **kwargs: VALID_QUERY)
+    monkeypatch.setattr(query_agent, "validate_text2cypher_preflight", lambda *args: None)
     monkeypatch.setattr(
         query_agent,
         "_execute_read_only_cypher",

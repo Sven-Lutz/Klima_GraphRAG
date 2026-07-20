@@ -148,7 +148,7 @@ python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
 python -m crawler.scripts.resolve_entities
 python -m crawler.scripts.export_graph_to_neo4j
 python -m crawler.scripts.detect_communities --parallel 4
-python -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
+python -m crawler.scripts.query_agent --db crawler/data/db/crawl.sqlite "Welche Kommunen fördern Photovoltaik?"
 ```
 
 **Evaluation** (reproduzierbar: fester Seed, Prompt-Version, Run-Historie):
@@ -186,6 +186,13 @@ einen **datenbankseitig read-only** Neo4j-Principal sowie die explizite
 Bestätigung `KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED=1`. Die Anwendung
 akzeptiert nur einen kleinen read-only-Cypher-Unterraum und erzwingt Timeout
 sowie Ergebnislimit; dies ersetzt keine Neo4j-Berechtigungen.
+
+Worker und Query Agent führen vor der Ausführung eine nicht-mutierende
+Preflight-Prüfung aus. Der Worker benötigt eine vorhandene, vollständige
+`seed_jobs`-Tabelle; der Query Agent benötigt eingebettete Chunks. Text2Cypher
+prüft zusätzlich die konfigurierte read-only-Neo4j-Verbindung und vorhandene
+`Entity`-Knoten. Fehler verlangen ausdrücklich den jeweiligen Vorgänger-Schritt
+und erzeugen weder Ersatzdatenbanken noch partielle Stage-Ergebnisse.
 
 ---
 

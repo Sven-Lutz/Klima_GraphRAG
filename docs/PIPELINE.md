@@ -43,6 +43,8 @@ Für den Crawl-Worker ist `--db` die autoritative Auswahl für die gesamte
 Worker-Ausführung (Job-Claiming, Heartbeats und Crawl-Speicher). Ohne `--db`
 wird `KLIMA_DB_PATH` erst beim Start des Workers aufgelöst. Die ausgewählte
 Datei muss bereits existieren; zuvor `init_seed_jobs --db <pfad>` ausführen.
+Vor dem Start prüft der Worker die `seed_jobs`-Schema-Voraussetzungen
+schreibgeschützt und bricht bei Abweichungen explizit ab.
 
 ---
 
@@ -214,8 +216,14 @@ eine neue Suchrunde an (max. `MAX_CRITIC_LOOPS = 3`).
 > und Ergebnislimit. Diese Kontrollen ergänzen, ersetzen aber nicht, die
 > Datenbankberechtigungen.
 
+Der Query Agent akzeptiert ebenfalls `--db`; dieser Wert gilt für die gesamte
+Anfrage. Vor einer Anfrage prüft er die SQLite-Schema-Voraussetzungen und das
+Vorhandensein eingebetteter Chunks. Text2Cypher prüft bei Aktivierung zusätzlich
+die read-only-Neo4j-Verbindung sowie vorhandene `Entity`-Knoten. Alle Preflight-
+Prüfungen sind schreibgeschützt und erzeugen keine Ersatzdatenbanken.
+
 ```bash
-python -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
+python -m crawler.scripts.query_agent --db crawler/data/db/crawl.sqlite "Welche Kommunen fördern Photovoltaik?"
 python -m crawler.scripts.query_agent --llm openai "..."   # Cloud-Fallback
 ```
 
