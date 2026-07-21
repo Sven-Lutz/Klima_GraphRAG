@@ -10,14 +10,6 @@ Crawl → Segmente → Chunks → Embeddings → Wissensgraph (Ollama-LLM)
      → Neo4j → Community Detection → Query Agent → Evaluation
 ```
 
-| Dokument | Inhalt |
-|---|---|
-| **[docs/PIPELINE.md](docs/PIPELINE.md)** | Alle Pipeline-Stages: Kommandos, Ein-/Ausgabetabellen, Konfiguration |
-| **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
-| **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
-
----
-
 ## ⚡ Schnellstart
 
 **Demo (3 Kommunen, lokal, ohne GPU/Neo4j/Ollama, ~20 Minuten):**
