@@ -292,8 +292,6 @@ def setup_db(cur: sqlite3.Cursor) -> None:
             relationship_count INTEGER NOT NULL DEFAULT 0,
             extracted_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg
-            ON graph_triplets(segment_rowid);
         CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni
             ON graph_triplets(municipality_id);
         """
@@ -319,7 +317,7 @@ def get_chunks_for_extraction(
             c.segment_id,
             c.chunk_id,
             c.chunk_index   AS order_index,
-            c.municipality_id,
+            d.municipality_id,
             c.document_id,
             d.url_canonical,
             c.text,
@@ -331,6 +329,7 @@ def get_chunks_for_extraction(
             ) AS rn
           FROM chunks c
           JOIN documents_raw d ON d.document_id = c.document_id
+          JOIN segments s ON s.segment_id = c.segment_id AND s.document_id = c.document_id
           WHERE length(c.text) >= ?
             AND COALESCE(c.impact_score, 0) >= ?
             AND NOT EXISTS (
@@ -431,6 +430,22 @@ def main(
     except Exception:
         pass  # table doesn't exist yet — run resolve_entities.py first
 
+    if use_chunks_table:
+        orphan = cur.execute(
+            """
+            SELECT c.chunk_id
+            FROM chunks c
+            LEFT JOIN segments s ON s.segment_id = c.segment_id AND s.document_id = c.document_id
+            WHERE c.segment_id IS NULL OR s.segment_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan:
+            raise ProvenanceError(
+                f"Chunk {orphan[0]!r} has no resolvable parent segment; "
+                "repair chunk provenance first"
+            )
+
     rows = get_chunks_for_extraction(
         cur, limit=limit, min_score=min_score, use_chunks_table=use_chunks_table
     )
@@ -525,6 +540,7 @@ def main(
             f"muni={row['municipality_id']}  entities={e}  relationships={r}"
         )
 
+    had_failures = False
     if parallel <= 1:
         # Sequenziell (Default) — identisches Verhalten wie bisher
         for row in rows:
@@ -538,6 +554,7 @@ def main(
                 finish_extraction_run(conn, run_id, status="failed")
                 raise
             except Exception as ex:
+                had_failures = True
                 print(f"   🔴 Fehler source={row['source_id']}: {ex}")
             if sleep_between > 0:
                 time.sleep(sleep_between)
@@ -556,9 +573,10 @@ def main(
                     finish_extraction_run(conn, run_id, status="failed")
                     raise
                 except Exception as ex:
+                    had_failures = True
                     print(f"   🔴 Fehler source={row['source_id']}: {ex}")
 
-    finish_extraction_run(conn, run_id, status="completed")
+    finish_extraction_run(conn, run_id, status="failed" if had_failures else "completed")
     conn.close()
     print("\n🏁 Done.")
 

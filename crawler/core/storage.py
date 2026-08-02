@@ -235,10 +235,6 @@ class Storage:
                 """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_graph_triplets_seg "
-                "ON graph_triplets(segment_rowid)"
-            )
-            self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni "
                 "ON graph_triplets(municipality_id)"
             )

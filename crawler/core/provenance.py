@@ -95,9 +95,6 @@ def ensure_provenance_schema(conn: sqlite3.Connection) -> None:
     applied = conn.execute(
         "SELECT 1 FROM schema_migrations WHERE version=?", (PROVENANCE_SCHEMA_VERSION,)
     ).fetchone()
-    if applied:
-        return
-
     graph_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_triplets'"
     ).fetchone()
@@ -145,10 +142,11 @@ def ensure_provenance_schema(conn: sqlite3.Connection) -> None:
             ON graph_extraction_runs(status, started_at);
         """
     )
-    conn.execute(
-        "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-        (PROVENANCE_SCHEMA_VERSION, "explicit_graph_provenance", _utc_now()),
-    )
+    if not applied:
+        conn.execute(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            (PROVENANCE_SCHEMA_VERSION, "explicit_graph_provenance", _utc_now()),
+        )
 
 
 def start_extraction_run(

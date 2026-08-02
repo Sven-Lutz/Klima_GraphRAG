@@ -65,3 +65,15 @@ def test_migration_allows_distinct_segment_and_chunk_source_ids():
     )
 
     assert conn.execute("SELECT COUNT(*) FROM graph_triplets").fetchone()[0] == 2
+
+
+def test_repeated_initialization_removes_legacy_index():
+    conn = _legacy_database()
+    ensure_provenance_schema(conn)
+    conn.execute("CREATE UNIQUE INDEX uq_graph_triplets_seg ON graph_triplets(segment_rowid)")
+
+    ensure_provenance_schema(conn)
+
+    indexes = {row[1] for row in conn.execute("PRAGMA index_list(graph_triplets)")}
+    assert "uq_graph_triplets_seg" not in indexes
+    assert "uq_graph_triplets_source" in indexes

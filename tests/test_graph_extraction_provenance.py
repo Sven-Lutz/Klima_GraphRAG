@@ -103,5 +103,5 @@ def test_chunk_extraction_rejects_missing_parent_segment(monkeypatch, tmp_path):
     monkeypatch.setattr(extract_graph_ollama, "DB_PATH", db_path)
     monkeypatch.setattr(extract_graph_ollama, "extract_with_gleaning", lambda **kwargs: _graph())
 
-    with pytest.raises(ProvenanceError, match="parent segment_id"):
+    with pytest.raises(ProvenanceError, match="no resolvable parent segment"):
         extract_graph_ollama.main(limit=1, min_score=1, use_chunks_table=True)
