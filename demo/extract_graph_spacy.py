@@ -6,9 +6,9 @@ Offline graph extraction for the demo DB — no Ollama / GPU / internet needed.
 Uses spaCy German NER (de_core_news_sm) + keyword-based entity classification
 + sentence-level co-occurrence for relationship detection.
 
-Writes results to the same `graph_triplets` table used by extract_graph_ollama.py,
-so the rest of the pipeline (export_graph_to_neo4j, detect_communities, query_agent)
-works unchanged.
+This is an experimental demo writer. It writes only `demo_graph_triplets` and
+does not create canonical extraction runs, evidence, or production artifacts.
+Use `crawler.scripts.extract_graph_ollama` for canonical graph persistence.
 
 Install:
     pip install spacy
@@ -26,20 +26,10 @@ import hashlib
 import json
 import re
 import sqlite3
-import uuid
 from pathlib import Path
 from typing import Optional
 
-import spacy
-
-from crawler.core.config import PROMPT_VERSION
 from crawler.core.database import connect_existing_read_write
-from crawler.core.provenance import (
-    GraphProvenance,
-    ensure_provenance_schema,
-    finish_extraction_run,
-    start_extraction_run,
-)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -411,7 +401,7 @@ PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA busy_timeout=60000;
 
-CREATE TABLE IF NOT EXISTS graph_triplets (
+CREATE TABLE IF NOT EXISTS demo_graph_triplets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     municipality_id    TEXT NOT NULL,
     document_id        TEXT NOT NULL,
@@ -421,10 +411,13 @@ CREATE TABLE IF NOT EXISTS graph_triplets (
     graph_json         TEXT NOT NULL,
     entity_count       INTEGER NOT NULL DEFAULT 0,
     relationship_count INTEGER NOT NULL DEFAULT 0,
-    extracted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_type        TEXT NOT NULL,
+    source_id          TEXT NOT NULL,
+    extracted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_type, source_id)
 );
-CREATE INDEX IF NOT EXISTS idx_graph_triplets_muni
-    ON graph_triplets(municipality_id);
+CREATE INDEX IF NOT EXISTS idx_demo_graph_triplets_muni
+    ON demo_graph_triplets(municipality_id);
 """
 
 
@@ -452,9 +445,8 @@ def _get_chunks(cur: sqlite3.Cursor, limit: int, min_score: int) -> list[dict]:
           WHERE length(c.text) >= 80
             AND COALESCE(c.impact_score, 0) >= ?
             AND NOT EXISTS (
-              SELECT 1 FROM graph_triplets g
+              SELECT 1 FROM demo_graph_triplets g
               WHERE g.source_type='chunk' AND g.source_id=c.chunk_id
-                AND g.provenance_status='verified'
             )
         )
         SELECT legacy_rowid, chunk_id, segment_id, municipality_id, document_id, url_canonical,
@@ -484,6 +476,8 @@ def _get_chunks(cur: sqlite3.Cursor, limit: int, min_score: int) -> list[dict]:
 
 
 def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> None:
+    import spacy
+
     db_path = db or DB_PATH
     print("Lade spaCy-Modell de_core_news_sm …")
     nlp = spacy.load("de_core_news_sm")
@@ -491,7 +485,6 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
     conn = connect_existing_read_write(db_path)
     cur = conn.cursor()
     cur.executescript(_SETUP_SQL)
-    ensure_provenance_schema(conn)
 
     rows = _get_chunks(cur, limit=limit, min_score=min_score)
     if not rows:
@@ -501,14 +494,6 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
 
     print(f"🚀 Extrahiere Graph für {len(rows)} Chunks (spaCy NER + Keyword-Matching) …\n")
 
-    run_id = str(uuid.uuid4())
-    start_extraction_run(
-        conn,
-        run_id=run_id,
-        extraction_model=MODEL_NAME,
-        prompt_version=PROMPT_VERSION,
-        source_type="chunk",
-    )
     total_e = total_r = 0
     for idx, row in enumerate(rows):  # type: ignore[assignment]
         rowid = int(row["legacy_rowid"])
@@ -524,29 +509,13 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
 
         seg_hash = hashlib.sha256(text.encode()).hexdigest()
         graph_json = json.dumps(kg, ensure_ascii=False)
-        provenance = GraphProvenance(
-            "chunk",
-            row["chunk_id"],
-            row["segment_id"],
-            row["chunk_id"],
-            doc_id,
-            muni,
-            row["url_canonical"],
-            text,
-            MODEL_NAME,
-            PROMPT_VERSION,
-            run_id,
-        )
-        provenance.validate()
-
         cur.execute(
             """
-            INSERT OR IGNORE INTO graph_triplets (
+            INSERT INTO demo_graph_triplets (
                 municipality_id, document_id, segment_rowid, segment_hash,
                 model_name, graph_json, entity_count, relationship_count,
-                source_type, source_id, segment_id, chunk_id, source_url, source_text,
-                extraction_model, prompt_version, extraction_run_id, provenance_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_type, source_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'chunk', ?)
             """,
             (
                 muni,
@@ -557,23 +526,13 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
                 graph_json,
                 e,
                 r,
-                "chunk",
                 row["chunk_id"],
-                row["segment_id"],
-                row["chunk_id"],
-                row["url_canonical"],
-                text,
-                MODEL_NAME,
-                PROMPT_VERSION,
-                run_id,
-                "verified",
             ),
         )
 
         if (idx + 1) % 100 == 0 or (idx + 1) == len(rows):
             print(f"  [{idx + 1:4d}/{len(rows)}]  entities={total_e}  rels={total_r}")
 
-    finish_extraction_run(conn, run_id, status="completed")
     conn.close()
 
     print(f"\n{'═' * 55}")

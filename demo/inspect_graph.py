@@ -1,5 +1,5 @@
 """
-inspect_graph.py  —  Show what was extracted into graph_triplets.
+inspect_graph.py  —  Show experimental spaCy results in demo_graph_triplets.
 
 Usage:
     python demo/inspect_graph.py
@@ -22,15 +22,17 @@ def main(db: Path, top: int) -> None:
     con = connect_existing_read_only(db)
 
     # ── overview ──────────────────────────────────────────────────────────────
-    n_rows = con.execute("SELECT COUNT(*) FROM graph_triplets").fetchone()[0]
+    n_rows = con.execute("SELECT COUNT(*) FROM demo_graph_triplets").fetchone()[0]
     if n_rows == 0:
-        print("[!] graph_triplets ist leer. Bitte zuerst extract_graph_spacy.py ausführen.")
+        print("[!] demo_graph_triplets ist leer. Bitte zuerst extract_graph_spacy.py ausführen.")
         con.close()
         return
 
-    total_e = con.execute("SELECT SUM(entity_count) FROM graph_triplets").fetchone()[0] or 0
-    total_r = con.execute("SELECT SUM(relationship_count) FROM graph_triplets").fetchone()[0] or 0
-    model = con.execute("SELECT model_name FROM graph_triplets LIMIT 1").fetchone()[0]
+    total_e = con.execute("SELECT SUM(entity_count) FROM demo_graph_triplets").fetchone()[0] or 0
+    total_r = (
+        con.execute("SELECT SUM(relationship_count) FROM demo_graph_triplets").fetchone()[0] or 0
+    )
+    model = con.execute("SELECT model_name FROM demo_graph_triplets LIMIT 1").fetchone()[0]
 
     print(f"\n{'═' * 60}")
     print(f" Graph-Statistiken  (Modell: {model})")
@@ -42,7 +44,7 @@ def main(db: Path, top: int) -> None:
     # ── per-municipality ───────────────────────────────────────────────────────
     rows = con.execute(
         "SELECT municipality_id, COUNT(*), SUM(entity_count), SUM(relationship_count) "
-        "FROM graph_triplets GROUP BY municipality_id ORDER BY SUM(entity_count) DESC"
+        "FROM demo_graph_triplets GROUP BY municipality_id ORDER BY SUM(entity_count) DESC"
     ).fetchall()
     print("\n  Pro Kommune:")
     for muni, chunks, ents, rels in rows:
@@ -54,7 +56,7 @@ def main(db: Path, top: int) -> None:
     entity_names: Counter = Counter()
     rel_types: Counter = Counter()
 
-    for (graph_json,) in con.execute("SELECT graph_json FROM graph_triplets"):
+    for (graph_json,) in con.execute("SELECT graph_json FROM demo_graph_triplets"):
         try:
             kg = json.loads(graph_json)
         except json.JSONDecodeError:
@@ -87,7 +89,7 @@ def main(db: Path, top: int) -> None:
     print("\n  Beispiel-Beziehungen (erste 10 mit evidence):")
     shown = 0
     for (graph_json,) in con.execute(
-        "SELECT graph_json FROM graph_triplets WHERE relationship_count > 0"
+        "SELECT graph_json FROM demo_graph_triplets WHERE relationship_count > 0"
     ):
         kg = json.loads(graph_json)
         for rel in kg.get("relationships", []):

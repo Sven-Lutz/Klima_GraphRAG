@@ -6,7 +6,6 @@ import sqlite3
 
 import pytest
 
-from crawler.core.provenance import ProvenanceError
 from crawler.scripts import extract_graph_ollama
 
 
@@ -103,5 +102,18 @@ def test_chunk_extraction_rejects_missing_parent_segment(monkeypatch, tmp_path):
     conn.close()
     monkeypatch.setattr(extract_graph_ollama, "extract_with_gleaning", lambda **kwargs: _graph())
 
-    with pytest.raises(ProvenanceError, match="no resolvable parent segment"):
-        extract_graph_ollama.main(limit=1, min_score=1, use_chunks_table=True, db_path=str(db_path))
+    run_id = extract_graph_ollama.main(
+        limit=1, min_score=1, use_chunks_table=True, db_path=str(db_path)
+    )
+
+    with sqlite3.connect(db_path) as verify:
+        assert verify.execute(
+            "SELECT status, succeeded_count, failed_count FROM graph_extraction_runs "
+            "WHERE run_id=?",
+            (run_id,),
+        ).fetchone() == ("failed", 0, 1)
+        assert verify.execute(
+            "SELECT outcome, error_category FROM extraction_source_outcomes "
+            "WHERE extraction_run_id=?",
+            (run_id,),
+        ).fetchone() == ("rejected", "invalid_provenance")

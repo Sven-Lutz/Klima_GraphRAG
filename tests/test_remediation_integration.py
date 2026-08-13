@@ -21,10 +21,12 @@ from crawler.core.provenance import (
     PROVENANCE_SCHEMA_VERSION,
     PROVENANCE_V2_SCHEMA_VERSION,
     PROVENANCE_V3_SCHEMA_VERSION,
+    PROVENANCE_V4_SCHEMA_VERSION,
     GraphProvenance,
     ensure_provenance_schema,
     ensure_provenance_v2,
     ensure_provenance_v3,
+    ensure_provenance_v4,
     get_or_create_evidence,
     validate_provenance_v3_schema,
 )
@@ -40,6 +42,7 @@ def _create_provenance_database(path: Path, version: int = 3) -> Path:
         PROVENANCE_SCHEMA_VERSION: ensure_provenance_schema,
         PROVENANCE_V2_SCHEMA_VERSION: ensure_provenance_v2,
         PROVENANCE_V3_SCHEMA_VERSION: ensure_provenance_v3,
+        PROVENANCE_V4_SCHEMA_VERSION: ensure_provenance_v4,
     }
     with create_sqlite_database(path, purpose="fixture") as connection:
         migrations[version](connection)
@@ -91,6 +94,15 @@ def test_runtime_write_connection_enforces_provenance_foreign_keys(tmp_path):
                 "explicit_graph_provenance",
                 "extraction_runs_and_evidence",
                 "provenance_constraints_and_immutability",
+            ],
+        ),
+        (
+            PROVENANCE_V4_SCHEMA_VERSION,
+            [
+                "explicit_graph_provenance",
+                "extraction_runs_and_evidence",
+                "provenance_constraints_and_immutability",
+                "canonical_extraction_lifecycle",
             ],
         ),
     ],

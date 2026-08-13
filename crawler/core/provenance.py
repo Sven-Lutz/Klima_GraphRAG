@@ -18,6 +18,8 @@ PROVENANCE_V2_SCHEMA_VERSION = 2
 PROVENANCE_V2_MIGRATION_NAME = "extraction_runs_and_evidence"
 PROVENANCE_V3_SCHEMA_VERSION = 3
 PROVENANCE_V3_MIGRATION_NAME = "provenance_constraints_and_immutability"
+PROVENANCE_V4_SCHEMA_VERSION = 4
+PROVENANCE_V4_MIGRATION_NAME = "canonical_extraction_lifecycle"
 SourceType = Literal["segment", "chunk"]
 
 _V1_MIGRATION_NAME = "explicit_graph_provenance"
@@ -729,6 +731,7 @@ def validated_provenance_schema_version(conn: sqlite3.Connection) -> int | None:
         PROVENANCE_SCHEMA_VERSION: _V1_MIGRATION_NAME,
         PROVENANCE_V2_SCHEMA_VERSION: PROVENANCE_V2_MIGRATION_NAME,
         PROVENANCE_V3_SCHEMA_VERSION: PROVENANCE_V3_MIGRATION_NAME,
+        PROVENANCE_V4_SCHEMA_VERSION: PROVENANCE_V4_MIGRATION_NAME,
     }
     current = markers[-1][0]
     expected_markers = [
@@ -742,8 +745,10 @@ def validated_provenance_schema_version(conn: sqlite3.Connection) -> int | None:
         _validate_provenance_v1_schema(conn)
     elif current == PROVENANCE_V2_SCHEMA_VERSION:
         _validate_migration_chain(conn)
-    else:
+    elif current == PROVENANCE_V3_SCHEMA_VERSION:
         validate_provenance_v3_schema(conn)
+    else:
+        validate_provenance_v4_schema(conn)
     return current
 
 
@@ -1473,6 +1478,573 @@ def ensure_provenance_v3(conn: sqlite3.Connection) -> None:
         conn.execute("RELEASE SAVEPOINT provenance_schema_v3")
 
 
+_V4_RUN_COLUMNS = {
+    "experiment_fingerprint",
+    "database_id",
+    "database_live_state_id",
+    "heartbeat_at",
+}
+_V4_TERMINAL_STATUSES = {
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "cancelled",
+    "interrupted",
+}
+
+
+def _create_v4_run_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE graph_extraction_runs_v4 (
+          run_id TEXT PRIMARY KEY,
+          extraction_model TEXT NOT NULL CHECK(length(trim(extraction_model)) > 0),
+          prompt_version TEXT NOT NULL CHECK(length(trim(prompt_version)) > 0),
+          source_type TEXT NOT NULL CHECK(source_type IN ('segment', 'chunk')),
+          started_at TEXT NOT NULL CHECK(length(trim(started_at)) > 0),
+          completed_at TEXT,
+          status TEXT NOT NULL CHECK(status IN (
+            'running', 'completed', 'completed_with_errors', 'failed',
+            'cancelled', 'interrupted'
+          )),
+          details_json TEXT, provider TEXT, parameters_json TEXT, seed INTEGER,
+          database_snapshot_id TEXT,
+          planned_count INTEGER NOT NULL DEFAULT 0 CHECK(planned_count >= 0),
+          succeeded_count INTEGER NOT NULL DEFAULT 0 CHECK(succeeded_count >= 0),
+          failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count >= 0),
+          skipped_count INTEGER NOT NULL DEFAULT 0 CHECK(skipped_count >= 0),
+          status_details TEXT,
+          experiment_fingerprint TEXT,
+          database_id TEXT,
+          database_live_state_id TEXT,
+          heartbeat_at TEXT,
+          UNIQUE(run_id, source_type),
+          UNIQUE(run_id, source_type, extraction_model, prompt_version),
+          CHECK(succeeded_count + failed_count + skipped_count <= planned_count),
+          CHECK(
+            (status = 'running' AND completed_at IS NULL) OR
+            (status != 'running' AND completed_at IS NOT NULL)
+          )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE extraction_run_sources_v4 (
+          extraction_run_id TEXT NOT NULL,
+          source_type TEXT NOT NULL CHECK(source_type IN ('segment', 'chunk')),
+          source_id TEXT NOT NULL CHECK(length(trim(source_id)) > 0),
+          ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+          source_content_hash TEXT NOT NULL
+            CHECK(length(source_content_hash) = 64
+              AND source_content_hash NOT GLOB '*[^0-9a-f]*'),
+          selected_at TEXT NOT NULL CHECK(length(trim(selected_at)) > 0),
+          PRIMARY KEY(extraction_run_id, source_type, source_id),
+          UNIQUE(extraction_run_id, ordinal),
+          FOREIGN KEY(extraction_run_id, source_type)
+            REFERENCES graph_extraction_runs_v4(run_id, source_type)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE extraction_source_outcomes_v4 (
+          extraction_run_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL,
+          outcome TEXT NOT NULL CHECK(outcome IN ('inserted', 'skipped', 'rejected', 'failed')),
+          error_category TEXT, occurred_at TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 0,
+          error_summary TEXT, PRIMARY KEY(extraction_run_id, source_type, source_id),
+          CHECK(source_type IN ('segment', 'chunk')), CHECK(retryable IN (0, 1)),
+          FOREIGN KEY(extraction_run_id, source_type)
+            REFERENCES graph_extraction_runs_v4(run_id, source_type),
+          FOREIGN KEY(extraction_run_id, source_type, source_id)
+            REFERENCES extraction_run_sources_v4(extraction_run_id, source_type, source_id)
+        )
+        """
+    )
+
+
+def _create_v4_graph_table(conn: sqlite3.Connection) -> list[str]:
+    old_sql = _table_sql(conn, "graph_triplets")
+    table_info = list(conn.execute('PRAGMA table_info("graph_triplets")'))
+    base_rows = [row for row in table_info if str(row[1]) not in _GRAPH_PROVENANCE_COLUMNS]
+    definitions = [_graph_column_definition(row, old_sql) for row in base_rows]
+    definitions.extend(
+        [
+            "source_type TEXT",
+            "source_id TEXT",
+            "segment_id TEXT",
+            "chunk_id TEXT",
+            "source_url TEXT",
+            "source_text TEXT",
+            "extraction_model TEXT",
+            "prompt_version TEXT",
+            "extraction_run_id TEXT",
+            "provenance_status TEXT NOT NULL DEFAULT 'legacy_unclassified' "
+            "CHECK(provenance_status IN ('legacy_unclassified', 'verified'))",
+            "evidence_id TEXT",
+            "CHECK((provenance_status = 'legacy_unclassified') OR ("
+            "source_type IN ('segment', 'chunk') AND source_id IS NOT NULL "
+            "AND length(trim(source_id)) > 0 AND extraction_run_id IS NOT NULL "
+            "AND evidence_id IS NOT NULL AND source_url IS NOT NULL "
+            "AND length(trim(source_url)) > 0 AND source_text IS NOT NULL "
+            "AND length(source_text) > 0 AND extraction_model IS NOT NULL "
+            "AND length(trim(extraction_model)) > 0 AND prompt_version IS NOT NULL "
+            "AND length(trim(prompt_version)) > 0 AND document_id IS NOT NULL "
+            "AND length(trim(document_id)) > 0 AND municipality_id IS NOT NULL "
+            "AND length(trim(municipality_id)) > 0 AND ((source_type = 'segment' "
+            "AND segment_id = source_id AND chunk_id IS NULL) OR (source_type = 'chunk' "
+            "AND chunk_id = source_id AND segment_id IS NOT NULL "
+            "AND length(trim(segment_id)) > 0))))",
+            "FOREIGN KEY(extraction_run_id, source_type, extraction_model, prompt_version) "
+            "REFERENCES graph_extraction_runs_v4("
+            "run_id, source_type, extraction_model, prompt_version)",
+            "FOREIGN KEY(evidence_id, source_type, source_id) "
+            "REFERENCES evidence_snapshots(evidence_id, source_type, source_id)",
+        ]
+    )
+    conn.execute(f"CREATE TABLE graph_triplets_v4 ({', '.join(definitions)})")
+    return [str(row[1]) for row in table_info]
+
+
+def _create_verified_graph_triggers(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TRIGGER graph_triplets_verified_no_downgrade
+        BEFORE UPDATE ON graph_triplets
+        WHEN OLD.provenance_status = 'verified' AND NEW.provenance_status != 'verified'
+        BEGIN SELECT RAISE(ABORT, 'verified graph provenance cannot be downgraded'); END
+        """
+    )
+    for operation in ("INSERT", "UPDATE"):
+        conn.execute(
+            f"""
+            CREATE TRIGGER graph_triplets_verified_evidence_{operation.lower()}
+            BEFORE {operation} ON graph_triplets WHEN NEW.provenance_status = 'verified'
+            BEGIN
+              SELECT CASE WHEN NOT EXISTS (
+                SELECT 1 FROM evidence_snapshots e
+                WHERE e.evidence_id = NEW.evidence_id
+                  AND e.source_type = NEW.source_type AND e.source_id = NEW.source_id
+                  AND e.document_id = NEW.document_id
+                  AND e.municipality_id = NEW.municipality_id
+                  AND e.segment_id IS NEW.segment_id AND e.chunk_id IS NEW.chunk_id
+                  AND e.source_url = NEW.source_url AND e.evidence_text = NEW.source_text
+              ) THEN RAISE(ABORT, 'verified graph provenance does not match evidence') END;
+            END
+            """
+        )
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    retained_graph_indexes: list[str] = []
+    graph_columns: list[str] = []
+    if _table_exists(conn, "graph_triplets"):
+        owned_graph_triggers = {
+            "graph_triplets_verified_no_downgrade",
+            "graph_triplets_verified_evidence_insert",
+            "graph_triplets_verified_evidence_update",
+        }
+        unowned_trigger = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='graph_triplets' "
+            f"AND name NOT IN ({','.join('?' for _ in owned_graph_triggers)}) LIMIT 1",
+            tuple(sorted(owned_graph_triggers)),
+        ).fetchone()
+        if unowned_trigger:
+            raise ProvenanceError(
+                f"Cannot safely replace unowned graph trigger {unowned_trigger[0]!r}"
+            )
+        retained_graph_indexes = [
+            str(row[1])
+            for row in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='graph_triplets' AND sql IS NOT NULL"
+            )
+            if row[0]
+            not in {
+                "uq_graph_triplets_run_source",
+                "idx_graph_triplets_provenance",
+            }
+        ]
+        _create_v4_graph_table(conn)
+        graph_columns = [str(row[1]) for row in conn.execute("PRAGMA table_info(graph_triplets)")]
+
+    _create_v4_run_tables(conn)
+    old_run_columns = sorted(_V1_RUN_COLUMNS | _V2_RUN_COLUMNS)
+    quoted_runs = ", ".join(f'"{column}"' for column in old_run_columns)
+    conn.execute(
+        f"INSERT INTO graph_extraction_runs_v4({quoted_runs}) "
+        f"SELECT {quoted_runs} FROM graph_extraction_runs"
+    )
+    # Existing v3 outcomes predate the deterministic input ledger. Preserve them
+    # by reconstructing the smallest truthful selected set in outcome order.
+    legacy_outcomes = list(
+        conn.execute(
+            "SELECT extraction_run_id, source_type, source_id, outcome, error_category, "
+            "occurred_at, retryable, error_summary FROM extraction_source_outcomes "
+            "ORDER BY extraction_run_id, occurred_at, source_id"
+        )
+    )
+    ordinals: dict[str, int] = {}
+    for row in legacy_outcomes:
+        ordinal = ordinals.get(str(row[0]), 0)
+        ordinals[str(row[0])] = ordinal + 1
+        placeholder_hash = hashlib.sha256(
+            f"legacy-v3\0{row[1]}\0{row[2]}".encode("utf-8")
+        ).hexdigest()
+        conn.execute(
+            "INSERT INTO extraction_run_sources_v4 VALUES (?, ?, ?, ?, ?, ?)",
+            (row[0], row[1], row[2], ordinal, placeholder_hash, row[5]),
+        )
+        conn.execute(
+            "INSERT INTO extraction_source_outcomes_v4 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(row),
+        )
+    if graph_columns:
+        quoted_graph = ", ".join(f'"{column}"' for column in graph_columns)
+        conn.execute(
+            f"INSERT INTO graph_triplets_v4({quoted_graph}) "
+            f"SELECT {quoted_graph} FROM graph_triplets"
+        )
+        conn.execute("DROP TABLE graph_triplets")
+    conn.execute("DROP TABLE extraction_source_outcomes")
+    conn.execute("DROP TABLE graph_extraction_runs")
+    conn.execute("ALTER TABLE graph_extraction_runs_v4 RENAME TO graph_extraction_runs")
+    conn.execute("ALTER TABLE extraction_run_sources_v4 RENAME TO extraction_run_sources")
+    conn.execute("ALTER TABLE extraction_source_outcomes_v4 RENAME TO extraction_source_outcomes")
+    if graph_columns:
+        conn.execute("ALTER TABLE graph_triplets_v4 RENAME TO graph_triplets")
+        for index_sql in retained_graph_indexes:
+            conn.execute(index_sql)
+        conn.execute(
+            "CREATE UNIQUE INDEX uq_graph_triplets_run_source "
+            "ON graph_triplets(extraction_run_id, source_type, source_id) "
+            f"WHERE {_GRAPH_SOURCE_PREDICATE}"
+        )
+        conn.execute(
+            "CREATE INDEX idx_graph_triplets_provenance "
+            "ON graph_triplets(provenance_status, source_type, source_id)"
+        )
+        _create_verified_graph_triggers(conn)
+    conn.execute(
+        "CREATE INDEX idx_graph_extraction_runs_status "
+        "ON graph_extraction_runs(status, heartbeat_at)"
+    )
+
+
+def validate_provenance_v4_schema(conn: sqlite3.Connection) -> None:
+    """Validate the lifecycle extension without weakening provenance v3 evidence rules."""
+    configure_provenance_connection(conn)
+    errors: list[str] = []
+    expected_markers = [
+        (PROVENANCE_SCHEMA_VERSION, _V1_MIGRATION_NAME),
+        (PROVENANCE_V2_SCHEMA_VERSION, PROVENANCE_V2_MIGRATION_NAME),
+        (PROVENANCE_V3_SCHEMA_VERSION, PROVENANCE_V3_MIGRATION_NAME),
+        (PROVENANCE_V4_SCHEMA_VERSION, PROVENANCE_V4_MIGRATION_NAME),
+    ]
+    markers = list(conn.execute("SELECT version, name FROM schema_migrations ORDER BY version"))
+    if markers != expected_markers:
+        errors.append("invalid provenance migration v4 chain")
+    required_tables = {
+        "graph_extraction_runs",
+        "extraction_run_sources",
+        "extraction_source_outcomes",
+        "evidence_snapshots",
+        "evidence_municipalities",
+    }
+    for table in sorted(required_tables):
+        if not _table_exists(conn, table):
+            errors.append(f"missing table {table}")
+    if errors:
+        raise ProvenanceError("Provenance schema v4 drift detected: " + "; ".join(errors))
+    if _table_columns(conn, "graph_extraction_runs") != (
+        _V1_RUN_COLUMNS | _V2_RUN_COLUMNS | _V4_RUN_COLUMNS
+    ):
+        errors.append("invalid graph_extraction_runs v4 column set")
+    _require_schema_fragments(
+        conn,
+        "graph_extraction_runs",
+        (
+            "'completed_with_errors'",
+            "'cancelled'",
+            "'interrupted'",
+            "status = 'running' AND completed_at IS NULL",
+            "status != 'running' AND completed_at IS NOT NULL",
+        ),
+        errors,
+    )
+    for run_key in (
+        ("run_id", "source_type"),
+        ("run_id", "source_type", "extraction_model", "prompt_version"),
+    ):
+        if not _has_unique_index(conn, "graph_extraction_runs", run_key):
+            errors.append(f"invalid graph_extraction_runs uniqueness {run_key}")
+    if not _table_exists(conn, "extraction_run_sources"):
+        errors.append("missing extraction_run_sources")
+    else:
+        required_source_columns = {
+            "extraction_run_id",
+            "source_type",
+            "source_id",
+            "ordinal",
+            "source_content_hash",
+            "selected_at",
+        }
+        if _table_columns(conn, "extraction_run_sources") != required_source_columns:
+            errors.append("invalid extraction_run_sources column set")
+        if _primary_key_columns(conn, "extraction_run_sources") != (
+            "extraction_run_id",
+            "source_type",
+            "source_id",
+        ):
+            errors.append("invalid extraction_run_sources primary key")
+        if not _has_unique_index(conn, "extraction_run_sources", ("extraction_run_id", "ordinal")):
+            errors.append("invalid extraction_run_sources ordinal uniqueness")
+        if (
+            ("extraction_run_id", "source_type"),
+            "graph_extraction_runs",
+            ("run_id", "source_type"),
+        ) not in _foreign_key_groups(conn, "extraction_run_sources"):
+            errors.append("invalid extraction_run_sources run foreign key")
+    if _table_columns(conn, "extraction_source_outcomes") != _V2_OUTCOME_COLUMNS:
+        errors.append("invalid extraction_source_outcomes column set")
+    _require_schema_fragments(
+        conn,
+        "extraction_source_outcomes",
+        (
+            "CHECK(source_type IN ('segment', 'chunk'))",
+            "CHECK(outcome IN ('inserted', 'skipped', 'rejected', 'failed'))",
+            "CHECK(retryable IN (0, 1))",
+        ),
+        errors,
+    )
+    outcome_fks = _foreign_key_groups(conn, "extraction_source_outcomes")
+    if (
+        ("extraction_run_id", "source_type"),
+        "graph_extraction_runs",
+        ("run_id", "source_type"),
+    ) not in outcome_fks:
+        errors.append("invalid extraction outcome run foreign key")
+    if (
+        ("extraction_run_id", "source_type", "source_id"),
+        "extraction_run_sources",
+        ("extraction_run_id", "source_type", "source_id"),
+    ) not in outcome_fks:
+        errors.append("invalid extraction outcome selected-source foreign key")
+    if _table_columns(conn, "evidence_snapshots") != _V2_EVIDENCE_COLUMNS:
+        errors.append("invalid evidence_snapshots column set")
+    for evidence_key in (
+        ("source_type", "source_id", "content_hash"),
+        ("evidence_id", "source_type", "source_id"),
+    ):
+        if not _has_unique_index(conn, "evidence_snapshots", evidence_key):
+            errors.append(f"invalid evidence_snapshots uniqueness {evidence_key}")
+    _require_schema_fragments(
+        conn,
+        "evidence_snapshots",
+        (
+            "CHECK(source_type IN ('segment', 'chunk'))",
+            "source_type = 'segment' AND segment_id = source_id AND chunk_id IS NULL",
+            "source_type = 'chunk' AND chunk_id = source_id AND segment_id IS NOT NULL",
+        ),
+        errors,
+    )
+    for table, name, columns in (
+        ("evidence_snapshots", "idx_evidence_source", ("source_type", "source_id")),
+        (
+            "graph_extraction_runs",
+            "idx_graph_extraction_runs_status",
+            ("status", "heartbeat_at"),
+        ),
+    ):
+        if not _index_matches(conn, table, name, columns, unique=False):
+            errors.append(f"invalid {name} index definition")
+    trigger_names = {
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+    }
+    immutable_trigger_contracts = {
+        "evidence_snapshots_immutable_update": (
+            "BEFORE UPDATE ON evidence_snapshots",
+            "RAISE(ABORT, 'evidence snapshots are immutable')",
+        ),
+        "evidence_snapshots_immutable_delete": (
+            "BEFORE DELETE ON evidence_snapshots",
+            "RAISE(ABORT, 'evidence snapshots are immutable')",
+        ),
+        "evidence_municipalities_immutable_update": (
+            "BEFORE UPDATE ON evidence_municipalities",
+            "RAISE(ABORT, 'evidence municipality associations are immutable')",
+        ),
+        "evidence_municipalities_immutable_delete": (
+            "BEFORE DELETE ON evidence_municipalities",
+            "RAISE(ABORT, 'evidence municipality associations are immutable')",
+        ),
+    }
+    for trigger, fragments in immutable_trigger_contracts.items():
+        normalized_sql = _normalize_sql(_trigger_sql(conn, trigger))
+        if trigger not in trigger_names or any(
+            _normalize_sql(fragment) not in normalized_sql for fragment in fragments
+        ):
+            errors.append(f"invalid trigger {trigger}")
+    if _table_exists(conn, "graph_triplets"):
+        if not _index_matches(
+            conn,
+            "graph_triplets",
+            _GRAPH_SOURCE_INDEX,
+            ("extraction_run_id", "source_type", "source_id"),
+            unique=True,
+            predicate=_GRAPH_SOURCE_PREDICATE,
+        ):
+            errors.append("invalid uq_graph_triplets_run_source index definition")
+        if not _index_matches(
+            conn,
+            "graph_triplets",
+            "idx_graph_triplets_provenance",
+            ("provenance_status", "source_type", "source_id"),
+            unique=False,
+        ):
+            errors.append("invalid idx_graph_triplets_provenance index definition")
+        _require_schema_fragments(
+            conn,
+            "graph_triplets",
+            (
+                "CHECK(provenance_status IN ('legacy_unclassified', 'verified'))",
+                "source_type = 'segment' AND segment_id = source_id AND chunk_id IS NULL",
+                "source_type = 'chunk' AND chunk_id = source_id AND segment_id IS NOT NULL",
+            ),
+            errors,
+        )
+        required_triggers = {
+            "graph_triplets_verified_no_downgrade",
+            "graph_triplets_verified_evidence_insert",
+            "graph_triplets_verified_evidence_update",
+        }
+        for trigger in sorted(required_triggers - trigger_names):
+            errors.append(f"missing trigger {trigger}")
+        graph_fks = _foreign_key_groups(conn, "graph_triplets")
+        required_graph_fks = {
+            (
+                ("extraction_run_id", "source_type", "extraction_model", "prompt_version"),
+                "graph_extraction_runs",
+                ("run_id", "source_type", "extraction_model", "prompt_version"),
+            ),
+            (
+                ("evidence_id", "source_type", "source_id"),
+                "evidence_snapshots",
+                ("evidence_id", "source_type", "source_id"),
+            ),
+        }
+        if not required_graph_fks <= graph_fks:
+            errors.append("invalid graph_triplets provenance foreign keys")
+        mismatch = conn.execute(
+            """
+            SELECT g.rowid FROM graph_triplets g
+            LEFT JOIN evidence_snapshots e
+              ON e.evidence_id=g.evidence_id AND e.source_type=g.source_type
+             AND e.source_id=g.source_id AND e.document_id=g.document_id
+             AND e.municipality_id=g.municipality_id AND e.segment_id IS g.segment_id
+             AND e.chunk_id IS g.chunk_id AND e.source_url=g.source_url
+             AND e.evidence_text=g.source_text
+            WHERE g.provenance_status='verified' AND e.evidence_id IS NULL LIMIT 1
+            """
+        ).fetchone()
+        if mismatch:
+            errors.append("verified graph provenance does not match immutable evidence")
+    if (
+        ("evidence_id",),
+        "evidence_snapshots",
+        ("evidence_id",),
+    ) not in _foreign_key_groups(conn, "evidence_municipalities"):
+        errors.append("invalid evidence_municipalities evidence foreign key")
+    missing_association = conn.execute(
+        """
+        SELECT e.evidence_id FROM evidence_snapshots e
+        LEFT JOIN evidence_municipalities m
+          ON m.evidence_id=e.evidence_id AND m.municipality_id=e.municipality_id
+        WHERE m.evidence_id IS NULL LIMIT 1
+        """
+    ).fetchone()
+    if missing_association:
+        errors.append("evidence snapshot is missing its municipality association")
+    for row in conn.execute(
+        "SELECT evidence_id, source_type, source_id, evidence_text, content_hash "
+        "FROM evidence_snapshots"
+    ):
+        content_hash = hashlib.sha256(str(row[3]).encode("utf-8")).hexdigest()
+        if row[4] != content_hash or row[0] != evidence_id_for(row[1], row[2], content_hash):
+            errors.append(f"invalid evidence content identity {row[0]}")
+            break
+    counter_mismatch = conn.execute(
+        """
+        SELECT r.run_id FROM graph_extraction_runs r
+        LEFT JOIN (
+          SELECT extraction_run_id,
+            SUM(CASE WHEN outcome='inserted' THEN 1 ELSE 0 END) succeeded,
+            SUM(CASE WHEN outcome IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
+            SUM(CASE WHEN outcome='skipped' THEN 1 ELSE 0 END) skipped,
+            COUNT(*) total
+          FROM extraction_source_outcomes GROUP BY extraction_run_id
+        ) o ON o.extraction_run_id=r.run_id
+        LEFT JOIN (
+          SELECT extraction_run_id, COUNT(*) selected
+          FROM extraction_run_sources GROUP BY extraction_run_id
+        ) s ON s.extraction_run_id=r.run_id
+        WHERE r.experiment_fingerprint IS NOT NULL AND (
+          r.planned_count != COALESCE(s.selected, 0)
+          OR r.succeeded_count != COALESCE(o.succeeded, 0)
+          OR r.failed_count != COALESCE(o.failed, 0)
+          OR r.skipped_count != COALESCE(o.skipped, 0)
+          OR (r.status='completed' AND (
+            COALESCE(o.total, 0) != r.planned_count OR COALESCE(o.failed, 0) != 0
+          ))
+          OR (r.status='completed_with_errors' AND (
+            COALESCE(o.total, 0) != r.planned_count
+            OR COALESCE(o.succeeded, 0) = 0 OR COALESCE(o.failed, 0) = 0
+          ))
+        ) LIMIT 1
+        """
+    ).fetchone()
+    if counter_mismatch:
+        errors.append(
+            f"run counters or terminal status disagree with outcomes {counter_mismatch[0]}"
+        )
+    if list(conn.execute("PRAGMA foreign_key_check")):
+        errors.append("foreign-key integrity check failed")
+    if errors:
+        raise ProvenanceError("Provenance schema v4 drift detected: " + "; ".join(errors))
+
+
+def ensure_provenance_v4(conn: sqlite3.Connection) -> None:
+    """Apply the canonical extraction lifecycle extension over approved v3."""
+    configure_provenance_connection(conn)
+    conn.execute("SAVEPOINT provenance_schema_v4")
+    try:
+        marker = None
+        if _table_exists(conn, "schema_migrations"):
+            marker = conn.execute(
+                "SELECT name FROM schema_migrations WHERE version=?",
+                (PROVENANCE_V4_SCHEMA_VERSION,),
+            ).fetchone()
+        if marker is not None:
+            if marker[0] != PROVENANCE_V4_MIGRATION_NAME:
+                raise ProvenanceError("Invalid provenance schema v4 migration marker")
+            validate_provenance_v4_schema(conn)
+        else:
+            ensure_provenance_v3(conn)
+            validate_provenance_v3_schema(conn)
+            _migrate_v3_to_v4(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (PROVENANCE_V4_SCHEMA_VERSION, PROVENANCE_V4_MIGRATION_NAME, _utc_now()),
+            )
+            validate_provenance_v4_schema(conn)
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT provenance_schema_v4")
+        conn.execute("RELEASE SAVEPOINT provenance_schema_v4")
+        raise
+    else:
+        conn.execute("RELEASE SAVEPOINT provenance_schema_v4")
+
+
 def _get_or_create_evidence(conn: sqlite3.Connection, provenance: GraphProvenance) -> str:
     if _table_exists(conn, "evidence_municipalities"):
         return _insert_v3_evidence(
@@ -1543,23 +2115,16 @@ def start_extraction_run(
     prompt_version: str,
     source_type: SourceType,
 ) -> None:
-    configure_provenance_connection(conn)
-    ensure_provenance_schema(conn)
-    conn.execute(
-        """
-        INSERT INTO graph_extraction_runs(
-            run_id, extraction_model, prompt_version, source_type, started_at, status
-        ) VALUES (?, ?, ?, ?, ?, 'running')
-        """,
-        (run_id, extraction_model, prompt_version, source_type, _utc_now()),
+    """Fail closed: legacy initialization cannot satisfy the lifecycle contract."""
+    raise ProvenanceError(
+        "Legacy start_extraction_run is unsupported; use "
+        "crawler.core.extraction.initialize_extraction_run with an input ledger"
     )
 
 
 def finish_extraction_run(conn: sqlite3.Connection, run_id: str, *, status: str) -> None:
-    configure_provenance_connection(conn)
-    if status not in {"completed", "failed"}:
-        raise ProvenanceError(f"Invalid extraction run status: {status}")
-    conn.execute(
-        "UPDATE graph_extraction_runs SET completed_at=?, status=? WHERE run_id=?",
-        (_utc_now(), status, run_id),
+    """Fail closed: terminal status must be derived from persisted outcomes."""
+    raise ProvenanceError(
+        "Legacy finish_extraction_run is unsupported; use "
+        "crawler.core.extraction.finalize_extraction_run"
     )

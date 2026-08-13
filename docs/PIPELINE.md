@@ -140,19 +140,55 @@ Governance, Sonstiges.
 ```bash
 python -m crawler.scripts.extract_graph_ollama --chunk-mode
 python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4   # HPC
+python -m crawler.scripts.extract_graph_ollama --chunk-mode --resume-run RUN_ID
 ```
 
 | Liest | Schreibt |
 |---|---|
-| `chunks` oder `segments` | `graph_triplets` mit vollständiger Source-Provenance und `graph_extraction_runs` |
+| `chunks` oder `segments` | `graph_triplets`, immutable Evidenz, Run-Input-Ledger und Source-Outcomes |
 
-Jede neue Extraktion speichert stabilen Source-Typ und Source-ID, Segment-/Chunk-
-Hierarchie, Dokument-URL und -Text sowie Modell-, Prompt- und Run-Metadaten.
-Legacy-Zeilen ohne diese Angaben bleiben erhalten, werden aber nicht als
-zitierfähige Evidenz exportiert.
+Der Ollama-Pfad ist der kanonische Graph-Writer. Vor dem ersten Provider-Aufruf
+legt er den Run und die deterministisch sortierte Input-Menge in
+`extraction_run_sources` an. Segment-/Chunk-Hierarchie, Dokument,
+Kommunalzuordnung, URL und Text werden vor jedem LLM-Aufruf validiert.
 
-**Alternative:**
-- `demo/extract_graph_spacy.py` — Offline-Fallback (spaCy NER + Keywords), gleiche Zieltabelle, deutlich geringere Qualität. Nur für Demos ohne GPU/Ollama.
+Ein erfolgreicher Source-Schreibvorgang persistiert Evidenz, Graph-Artefakt,
+`inserted`-Outcome und neu abgeleitete Zähler atomar in einem Savepoint.
+`skipped`, `rejected` und `failed` sind explizite Outcomes; es gibt kein
+`INSERT OR IGNORE` im kanonischen Graph-Writer. Die Lifecycle-API committet
+keine Transaktion des Aufrufers.
+
+Run-Zustände sind `running`, `completed`, `completed_with_errors`, `failed`,
+`cancelled` und `interrupted`. Der Terminalzustand und alle Zähler werden aus
+persistierten Outcomes abgeleitet. Auch eine leere Auswahl erzeugt einen
+deterministischen `completed`-Run. `KeyboardInterrupt` wird als `interrupted`
+persistiert; `--resume-run` setzt denselben Run fort und überspringt Sources mit
+bereits vorhandenem Outcome. Ein noch `running` markierter Run ist erst nach
+der mit `--stale-after` konfigurierten Heartbeat-Frist resumierbar.
+
+Neue Experimente schließen historische Sources nicht aus. Mehrere Runs über
+denselben Source bewahren ihre Artefakte; Modell, Prompt, Parameter, Seed und
+Snapshot dürfen variieren. Identische Evidenz wird content-addressed
+wiederverwendet, geänderter Text erzeugt einen neuen unveränderlichen Snapshot.
+Ein manifestierter Snapshot wird als `database_snapshot_id` gespeichert. Bei
+einer unmanifestierten, schreibbaren DB bleibt dieses Feld bewusst `NULL`; die
+Live-State-ID wird separat erfasst und nicht als wissenschaftlicher Snapshot
+ausgegeben.
+
+Legacy-Zeilen ohne vollständige Angaben bleiben erhalten, werden aber nicht als
+zitierfähige Evidenz behandelt.
+
+**Experimentelle Demo:**
+- `demo/extract_graph_spacy.py` — Offline-Heuristik (spaCy NER + Keywords) für
+  Demos ohne GPU/Ollama. Sie schreibt ausschließlich `demo_graph_triplets` und
+  erzeugt keine kanonischen Runs, Outcomes, Evidenz oder Produktionsartefakte.
+
+**Bekannte Grenzen:** laufende Ollama-HTTP-Aufrufe werden nicht remote
+abgebrochen, sondern bleiben durch den Request-Timeout begrenzt. Die
+Lifecycle-Migration ist fixture-validiert; eine Anwendung auf die
+Produktionsdatenbank ist nicht Teil dieses Stands. Neo4j-Projektion, Retrieval
+und Citation-Rendering werden durch diesen Stage-2b-Stand nicht als bereit
+ausgewiesen.
 
 ---
 
@@ -296,8 +332,9 @@ python demo/visualize_graph.py           # interaktives HTML (pyvis)
 python demo/query_demo.py "Wärmepumpe Förderung"
 ```
 
-Die Demo nutzt dieselben Pipeline-Module gegen `demo/demo.sqlite`
-(via `KLIMA_DB_PATH`).
+Die Demo nutzt Pipeline-Module gegen `demo/demo.sqlite` (via `KLIMA_DB_PATH`),
+hält spaCy-Graphartefakte aber bewusst in `demo_graph_triplets` getrennt vom
+kanonischen Ollama-Writer.
 
 ---
 

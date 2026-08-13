@@ -76,7 +76,84 @@ preflight validation, capacity estimate for table reconstruction, and explicit
 operator approval. The migration must not be run directly against
 `crawler/data/db/crawl.sqlite` as part of development or test validation.
 
-## Target Neo4j contract
+### Canonical extraction lifecycle (schema version 4)
+
+Schema version 4 is an additive writer-lifecycle migration over the approved
+v3 evidence contract. It does not change evidence IDs, source hierarchy,
+immutable-evidence triggers, or verified graph provenance. It rebuilds only the
+run-owned tables and their graph foreign-key target so the canonical writer can
+represent the complete lifecycle:
+
+- `running` while selected work remains;
+- `completed` when every selected source is inserted or explicitly skipped and
+  none failed;
+- `completed_with_errors` when at least one artifact was inserted and at least
+  one source failed or was rejected;
+- `failed` when no artifact succeeded and a source failed/rejected, or a fatal
+  orchestration error stops the run;
+- `cancelled` for explicit cooperative cancellation; and
+- `interrupted` for `KeyboardInterrupt` or equivalent process interruption.
+
+`crawler.scripts.extract_graph_ollama` is the only canonical production graph
+writer. It creates the run and its ordered `extraction_run_sources` ledger
+before invoking Ollama. The ledger records one content hash per selected
+segment/chunk, making the input set deterministic and detecting changed text
+before provider or persistence work. A zero-input experiment is retained as a
+`completed` run with `no_inputs_selected` status detail.
+
+Every run persists provider, model, prompt version, canonical JSON parameters,
+seed, source type, database path identity, manifested `database_snapshot_id`
+when one exists, initial live-state identity for an unmanifested operational
+database, timestamps, counts, heartbeat, bounded status detail, and a
+deterministic `extraction-config-sha256` fingerprint. A live-state ID is
+explicitly not stored as a scientific snapshot ID. Canonical writable runs use
+one operational database path; manifested snapshot files remain read-only.
+
+Historical results do not suppress new experiments. The same source may be
+processed by multiple runs with the same or different model, prompt,
+parameters, seed, or database snapshot. Graph uniqueness is scoped to
+`(run_id, source_type, source_id)`, so earlier artifacts are preserved.
+Content-identical evidence is reused by its immutable content identity; changed
+source text creates a new evidence snapshot. A duplicate write inside one run
+raises `DuplicateRunSourceError` rather than being silently ignored.
+
+For a successful source, one writer-owned savepoint covers:
+
+```text
+validated source hierarchy
+  -> immutable evidence
+  -> verified graph artifact
+  -> inserted source outcome
+  -> counters derived from persisted outcomes
+```
+
+Any failure rolls that savepoint back. A failure/rejection outcome is then
+recorded in its own savepoint. Shared lifecycle functions never commit a
+caller-owned transaction. The CLI owns and always closes its SQLite connection,
+including cancellation and interruption paths.
+
+Resume is explicit through `--resume-run RUN_ID`. It reuses the original run,
+verifies its configuration and database identity, and processes only selected
+sources without an outcome. Only `interrupted` runs or `running` runs whose
+heartbeat exceeds `--stale-after` are resumable; a resume never creates a new
+experiment silently.
+
+The spaCy script is experimental and isolated. It writes
+`demo_graph_triplets`, not canonical `graph_triplets`, evidence, outcomes, or
+run records.
+
+Known limitations:
+
+- provider cancellation is cooperative between source calls; an in-flight
+  blocking Ollama HTTP request is bounded by its request timeout but is not
+  remotely cancelled;
+- unmanifested writable databases have a path identity and recorded live-state
+  identity, but deliberately have no `database_snapshot_id`; and
+- schema v4, like v3, is validated against fixtures only and must not be applied
+  directly to the production crawl database without a separately approved
+  backup and migration preflight.
+
+## Target Neo4j contract (planned; not implemented by this lifecycle)
 
 ```text
 Municipality -> HAS_DOCUMENT -> Document

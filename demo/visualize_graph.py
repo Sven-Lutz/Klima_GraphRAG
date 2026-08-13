@@ -1,5 +1,5 @@
 """
-visualize_graph.py  —  Interactive HTML graph from graph_triplets.
+visualize_graph.py  —  Interactive HTML graph from demo_graph_triplets.
 
 Opens a force-directed graph in your browser. Only nodes that participate
 in at least one relationship are shown — no isolated dots.
@@ -164,7 +164,7 @@ def load_graph(
     rel_filter: Optional[str],
 ) -> tuple[dict[str, dict], list[dict]]:
     con = connect_existing_read_only(db)
-    q = "SELECT municipality_id, graph_json FROM graph_triplets"
+    q = "SELECT municipality_id, graph_json FROM demo_graph_triplets"
     params: list = []
     if muni_filter:
         q += " WHERE municipality_id = ?"
