@@ -1,9 +1,11 @@
 # Interactive research application
 
 Status: **implemented** for local, snapshot-bound semantic, graph, and hybrid
-research workflows. Live Ollama acceptance remains **OPEN** because the available
-model timed out during the separate provider gate. Fixture generation is not
-evidence that live provider acceptance has passed.
+research workflows. The live generation provider gate is **closed**: the
+canonical `OllamaGenerationProvider` was validated against a real Ollama service
+(see [Provider acceptance versus runtime availability](#provider-acceptance-versus-runtime-availability)).
+Acceptance is a project record and is never treated as proof that a provider is
+reachable during a given session.
 
 ## Architecture boundary
 
@@ -101,11 +103,55 @@ export KLIMA_OLLAMA_URL=http://127.0.0.1:11434
 export KLIMA_OLLAMA_MODEL=llama3.1:8b
 ```
 
-This marks the provider as configured, not accepted. The research UI continues
-to display `open_live_provider_timeout` until a separate live-provider acceptance
-run closes that gate. A timeout or unavailable provider yields a typed canonical
-generation-failure result while retrieved evidence remains inspectable. The UI
-does not attempt fallback providers.
+A timeout or unavailable provider yields a typed canonical generation-failure
+result while retrieved evidence remains inspectable. The UI does not attempt
+fallback providers.
+
+## Provider acceptance versus runtime availability
+
+`ProviderGate` deliberately separates two things that earlier revisions of this
+document conflated.
+
+**Acceptance** (`acceptance`, `acceptance_evidence`) is an immutable project
+record describing whether the provider adapter was validated against a real
+service under the canonical contract. Two values exist:
+
+| Value | Meaning |
+|---|---|
+| `live_provider_validated` | The canonical Ollama adapter was validated live. Ollama 0.32.5 with `llama3.1:8b` produced a successful direct generation and a successful canonical `OllamaGenerationProvider` generation, with exact requested/served model identity, valid response parsing, token metadata, and a reported finish reason. |
+| `fixture_provider_deterministic` | The composition uses the deterministic in-process fixture provider. It is independent of Ollama and asserts nothing about any live service. |
+
+The earlier `open_live_provider_timeout` and `fixture_only_live_provider_open`
+values are removed. The timeouts that produced them were caused by local memory
+pressure and cold-start thrashing on an 8 GiB Apple M3 host, not by a repository
+defect.
+
+**Runtime availability** (`runtime`, `runtime_message`) is observed per process
+and derived exclusively from canonical `AnswerResult` outcomes:
+
+| Value | Derived from |
+|---|---|
+| `not_configured` | No generator, or generation is not enabled in this composition. |
+| `not_probed` | Generation is configured; no generation has been attempted yet in this process. |
+| `available` | The most recent attempt reached the provider (`answered` or `grounding_failed`). |
+| `timeout` | The most recent attempt failed with `provider_timeout`. |
+| `unavailable` | The most recent attempt failed with `provider_unavailable`. |
+| `runtime_failure` | The provider responded but the response was unusable (malformed, empty, or rejected configuration). |
+
+A closed acceptance gate never sets `runtime` to `available`. A freshly
+configured production composition reports `not_probed` until a real generation
+attempt is made, and `insufficient_evidence` leaves the state unchanged because
+the canonical layer can reach it without calling the provider at all.
+
+Cold model loading is not a separate observable state: the Ollama chat API
+blocks while a model loads and exposes no distinct loading signal, so a cold
+start surfaces as a retryable `timeout`. The browser shows a transient
+"Contacting provider…" indicator while a generation request is in flight, and
+the sidebar notes that a first cold load can take a while.
+
+Fixture mode is a fully independent path. It uses the deterministic fixture
+provider, never contacts Ollama, and its `available` runtime state says nothing
+about live provider health.
 
 ## Research workflow
 
@@ -140,8 +186,12 @@ backend failure. Rejected provider text is never styled as a grounded answer.
 
 ## Validation and limitations
 
-Focused tests use the real canonical fixture path. The existing live Neo4j suite
-remains the disposable-service integration gate. The UI supports local single-process
+Focused tests use the real canonical fixture path. The disposable Neo4j suite
+(`tests/test_neo4j_projection_live.py`, opt-in via `GRAPHRAG_NEO4J_TEST_DISPOSABLE=1`)
+remains the live integration gate and includes
+`test_disposable_neo4j_canonical_answer_reaches_ui_contract`, which drives a live
+Neo4j 5 projection through hybrid retrieval, the canonical answer generator, and
+the FastAPI boundary up to the exported canonical JSON. The UI supports local single-process
 research sessions; its immutable in-memory export store is not a multi-user history
 service. Municipality/source filtering currently filters the returned evidence for
 inspection and does not alter canonical retrieval semantics. Global/community

@@ -1,10 +1,15 @@
 [project]
-name = "kit-klimacrawler"
+name = "klima-graphrag"
 version = "1.0.0"
-description = "GraphRAG-System für kommunale Klimaschutzdaten: Crawl, Wissensgraph und natürlichsprachige Suche über 2.056 bayerische Kommunen"
+description = "Provenance-aware GraphRAG research platform for German municipal climate-policy sources"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
+authors = [{ name = "Sven Lutz" }]
+maintainers = [{ name = "Sven Lutz" }]
+
+[project.urls]
+Repository = "https://github.com/Sven-Lutz/Klima_GraphRAG"
 
 # Laufzeit-Abhängigkeiten: siehe crawler/requirements.txt (nach Stages gruppiert)
 # Entwicklungs-Abhängigkeiten: requirements-dev.txt
