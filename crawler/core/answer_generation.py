@@ -31,9 +31,14 @@ from crawler.core.answer_context import (
 )
 from crawler.core.citations import Citation, CitationRegistry, render_citations_markdown
 from crawler.core.grounding import GroundingReport, validate_grounded_answer
+from crawler.core.provenance import ProvenanceError, evidence_id_for
 from crawler.core.retrieval import CanonicalRetriever, RetrievalRequest, RetrievalResult
 
 INSUFFICIENT_EVIDENCE_MARKER = "INSUFFICIENT_EVIDENCE:"
+ANSWER_RUN_SCHEMA_VERSION = 1
+CANONICAL_INSUFFICIENT_EVIDENCE_TEXT = (
+    "The supplied evidence is insufficient to answer the question."
+)
 
 
 class AnswerStatus(str, Enum):
@@ -142,6 +147,7 @@ class GenerationInput:
     system_instructions: str
     user_question: str
     evidence_context: str
+    allowed_citation_labels: tuple[str, ...]
     prompt_version: str
     model: str
     parameters: GenerationParameters
@@ -150,6 +156,7 @@ class GenerationInput:
 @dataclass(frozen=True, slots=True)
 class ProviderResponse:
     text: str
+    model: str
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
@@ -205,6 +212,7 @@ class GenerationMetadata:
 
 @dataclass(frozen=True, slots=True)
 class AnswerRunRecord:
+    schema_version: int
     run_id: str
     status: str
     provider: str
@@ -213,6 +221,11 @@ class AnswerRunRecord:
     parameters: GenerationParameters
     seed: int | None
     database_snapshot_id: str
+    retrieval_mode: str
+    retrieval_top_k: int
+    projection_id: str | None
+    extraction_run_ids: tuple[str, ...]
+    embedding_artifact_id: str | None
     started_at: str
     completed_at: str | None
     input_identifiers: tuple[str, ...]
@@ -271,6 +284,7 @@ class AnswerResult:
     generation: GenerationMetadata
     generation_run_id: str
     database_snapshot_id: str
+    retrieval_scope: RetrievalScope
     warnings: tuple[str, ...] = ()
     failure: AnswerFailure | None = None
 
@@ -285,6 +299,7 @@ class AnswerResult:
             "generation": self.generation.to_dict(),
             "generation_run_id": self.generation_run_id,
             "database_snapshot_id": self.database_snapshot_id,
+            "retrieval_scope": self.retrieval_scope.to_dict(),
             "warnings": list(self.warnings),
             "failure": self.failure.to_dict() if self.failure else None,
         }
@@ -323,6 +338,28 @@ def _selection(context: AnswerContext, budget: EvidenceBudget) -> EvidenceSelect
     )
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalScope:
+    mode: str
+    top_k: int
+    projection_id: str | None
+    extraction_run_ids: tuple[str, ...]
+    embedding_artifact_id: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _retrieval_scope(request: AnswerRequest, retrieval: RetrievalResult) -> RetrievalScope:
+    return RetrievalScope(
+        mode=retrieval.mode,
+        top_k=request.retrieval_request.top_k,
+        projection_id=retrieval.projection_id,
+        extraction_run_ids=tuple(sorted(request.retrieval_request.extraction_run_ids)),
+        embedding_artifact_id=retrieval.embedding_artifact_id,
+    )
+
+
 def _resolved_citations(
     report: GroundingReport, registry: CitationRegistry
 ) -> tuple[Citation, ...]:
@@ -355,9 +392,11 @@ class CanonicalAnswerGenerator:
         input_identifiers: tuple[str, ...] = (),
         output_identifiers: tuple[str, ...] = (),
         error_classification: str | None = None,
+        embedding_artifact_id: str | None = None,
     ) -> None:
         self.run_recorder.record(
             AnswerRunRecord(
+                schema_version=ANSWER_RUN_SCHEMA_VERSION,
                 run_id=run_id,
                 status=status,
                 provider=request.generation_provider,
@@ -366,6 +405,11 @@ class CanonicalAnswerGenerator:
                 parameters=request.generation_parameters,
                 seed=request.generation_parameters.seed,
                 database_snapshot_id=request.database_snapshot_id,
+                retrieval_mode=request.retrieval_request.mode.value,
+                retrieval_top_k=request.retrieval_request.top_k,
+                projection_id=request.retrieval_request.projection_id,
+                extraction_run_ids=tuple(sorted(request.retrieval_request.extraction_run_ids)),
+                embedding_artifact_id=embedding_artifact_id,
                 started_at=started_at,
                 completed_at=completed_at,
                 input_identifiers=(_question_id(request.question), *input_identifiers),
@@ -375,10 +419,24 @@ class CanonicalAnswerGenerator:
         )
 
     def generate(self, request: AnswerRequest) -> AnswerResult:
-        request.validate()
         run_id = "answer-run-" + uuid.uuid4().hex
         started_at = _utc_now()
         self._record(request, run_id=run_id, started_at=started_at, status="pending")
+        try:
+            request.validate()
+        except Exception as exc:
+            classification = (
+                exc.code if isinstance(exc, AnswerGenerationError) else "invalid_answer_contract"
+            )
+            self._record(
+                request,
+                run_id=run_id,
+                started_at=started_at,
+                status="failed",
+                completed_at=_utc_now(),
+                error_classification=classification,
+            )
+            raise
         self._record(request, run_id=run_id, started_at=started_at, status="running")
         try:
             retrieval = self.retriever.retrieve(request.retrieval_request)
@@ -415,7 +473,8 @@ class CanonicalAnswerGenerator:
         timer_started = monotonic()
         if not context.citations.citations:
             response = ProviderResponse(
-                "The retrieved evidence is insufficient to answer the question."
+                CANONICAL_INSUFFICIENT_EVIDENCE_TEXT,
+                model=request.generation_model,
             )
             return self._finalize(
                 request,
@@ -443,6 +502,7 @@ class CanonicalAnswerGenerator:
                     system_instructions=context.system_instructions,
                     user_question=context.user_question,
                     evidence_context=context.evidence_context,
+                    allowed_citation_labels=context.allowed_citation_labels,
                     prompt_version=context.prompt_version,
                     model=request.generation_model,
                     parameters=request.generation_parameters,
@@ -456,17 +516,35 @@ class CanonicalAnswerGenerator:
                 raise MalformedProviderResponseError(
                     "Generation provider returned non-text answer content"
                 )
+            if not isinstance(response.model, str) or not response.model.strip():
+                raise MalformedProviderResponseError(
+                    "Generation provider returned an invalid model identity"
+                )
+            if response.model != request.generation_model:
+                raise UnsupportedProviderConfigurationError(
+                    "Generation provider response model does not match the requested model"
+                )
             token_counts = (
                 response.input_tokens,
                 response.output_tokens,
                 response.total_tokens,
             )
             if any(
-                value is not None and (not isinstance(value, int) or value < 0)
+                value is not None
+                and (not isinstance(value, int) or isinstance(value, bool) or value < 0)
                 for value in token_counts
             ):
                 raise MalformedProviderResponseError(
                     "Generation provider returned invalid token metadata"
+                )
+            if (
+                response.input_tokens is not None
+                and response.output_tokens is not None
+                and response.total_tokens is not None
+                and response.total_tokens != response.input_tokens + response.output_tokens
+            ):
+                raise MalformedProviderResponseError(
+                    "Generation provider returned inconsistent token metadata"
                 )
             if response.finish_reason is not None and not isinstance(response.finish_reason, str):
                 raise MalformedProviderResponseError(
@@ -547,6 +625,31 @@ class CanonicalAnswerGenerator:
             item.database_snapshot_id != request.database_snapshot_id for item in retrieval.items
         ):
             raise AnswerContractError("Retrieved evidence crosses the requested snapshot boundary")
+        if len(retrieval.items) > request.retrieval_request.top_k:
+            raise AnswerContractError("Canonical retrieval exceeded the requested result bound")
+        expected_runs = set(request.retrieval_request.extraction_run_ids)
+        for rank, item in enumerate(retrieval.items, start=1):
+            if item.rank != rank:
+                raise AnswerContractError(
+                    "Retrieved evidence ranks are not canonical and contiguous"
+                )
+            content_hash = hashlib.sha256(item.evidence_text.encode("utf-8")).hexdigest()
+            try:
+                expected_evidence_id = evidence_id_for(
+                    item.source_type, item.source_id, content_hash
+                )
+            except ProvenanceError as exc:
+                raise AnswerContractError("Retrieved evidence identity is invalid") from exc
+            if item.evidence_id != expected_evidence_id:
+                raise AnswerContractError(
+                    "Retrieved evidence content does not match its immutable identity"
+                )
+            item_runs = {assertion.extraction_run_id for assertion in item.assertions}
+            item_runs.update(item.extraction_run_ids)
+            if expected_runs and not item_runs <= expected_runs:
+                raise AnswerContractError(
+                    "Retrieved evidence crosses the requested extraction-run scope"
+                )
 
     def _generation_failure(
         self,
@@ -574,6 +677,7 @@ class CanonicalAnswerGenerator:
             completed_at=completed_at,
             input_identifiers=context.selected_evidence_ids,
             error_classification=error.code,
+            embedding_artifact_id=retrieval.embedding_artifact_id,
         )
         return AnswerResult(
             status=AnswerStatus.GENERATION_FAILED,
@@ -593,6 +697,7 @@ class CanonicalAnswerGenerator:
             ),
             generation_run_id=run_id,
             database_snapshot_id=request.database_snapshot_id,
+            retrieval_scope=_retrieval_scope(request, retrieval),
             warnings=(
                 "No provider fallback was attempted.",
                 "Provider errors are sanitized and may omit operational detail.",
@@ -619,9 +724,7 @@ class CanonicalAnswerGenerator:
         raw_answer = response.text.strip()
         provider_insufficient = raw_answer.startswith(INSUFFICIENT_EVIDENCE_MARKER)
         if provider_insufficient:
-            raw_answer = raw_answer.removeprefix(INSUFFICIENT_EVIDENCE_MARKER).strip()
-            if not raw_answer:
-                raw_answer = "The supplied evidence is insufficient to answer the question."
+            raw_answer = CANONICAL_INSUFFICIENT_EVIDENCE_TEXT
         insufficient = forced_insufficient or provider_insufficient
         report = validate_grounded_answer(
             raw_answer,
@@ -657,6 +760,7 @@ class CanonicalAnswerGenerator:
             input_identifiers=context.selected_evidence_ids,
             output_identifiers=(answer_identifier,),
             error_classification=failure.code if failure else None,
+            embedding_artifact_id=retrieval.embedding_artifact_id,
         )
         warnings = [
             "Structural citation validation does not establish semantic faithfulness or "
@@ -689,6 +793,7 @@ class CanonicalAnswerGenerator:
             ),
             generation_run_id=run_id,
             database_snapshot_id=request.database_snapshot_id,
+            retrieval_scope=_retrieval_scope(request, retrieval),
             warnings=tuple(warnings),
             failure=failure,
         )
@@ -706,10 +811,20 @@ class OllamaGenerationProvider:
         self._endpoint = endpoint
 
     def generate(self, generation_input: GenerationInput) -> ProviderResponse:
+        question_json = (
+            json.dumps(
+                {"question": generation_input.user_question}, ensure_ascii=False, sort_keys=True
+            )
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+        )
+        allowed_json = json.dumps(generation_input.allowed_citation_labels, ensure_ascii=False)
         user_content = (
-            "<user_question>\n"
-            + generation_input.user_question
-            + "\n</user_question>\n\n<evidence_collection>\n"
+            "<user_question_json>\n"
+            + question_json
+            + "\n</user_question_json>\n\n<allowed_citations_json>\n"
+            + allowed_json
+            + "\n</allowed_citations_json>\n\n<evidence_collection>\n"
             + generation_input.evidence_context
             + "\n</evidence_collection>"
         )
@@ -755,8 +870,11 @@ class OllamaGenerationProvider:
         try:
             body = json.loads(raw)
             text = body["message"]["content"]
+            response_model = body["model"]
             if not isinstance(text, str):
                 raise TypeError("content is not text")
+            if not isinstance(response_model, str) or not response_model.strip():
+                raise TypeError("model is not text")
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise MalformedProviderResponseError(
                 "Ollama returned a malformed generation response"
@@ -767,6 +885,7 @@ class OllamaGenerationProvider:
         output_tokens = body.get("eval_count")
         return ProviderResponse(
             text=text,
+            model=response_model,
             input_tokens=input_tokens if isinstance(input_tokens, int) else None,
             output_tokens=output_tokens if isinstance(output_tokens, int) else None,
             total_tokens=(
@@ -785,8 +904,10 @@ def render_answer_json(result: AnswerResult, *, indent: int | None = 2) -> str:
 
 
 def render_answer_markdown(result: AnswerResult) -> str:
-    lines = ["# Answer", "", result.answer_text or "_No answer was generated._", ""]
-    lines.extend([f"Status: `{result.status.value}`", ""])
+    displayed_answer = result.answer_text or "_No answer was generated._"
+    if result.status == AnswerStatus.GROUNDING_FAILED:
+        displayed_answer = "_Generated text was rejected by grounding validation._"
+    lines = ["# Answer", "", f"Status: `{result.status.value}`", "", displayed_answer, ""]
     if result.failure is not None:
         lines.extend([f"Failure: `{result.failure.code}` — {result.failure.message}", ""])
     if result.citations:

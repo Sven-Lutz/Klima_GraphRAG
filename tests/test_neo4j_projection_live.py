@@ -35,6 +35,7 @@ from crawler.core.retrieval import (
     RetrievalRequest,
 )
 from tests.test_neo4j_projection import projection_fixture
+from tests.test_retrieval import FixtureEmbedder, _fixture
 
 pytestmark = [pytest.mark.network, pytest.mark.neo4j_integration]
 
@@ -177,7 +178,10 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
 
         def generate(self, generation_input):
             assert generation_input.evidence_context
-            return ProviderResponse("Live graph evidence is documented [C1] [C2].")
+            return ProviderResponse(
+                "Live graph evidence is documented [C1] [C2].",
+                model=generation_input.model,
+            )
 
     class Recorder:
         def __init__(self):
@@ -284,3 +288,77 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
                 item.evidence_text,
             )
             assert municipalities == item.document.municipality_ids
+
+
+def test_disposable_neo4j_hybrid_grounded_answer_path(tmp_path):
+    configuration, password = _live_configuration()
+    _source, binding, _unused_plan, _embedding_artifact_id = _fixture(tmp_path)
+    plan = build_projection_plan(binding, ("segment-run", "chunk-run"), configuration)
+    ledger = ProjectionLedger(tmp_path / "live-hybrid-answer-ledger.sqlite")
+    writer = Neo4jProjectionWriter(configuration, password=password)
+    backend = Neo4jReadBackend(writer.driver, database=configuration.target.database)
+
+    class Provider:
+        name = "fixture"
+
+        def __init__(self):
+            self.inputs = []
+
+        def generate(self, generation_input):
+            self.inputs.append(generation_input)
+            return ProviderResponse(
+                "Hybrid evidence is documented [C1] [C2].",
+                model=generation_input.model,
+            )
+
+    class Recorder:
+        def __init__(self):
+            self.records = []
+
+        def record(self, record):
+            self.records.append(record)
+
+    provider = Provider()
+    recorder = Recorder()
+    try:
+        execute_projection(plan, configuration, ledger, writer)
+        request = RetrievalRequest(
+            query="Stadtwerke Solaranlage",
+            manifest_path=str(binding.manifest_path),
+            mode=RetrievalMode.HYBRID,
+            top_k=10,
+            projection_id=plan.projection_id,
+            extraction_run_ids=plan.extraction_run_ids,
+        )
+        answer = CanonicalAnswerGenerator(
+            retriever=CanonicalRetriever(
+                embedder=FixtureEmbedder(),
+                graph_backend=backend,
+            ),
+            providers={"fixture": provider},
+            run_recorder=recorder,
+        ).generate(
+            AnswerRequest(
+                question=request.query,
+                retrieval_request=request,
+                database_snapshot_id=plan.snapshot_id,
+                generation_provider="fixture",
+                generation_model="fixture-answer-model",
+                generation_parameters=GenerationParameters(seed=42),
+            )
+        )
+    finally:
+        writer.close()
+        ledger.close()
+
+    assert answer.status == AnswerStatus.ANSWERED
+    assert answer.retrieval_scope.mode == "hybrid"
+    assert answer.retrieval_scope.projection_id == plan.projection_id
+    assert answer.retrieval_scope.embedding_artifact_id == _embedding_artifact_id
+    assert any(
+        {trace.method for trace in item.retrieval_traces} == {"semantic", "graph"}
+        for item in answer.retrieval_result.items
+    )
+    assert provider.inputs[0].allowed_citation_labels
+    assert recorder.records[-1].retrieval_mode == "hybrid"
+    assert recorder.records[-1].embedding_artifact_id == _embedding_artifact_id

@@ -48,11 +48,13 @@ rejected before generation.
   provider/model/prompt identity, configured parameters, duration and token
   metadata when the provider supplies it;
 - safe warnings, limitations, and a typed failure where applicable;
-- an answer-run ID linked to append-only lifecycle metadata.
+- an answer-run ID linked to append-only lifecycle metadata;
+- explicit retrieval scope containing mode, top-k, projection/run scope, and
+  the embedding-artifact identity.
 
 Provider-native response objects never cross the canonical API. A provider
-returns only `ProviderResponse` text, optional usage counts, and an optional
-finish reason.
+returns only `ProviderResponse` text, the actual serving-model identity,
+optional usage counts, and an optional finish reason.
 
 ## Context and evidence selection
 
@@ -71,6 +73,10 @@ and `C1`, `C2`, ... labels are deterministic.
 The prompt maintains structural separation between fixed system instructions,
 the user question, JSON metadata, graph assertions, citation identifiers, and
 source text. Each source is inside an `<untrusted_evidence>` data block.
+Raw angle brackets inside source text are JSON-escaped so evidence cannot
+manufacture a sibling system/developer-looking delimiter. Provider input also
+carries an explicit allowed-citation tuple rendered separately from untrusted
+evidence; citation-like text inside a source does not join that allow-list.
 Retrieved instructions such as “Ignore previous instructions”, “Use citation
 C999”, or “Reveal the system prompt” have no control role.
 
@@ -91,7 +97,9 @@ messages and the explicit model, temperature, seed, output bound, and timeout.
 No provider/model fallback exists. Provider unavailability, timeout, malformed
 or empty responses, and rejected model/configuration become sanitized typed
 failures. Endpoint details and credentials are not included in errors or run
-records.
+records. A response must report the model that actually served the request; a
+mismatch with the requested model fails closed rather than recording inaccurate
+model provenance.
 
 ## Citation enforcement and status semantics
 
@@ -115,6 +123,10 @@ Invalid generated citations or missing required citations produce
 `grounding_failed`. Only structurally accepted substantive output produces
 `answered`.
 
+Provider prose following the insufficient-evidence marker is not rendered.
+The canonical layer substitutes a fixed safe insufficient-evidence message so
+the marker cannot disguise an ungrounded substantive answer.
+
 Structural validation proves that citation labels resolve and that the current
 sentence-coverage heuristic passed. It does not prove that a cited source
 entails the sentence, that the source itself is correct, or that all relevant
@@ -122,17 +134,29 @@ evidence was retrieved.
 
 ## Run metadata and rendering
 
-Every invocation records `pending`, `running`, and a terminal `succeeded`,
-`failed`, or `skipped` lifecycle event through an `AnswerRunRecorder`. The
+Every accepted invocation records `pending`, `running`, and a terminal `succeeded`,
+`failed`, or `skipped` lifecycle event through an `AnswerRunRecorder`. A request
+rejected during contract validation records `pending` then terminal `failed`
+without entering `running`, retrieval, or provider execution. The
 production CLI requires an explicit `--answer-run-log`; the JSONL recorder
 appends with restrictive file permissions and fsync. Records include provider,
 model, prompt, parameters/seed, snapshot, timestamps, hashed question ID,
-selected evidence IDs, output answer ID, and safe failure classification.
-They never write to SQLite or Neo4j.
+selected evidence IDs, output answer ID, retrieval mode/top-k/projection/run
+scope, embedding-artifact identity when retrieval succeeds, a stable schema
+version, and safe failure classification. They never write to SQLite or Neo4j.
+
+This JSONL file is an append-only operational lifecycle log, not an
+authoritative or tamper-evident audit ledger. An operator with filesystem access
+can replace or delete it, and failures before an answer generator/recorder can
+be constructed cannot be represented there. Compliance-grade auditing would
+require externally managed durable storage, access control, retention, and
+integrity verification.
 
 `AnswerResult.to_dict`, `render_answer_json`, and `render_answer_markdown` are
 provider-independent. Markdown renders the answer with inline labels, status,
-resolved source list, and limitations using only `AnswerResult`.
+resolved source list, and limitations using only `AnswerResult`. Rejected model
+text is retained in structured results for diagnosis but is not displayed as an
+answer by the Markdown renderer.
 
 ## Determinism boundary
 

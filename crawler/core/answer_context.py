@@ -44,6 +44,7 @@ class AnswerContext:
     system_instructions: str
     user_question: str
     evidence_context: str
+    allowed_citation_labels: tuple[str, ...]
     citations: CitationRegistry
     selected_evidence_ids: tuple[str, ...]
     excluded_evidence: tuple[ExcludedEvidence, ...]
@@ -79,11 +80,12 @@ def _evidence_block(item: RetrievedEvidence, citation: Citation) -> str:
         ],
         "evidence_text": item.evidence_text,
     }
-    return (
-        "<untrusted_evidence>\n"
-        + json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        + "\n</untrusted_evidence>"
-    )
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    # Keep delimiter-like text inert inside the JSON string. This is a prompt
+    # boundary, not an HTML parser, so raw angle brackets must never be able to
+    # manufacture a sibling/system-looking block for the model.
+    serialized = serialized.replace("<", "\\u003c").replace(">", "\\u003e")
+    return "<untrusted_evidence>\n" + serialized + "\n</untrusted_evidence>"
 
 
 def build_answer_context(
@@ -118,6 +120,7 @@ def build_answer_context(
         system_instructions=GROUNDING_SYSTEM_INSTRUCTIONS,
         user_question=result.query,
         evidence_context="\n\n".join(blocks),
+        allowed_citation_labels=tuple(citation.label for citation in registry.citations),
         citations=registry,
         selected_evidence_ids=tuple(item.evidence_id for item in selected),
         excluded_evidence=tuple(excluded),
