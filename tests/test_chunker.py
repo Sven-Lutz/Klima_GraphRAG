@@ -1,21 +1,30 @@
 """Tests für crawler/core/segmentation/chunker.py — Token-Chunking (Stage 1)."""
+
 import pytest
-import tiktoken
 
-from crawler.core.segmentation.chunker import (
-    ENCODING_NAME,
-    chunk_text,
-    count_tokens,
-)
+from crawler.core.segmentation import chunker
+from crawler.core.segmentation.chunker import chunk_text, count_tokens
 
-try:
-    # tiktoken lädt das Encoding beim ersten Zugriff aus dem Netz
-    ENC = tiktoken.get_encoding(ENCODING_NAME)
-except Exception:
-    pytest.skip(
-        f"{ENCODING_NAME}-Encoding nicht verfügbar (kein Netzwerkzugang?)",
-        allow_module_level=True,
-    )
+
+class _DeterministicEncoding:
+    """Lossless one-code-point-per-token encoding for offline unit tests."""
+
+    @staticmethod
+    def encode(text: str) -> list[int]:
+        return [ord(character) for character in text]
+
+    @staticmethod
+    def decode(tokens: list[int]) -> str:
+        return "".join(chr(token) for token in tokens)
+
+
+ENC = _DeterministicEncoding()
+
+
+@pytest.fixture(autouse=True)
+def _offline_encoding(monkeypatch):
+    monkeypatch.setattr(chunker, "_get_encoding", lambda _name: ENC)
+
 
 # Genug Text für mehrere Chunks bei kleinen Fenstern
 LONG_TEXT = (
@@ -54,8 +63,10 @@ def test_overlap_between_consecutive_chunks():
         # Stride = size - overlap
         assert nxt.start_token == prev.start_token + 80
         # Die letzten 20 Tokens des vorherigen == die ersten 20 des nächsten
-        assert tokens[prev.end_token - 20 : prev.end_token] == \
-               tokens[nxt.start_token : nxt.start_token + 20]
+        assert (
+            tokens[prev.end_token - 20 : prev.end_token]
+            == tokens[nxt.start_token : nxt.start_token + 20]
+        )
 
 
 def test_full_coverage_without_gaps():

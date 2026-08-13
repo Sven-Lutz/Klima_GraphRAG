@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +20,10 @@ jobs:
           cache-dependency-path: requirements-dev.txt
 
       - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Collect complete test suite
+        run: python -m pytest --collect-only
 
       # Voller PEP8-Gate (Regelsatz aus pyproject.toml: E, W, F, I, N @ 100 Zeichen)
       - name: Lint (ruff)

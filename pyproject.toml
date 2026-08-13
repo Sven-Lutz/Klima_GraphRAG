@@ -26,4 +26,7 @@ select = ["E", "W", "F", "I", "N"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q -p no:cacheprovider"
+markers = [
+    "network: test intentionally requires live network access",
+]

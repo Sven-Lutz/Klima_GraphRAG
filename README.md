@@ -202,12 +202,16 @@ Preflight erhält.
 ## 🧪 Tests & CI
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest --collect-only
+.venv/bin/python -m pytest
 ```
 
-GitHub Actions führt bei jedem Push ruff (kritische Fehler) und die
-Test-Suite aus.
+`requirements-dev.txt` enthält den schlanken, vollständigen Abhängigkeitssatz
+für Tests und CLI-Importprüfungen, aber nicht den GPU-/BERTopic-Laufzeitstack.
+GitHub Actions installiert denselben Satz und führt bei jedem Push Collection,
+ruff und die vollständige Test-Suite unter Python 3.11 aus.
 
 ---
 

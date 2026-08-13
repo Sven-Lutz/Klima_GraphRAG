@@ -1,7 +1,12 @@
-# Entwicklungs-/CI-Abhängigkeiten (nicht für den Betrieb nötig)
+# Test and CI tooling
 pytest>=8.0.0
 ruff>=0.4.0
 
-# Minimale Runtime-Deps, die die Tests brauchen
-tiktoken>=0.7.0
+# Minimal runtime imports exercised by the collected test suite and CLI smoke tests.
+# Keep heavyweight extraction, embedding, and topic-model dependencies in
+# crawler/requirements.txt; clean test environments do not need them.
+beautifulsoup4>=4.12.0
+numpy>=1.26.0
 pydantic>=2.0.0
+requests>=2.32.0
+tiktoken>=0.7.0
