@@ -81,6 +81,15 @@ def _projection_key(projection_id: str, kind: str, canonical_id: str) -> str:
     return _digest(f"{kind}-projection-key", [projection_id, canonical_id])
 
 
+def graph_artifact_id_for(run_id: str, source_type: str, source_id: str) -> str:
+    """Return the cross-store identity for one projected SQLite graph artifact."""
+    if source_type not in {"segment", "chunk"}:
+        raise ProjectionScopeError(f"Unsupported graph artifact source type: {source_type!r}")
+    if not run_id.strip() or not source_id.strip():
+        raise ProjectionScopeError("Graph artifact run and source identities must not be empty")
+    return _digest("graph-artifact", [run_id, source_type, source_id])
+
+
 def _safe_target_uri(uri: str) -> str:
     """Return a credential-free endpoint identity suitable for a local ledger."""
     parsed = urlsplit(uri)
@@ -514,7 +523,7 @@ def build_projection_plan(
             run_id = str(row["extraction_run_id"])
             source_type = str(row["source_type"])
             source_id = str(row["source_id"])
-            artifact_id = _digest("graph-artifact", [run_id, source_type, source_id])
+            artifact_id = graph_artifact_id_for(run_id, source_type, source_id)
             evidence_id = str(row["evidence_id"])
             document_id = str(row["document_id"])
             segment_id = str(row["segment_id"])

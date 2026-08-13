@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import numpy as np
 
 from crawler.core.database import connect_existing_read_only
+from crawler.core.neo4j_projection import ProjectionScopeError, graph_artifact_id_for
 from crawler.core.provenance import evidence_id_for
 from crawler.core.snapshots import SnapshotBinding, validate_snapshot_manifest
 
@@ -328,11 +329,14 @@ def _select_embedding_artifact(
             "No unique completed embedding artifact matches this model, corpus, and snapshot source"
         )
     artifact_id, planned, embedded, status = matches[0]
-    actual = int(
-        connection.execute(
-            "SELECT count(*) FROM chunk_embeddings WHERE artifact_id=?", (artifact_id,)
-        ).fetchone()[0]
-    )
+    artifact_rows = connection.execute(
+        """
+        SELECT chunk_id, source_content_hash, vector_dimension, length(embedding)
+        FROM chunk_embeddings WHERE artifact_id=? ORDER BY chunk_id
+        """,
+        (artifact_id,),
+    ).fetchall()
+    actual = len(artifact_rows)
     expected = len(rows)
     complete = (
         status == "completed"
@@ -345,6 +349,20 @@ def _select_embedding_artifact(
             f"Embedding corpus is partial: expected {expected}, artifact reports "
             f"{embedded}, and stores {actual}"
         )
+    expected_rows = [(chunk_id, content_hash) for chunk_id, content_hash, _ in rows]
+    actual_rows = [(str(row[0]), str(row[1])) for row in artifact_rows]
+    if actual_rows != expected_rows:
+        raise EmbeddingLineageError(
+            "Embedding corpus membership or source-content identity does not exactly match "
+            "the canonical chunk corpus"
+        )
+    for chunk_id, _content_hash, dimension, byte_length in artifact_rows:
+        if int(dimension) != identity.vector_dimension:
+            raise EmbeddingLineageError("Embedding artifact mixes vector dimensions")
+        if int(byte_length) != identity.vector_dimension * 4:
+            raise EmbeddingLineageError(
+                f"Embedding blob for chunk {chunk_id} disagrees with its vector dimension"
+            )
     return str(artifact_id), rows
 
 
@@ -465,15 +483,20 @@ LIMIT 2
 """
 
 _GRAPH_RETRIEVAL_QUERY = """
-MATCH (entity:Entity {projection_id: $projection_id})
+MATCH (projection:Projection {projection_id: $projection_id})-[:INCLUDES_RUN]->
+      (run:ExtractionRun {projection_id: $projection_id})-[:PRODUCED]->
+      (artifact:GraphArtifact {projection_id: $projection_id})
+MATCH (artifact)-[:HAS_ASSERTION]->(assertion:Assertion {projection_id: $projection_id})
+MATCH (artifact)-[:USES_EVIDENCE]->(evidence:Evidence {projection_id: $projection_id})
+MATCH (assertion)-[:SUPPORTED_BY]->(evidence)
+MATCH (assertion)-[:SUBJECT|OBJECT]->(entity:Entity {projection_id: $projection_id})
 WHERE any(term IN $terms WHERE toLower(entity.name) CONTAINS term)
-MATCH (assertion:Assertion {projection_id: $projection_id})-[:SUBJECT|OBJECT]->(entity)
-MATCH (artifact:GraphArtifact {projection_id: $projection_id})-[:HAS_ASSERTION]->(assertion)
-MATCH (assertion)-[:SUPPORTED_BY]->(evidence:Evidence {projection_id: $projection_id})
-MATCH (assertion)-[:SUBJECT]->(subject:Entity)
-MATCH (assertion)-[:OBJECT]->(object:Entity)
+  AND assertion.extraction_run_id = run.run_id
+  AND artifact.extraction_run_id = run.run_id
+MATCH (assertion)-[:SUBJECT]->(subject:Entity {projection_id: $projection_id})
+MATCH (assertion)-[:OBJECT]->(object:Entity {projection_id: $projection_id})
 RETURN DISTINCT assertion.assertion_id AS assertion_id,
-       assertion.extraction_run_id AS extraction_run_id,
+       run.run_id AS extraction_run_id,
        assertion.relation_type AS relation_type,
        assertion.evidence_excerpt AS evidence_excerpt,
        artifact.artifact_id AS graph_artifact_id,
@@ -550,6 +573,20 @@ def _authoritative_evidence(
     if any(row[:7] != canonical for row in rows[1:]):
         raise ProjectionMismatchError(f"SQLite evidence {evidence_id} has conflicting identities")
     return (*canonical, tuple(str(row[7]) for row in rows))
+
+
+def _evidence_municipalities(connection: sqlite3.Connection, evidence_id: str) -> tuple[str, ...]:
+    rows = connection.execute(
+        "SELECT municipality_id FROM evidence_municipalities "
+        "WHERE evidence_id=? ORDER BY municipality_id",
+        (evidence_id,),
+    ).fetchall()
+    municipalities = tuple(str(row[0]) for row in rows)
+    if not municipalities:
+        raise ProjectionMismatchError(
+            f"SQLite evidence {evidence_id} lacks immutable municipality provenance"
+        )
+    return municipalities
 
 
 def _source_heading(
@@ -633,6 +670,18 @@ def _graph_retrieve(
                     raise ProjectionMismatchError(
                         "Neo4j assertion run has no verified SQLite graph artifact"
                     )
+                try:
+                    expected_artifact_id = graph_artifact_id_for(
+                        str(row.get("extraction_run_id")), str(source_type), str(source_id)
+                    )
+                except ProjectionScopeError as exc:
+                    raise ProjectionMismatchError(
+                        f"SQLite evidence {evidence_id} has an invalid graph artifact scope"
+                    ) from exc
+                if row.get("graph_artifact_id") != expected_artifact_id:
+                    raise ProjectionMismatchError(
+                        "Neo4j graph artifact identity disagrees with authoritative SQLite scope"
+                    )
                 required_graph_fields = (
                     "graph_artifact_id",
                     "subject_id",
@@ -678,7 +727,7 @@ def _graph_retrieve(
                         heading_context=_source_heading(
                             connection, str(source_type), str(source_id), str(segment_id)
                         ),
-                        municipality_ids=_required_municipalities(connection, str(document_id)),
+                        municipality_ids=_evidence_municipalities(connection, evidence_id),
                     ),
                     evidence_text=str(text),
                     extraction_run_ids=tuple(
@@ -710,14 +759,26 @@ def _graph_retrieve(
 
 def _merge_evidence(primary: RetrievedEvidence, secondary: RetrievedEvidence) -> RetrievedEvidence:
     if (
+        primary.database_snapshot_id,
         primary.source_type,
         primary.source_id,
+        primary.segment_id,
+        primary.chunk_id,
         primary.document.document_id,
+        primary.document.source_url,
+        primary.document.heading_context,
+        primary.document.municipality_ids,
         primary.evidence_text,
     ) != (
+        secondary.database_snapshot_id,
         secondary.source_type,
         secondary.source_id,
+        secondary.segment_id,
+        secondary.chunk_id,
         secondary.document.document_id,
+        secondary.document.source_url,
+        secondary.document.heading_context,
+        secondary.document.municipality_ids,
         secondary.evidence_text,
     ):
         raise RetrievalError(f"Evidence identity collision for {primary.evidence_id}")
@@ -742,10 +803,22 @@ def reciprocal_rank_fusion(
     top_k: int,
 ) -> list[RetrievedEvidence]:
     """Fuse incompatible score spaces deterministically using RRF and stable IDs."""
+    if not 1 <= top_k <= MAX_TOP_K:
+        raise RetrievalError(f"top_k must be between 1 and {MAX_TOP_K}")
     combined: dict[str, RetrievedEvidence] = {}
     scores: defaultdict[str, float] = defaultdict(float)
-    for source in (semantic, graph):
+    for channel, source in (("semantic", semantic), ("graph", graph)):
+        seen: set[str] = set()
         for source_rank, item in enumerate(source, start=1):
+            if item.evidence_id in seen:
+                raise RetrievalError(
+                    f"{channel} retrieval returned duplicate evidence {item.evidence_id}"
+                )
+            seen.add(item.evidence_id)
+            if item.rank != source_rank:
+                raise RetrievalError(
+                    f"{channel} retrieval ranks must be contiguous and match result order"
+                )
             increment = 1.0 / (RRF_CONSTANT + source_rank)
             scores[item.evidence_id] += increment
             traced = replace(

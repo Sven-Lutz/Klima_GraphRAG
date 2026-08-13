@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from crawler.core.database import connect_existing_read_only
 from crawler.core.neo4j_projection import (
     Neo4jProjectionWriter,
     Neo4jTarget,
@@ -64,6 +65,14 @@ def test_disposable_neo4j_clean_repeat_and_constraints(tmp_path):
                 "SHOW CONSTRAINTS YIELD properties "
                 "WHERE properties = ['projection_key'] RETURN count(*) AS count"
             ).single()["count"]
+            required_indexes = session.run(
+                """
+                SHOW INDEXES YIELD name
+                WHERE name IN ['entity_canonical_id', 'evidence_canonical_id',
+                               'assertion_relation_type', 'document_canonical_id']
+                RETURN collect(name) AS names
+                """
+            ).single()["names"]
             assertion_paths = session.run(
                 """
                 MATCH (:GraphArtifact {projection_id:$projection_id})-[:HAS_ASSERTION]->
@@ -82,6 +91,12 @@ def test_disposable_neo4j_clean_repeat_and_constraints(tmp_path):
     assert first["status"] == second["status"] == "completed"
     assert first_counts == second_counts == dict(plan.expected_node_counts)
     assert constraint_count >= len(plan.expected_node_counts)
+    assert set(required_indexes) == {
+        "entity_canonical_id",
+        "evidence_canonical_id",
+        "assertion_relation_type",
+        "document_canonical_id",
+    }
     assert assertion_paths["count"] == 4
     assert assertion_paths["run_count"] == 3
     assert assertion_paths["evidence_count"] == 2
@@ -161,6 +176,29 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
                 extraction_run_ids=plan.extraction_run_ids,
             )
         )
+        with writer.driver.session(database=configuration.target.database) as session:
+            representative = session.run(
+                """
+                MATCH (p:Projection {projection_id:$projection_id})-[:PROJECTS_SNAPSHOT]->
+                      (snapshot:DatabaseSnapshot)
+                MATCH (p)-[:INCLUDES_RUN]->(run:ExtractionRun)-[:PRODUCED]->
+                      (artifact:GraphArtifact)-[:HAS_ASSERTION]->(assertion:Assertion)-
+                      [:SUPPORTED_BY]->(evidence:Evidence)-[:FROM_DOCUMENT]->(document:Document)
+                MATCH (evidence)-[:DERIVED_FROM]->(source)
+                MATCH (evidence)-[:ASSOCIATED_WITH]->(municipality:Municipality)
+                WITH snapshot, run, artifact, assertion, evidence, document, source,
+                     collect(DISTINCT municipality.municipality_id) AS municipality_ids
+                RETURN snapshot.snapshot_id AS snapshot_id, run.run_id AS run_id,
+                       artifact.artifact_id AS artifact_id,
+                       assertion.assertion_id AS assertion_id,
+                       evidence.evidence_id AS evidence_id,
+                       document.document_id AS document_id,
+                       labels(source)[0] AS source_label,
+                       municipality_ids, keys(evidence) AS evidence_properties
+                ORDER BY evidence_id, assertion_id LIMIT 1
+                """,
+                projection_id=plan.projection_id,
+            ).single()
     finally:
         # The backend and writer share one driver; close it exactly once.
         writer.close()
@@ -169,3 +207,40 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
     assert {item.source_type for item in result.items} == {"segment", "chunk"}
     assert all(item.assertions for item in result.items)
     assert all(item.database_snapshot_id == plan.snapshot_id for item in result.items)
+    assert representative["snapshot_id"] == plan.snapshot_id
+    assert representative["run_id"] in plan.extraction_run_ids
+    assert representative["artifact_id"] in {artifact["artifact_id"] for artifact in plan.artifacts}
+    assert representative["assertion_id"]
+    assert representative["source_label"] in {"Segment", "Chunk"}
+    assert set(representative["municipality_ids"]) == {"muni-1", "muni-2"}
+    assert "evidence_text" not in representative["evidence_properties"]
+    assert "source_text" not in representative["evidence_properties"]
+
+    with connect_existing_read_only(binding.database) as connection:
+        for item in result.items:
+            evidence = connection.execute(
+                """
+                SELECT source_type, source_id, segment_id, chunk_id, document_id,
+                       source_url, evidence_text
+                FROM evidence_snapshots WHERE evidence_id=?
+                """,
+                (item.evidence_id,),
+            ).fetchone()
+            municipalities = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT municipality_id FROM evidence_municipalities "
+                    "WHERE evidence_id=? ORDER BY municipality_id",
+                    (item.evidence_id,),
+                )
+            )
+            assert evidence == (
+                item.source_type,
+                item.source_id,
+                item.segment_id,
+                item.chunk_id,
+                item.document.document_id,
+                item.document.source_url,
+                item.evidence_text,
+            )
+            assert municipalities == item.document.municipality_ids

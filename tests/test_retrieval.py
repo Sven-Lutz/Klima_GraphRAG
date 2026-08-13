@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ import numpy as np
 import pytest
 
 import crawler.core.retrieval as retrieval_module
+import crawler.scripts.generate_embeddings as embedding_script
 from crawler.core.answer_context import build_answer_context
 from crawler.core.citations import (
     build_citation_registry,
@@ -33,12 +36,14 @@ from crawler.core.retrieval import (
     EmbeddingIdentity,
     EmbeddingLineageError,
     ProjectionMismatchError,
+    RetrievalError,
     RetrievalMode,
     RetrievalRequest,
     chunk_corpus_rows,
     corpus_fingerprint,
     embedding_artifact_id,
     ensure_embedding_schema,
+    reciprocal_rank_fusion,
     vector_to_blob,
 )
 from crawler.core.snapshots import export_database_snapshot
@@ -264,7 +269,9 @@ def test_sqlite_retrieval_connections_are_query_only(monkeypatch, tmp_path):
     ("identity", "match"),
     [
         (replace(IDENTITY, model="other-model"), "No unique completed"),
+        (replace(IDENTITY, model_revision="other-revision"), "No unique completed"),
         (replace(IDENTITY, vector_dimension=3), "No unique completed"),
+        (replace(IDENTITY, preprocessing_id="other-preprocessing"), "No unique completed"),
     ],
 )
 def test_semantic_rejects_mixed_model_or_requested_dimension(tmp_path, identity, match):
@@ -295,6 +302,28 @@ def test_partial_embedding_corpus_fails_closed(tmp_path):
         CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(binding))
 
 
+def test_equal_count_embedding_artifact_with_wrong_chunk_membership_fails_closed(tmp_path):
+    source, _binding, _plan, artifact_id = _fixture(tmp_path)
+    with connect_existing_read_write(source) as connection:
+        row = connection.execute(
+            "SELECT source_content_hash, vector_dimension, embedding, embedded_at "
+            "FROM chunk_embeddings WHERE artifact_id=? AND chunk_id='chunk-2'",
+            (artifact_id,),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM chunk_embeddings WHERE artifact_id=? AND chunk_id='chunk-2'",
+            (artifact_id,),
+        )
+        connection.execute(
+            "INSERT INTO chunk_embeddings VALUES (?, 'orphan-chunk', ?, ?, ?, ?)",
+            (artifact_id, *row),
+        )
+    binding = export_database_snapshot(source, tmp_path / "wrong-membership.sqlite")
+
+    with pytest.raises(EmbeddingLineageError, match="membership"):
+        CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(binding))
+
+
 def test_cross_snapshot_and_legacy_embedding_isolation(tmp_path):
     source, binding, _plan, _artifact_id = _fixture(tmp_path)
     with connect_existing_read_write(source) as connection:
@@ -310,6 +339,80 @@ def test_cross_snapshot_and_legacy_embedding_isolation(tmp_path):
     legacy = export_database_snapshot(legacy_source, tmp_path / "legacy-snapshot.sqlite")
     with pytest.raises(EmbeddingLineageError, match="legacy/unverifiable"):
         retriever.retrieve(_request(legacy))
+
+
+def test_embedding_artifact_cannot_be_reused_from_a_copied_database(tmp_path):
+    source, _binding, _plan, _artifact_id = _fixture(tmp_path)
+    copied_source = tmp_path / "copied-source.sqlite"
+    with connect_existing_read_write(source) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    shutil.copy2(source, copied_source)
+    copied = export_database_snapshot(copied_source, tmp_path / "copied-snapshot.sqlite")
+
+    with pytest.raises(EmbeddingLineageError, match="No unique completed"):
+        CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(copied))
+
+
+def test_embedding_writer_claim_is_exclusive_and_preserves_completed_state(tmp_path, monkeypatch):
+    source, _binding, _plan, _artifact_id = _fixture(tmp_path, install_embeddings=False)
+    first_encode_started = threading.Event()
+    release_first_encode = threading.Event()
+    encode_calls = 0
+    encode_lock = threading.Lock()
+
+    class BlockingModel:
+        def get_sentence_embedding_dimension(self):
+            return 2
+
+        def encode(self, texts, **_kwargs):
+            nonlocal encode_calls
+            with encode_lock:
+                encode_calls += 1
+                call_number = encode_calls
+            if call_number == 1:
+                first_encode_started.set()
+                assert release_first_encode.wait(timeout=10)
+            return np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+
+    monkeypatch.setattr(embedding_script, "load_model", lambda *_args: BlockingModel())
+    errors: list[Exception] = []
+
+    def run_writer():
+        try:
+            embedding_script.main(
+                model_name="concurrency-fixture",
+                model_revision="revision-1",
+                preprocessing_id="fixture-preprocessing",
+                db_path=str(source),
+            )
+        except Exception as exc:  # the competing writer must fail closed
+            errors.append(exc)
+
+    first = threading.Thread(target=run_writer)
+    second = threading.Thread(target=run_writer)
+    first.start()
+    assert first_encode_started.wait(timeout=10)
+    second.start()
+    second.join(timeout=10)
+    assert not second.is_alive()
+    release_first_encode.set()
+    first.join(timeout=10)
+    assert not first.is_alive()
+
+    assert encode_calls == 1
+    assert len(errors) == 1
+    assert "already owned" in str(errors[0])
+    with retrieval_module.connect_existing_read_only(source) as connection:
+        artifact = connection.execute(
+            "SELECT status, planned_count, embedded_count FROM embedding_artifacts "
+            "WHERE model='concurrency-fixture'"
+        ).fetchone()
+        stored = connection.execute(
+            "SELECT count(*) FROM chunk_embeddings ce JOIN embedding_artifacts ea "
+            "ON ea.artifact_id=ce.artifact_id WHERE ea.model='concurrency-fixture'"
+        ).fetchone()[0]
+    assert artifact == ("completed", 2, 2)
+    assert stored == 2
 
 
 def test_missing_database_is_not_created(tmp_path):
@@ -358,6 +461,10 @@ def test_projection_snapshot_and_run_mismatch_fail_closed(tmp_path):
                 extraction_run_ids=("other-run",),
             )
         )
+    with pytest.raises(ProjectionMismatchError, match="different projection"):
+        CanonicalRetriever(graph_backend=FixtureGraphBackend(plan)).retrieve(
+            _request(binding, RetrievalMode.GRAPH, projection_id="wrong-projection")
+        )
 
 
 def test_neo4j_identity_without_authoritative_sqlite_evidence_is_rejected(tmp_path):
@@ -368,6 +475,36 @@ def test_neo4j_identity_without_authoritative_sqlite_evidence_is_rejected(tmp_pa
         CanonicalRetriever(graph_backend=FixtureGraphBackend(plan, graph_rows=rows)).retrieve(
             _request(binding, RetrievalMode.GRAPH, projection_id=plan.projection_id)
         )
+
+
+def test_neo4j_graph_artifact_identity_must_match_sqlite_scope(tmp_path):
+    _source, binding, plan, _artifact_id = _fixture(tmp_path)
+    rows = _graph_rows(plan)
+    rows[0] = {**rows[0], "graph_artifact_id": "invented-artifact"}
+
+    with pytest.raises(ProjectionMismatchError, match="artifact identity"):
+        CanonicalRetriever(graph_backend=FixtureGraphBackend(plan, graph_rows=rows)).retrieve(
+            _request(binding, RetrievalMode.GRAPH, projection_id=plan.projection_id)
+        )
+
+
+def test_graph_retrieval_uses_immutable_evidence_municipalities(tmp_path):
+    source, _binding, _plan, _artifact_id = _fixture(tmp_path)
+    with connect_existing_read_write(source) as connection:
+        connection.execute(
+            "INSERT INTO municipality_documents VALUES ('muni-added-after-evidence', 'doc-1')"
+        )
+    binding = export_database_snapshot(source, tmp_path / "municipality-snapshot.sqlite")
+    configuration = ProjectionConfiguration(
+        Neo4jTarget("bolt://127.0.0.1:17687", "neo4j", "fixture-readonly")
+    )
+    plan = build_projection_plan(binding, ("segment-run", "chunk-run"), configuration)
+
+    result = CanonicalRetriever(graph_backend=FixtureGraphBackend(plan)).retrieve(
+        _request(binding, RetrievalMode.GRAPH, projection_id=plan.projection_id)
+    )
+
+    assert all(item.document.municipality_ids == ("muni-1", "muni-2") for item in result.items)
 
 
 def test_hybrid_rrf_deduplicates_by_evidence_and_is_deterministic(tmp_path):
@@ -386,6 +523,30 @@ def test_hybrid_rrf_deduplicates_by_evidence_and_is_deterministic(tmp_path):
     assert all(trace.fusion_score is not None for trace in chunk.retrieval_traces)
 
 
+def test_hybrid_rrf_rejects_duplicate_or_cross_snapshot_channel_identity(tmp_path):
+    _source, binding, plan, _artifact_id = _fixture(tmp_path)
+    semantic = CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(binding)).items
+    graph = (
+        CanonicalRetriever(graph_backend=FixtureGraphBackend(plan))
+        .retrieve(_request(binding, RetrievalMode.GRAPH, projection_id=plan.projection_id))
+        .items
+    )
+    overlap = next(item for item in graph if item.evidence_id == semantic[0].evidence_id)
+
+    with pytest.raises(RetrievalError, match="duplicate evidence"):
+        reciprocal_rank_fusion((semantic[0], semantic[0]), (), top_k=1)
+    with pytest.raises(RetrievalError, match="identity collision"):
+        reciprocal_rank_fusion(
+            (semantic[0],),
+            (replace(overlap, database_snapshot_id="foreign-snapshot", rank=1),),
+            top_k=1,
+        )
+    semantic_only = reciprocal_rank_fusion(semantic, (), top_k=10)
+    assert [item.evidence_id for item in semantic_only] == [item.evidence_id for item in semantic]
+    assert [item.rank for item in semantic_only] == list(range(1, len(semantic_only) + 1))
+    assert all(item.retrieval_traces[0].fusion_score is not None for item in semantic_only)
+
+
 def test_citation_identity_labels_and_rendering_are_deterministic(tmp_path):
     _source, binding, _plan, _artifact_id = _fixture(tmp_path)
     result = CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(binding))
@@ -394,8 +555,16 @@ def test_citation_identity_labels_and_rendering_are_deterministic(tmp_path):
     assert [citation.label for citation in registry.citations] == ["C1", "C2"]
     assert citation_id_for(result.items[0]) == registry.citations[0].citation_id
     assert "[C1]" in render_citations_markdown(registry)
+    assert "segment: `seg-1`; chunk: `chunk-1`" in render_citations_markdown(registry)
     rendered = json.loads(render_citations_json(registry))
     assert rendered["citations"][0]["evidence_id"] == result.items[0].evidence_id
+
+    reordered = build_citation_registry(tuple(reversed(result.items)))
+    original_ids = {item.evidence_id: citation_id_for(item) for item in result.items}
+    assert {citation.evidence_id: citation.citation_id for citation in reordered.citations} == (
+        original_ids
+    )
+    assert reordered.citations[0].label == "C1"
 
 
 def test_context_isolates_prompt_injection_and_keeps_citation_adjacent(tmp_path):
@@ -435,3 +604,10 @@ def test_grounding_rejects_unknown_unsupported_and_uncited_claims(tmp_path):
     with pytest.raises(GroundingValidationError) as uncited:
         validate_grounded_answer("This is a factual claim without evidence.", registry)
     assert uncited.value.report.uncited_claims
+    with pytest.raises(GroundingValidationError):
+        validate_grounded_answer("Short claim.", registry)
+    with pytest.raises(GroundingValidationError):
+        validate_grounded_answer("Malformed citation [C1,C2].", registry)
+
+    repeated = validate_grounded_answer("Solar is documented [C1]. Again [C1].", registry)
+    assert repeated.citations_referenced == ("C1",)

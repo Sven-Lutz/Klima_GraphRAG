@@ -107,13 +107,16 @@ def render_citations_markdown(registry: CitationRegistry) -> str:
     lines = ["## Sources", ""]
     for citation in registry.citations:
         locator = f"{citation.source_type}:{citation.source_id}"
+        hierarchy = f"segment: `{citation.segment_id}`"
+        if citation.chunk_id is not None:
+            hierarchy += f"; chunk: `{citation.chunk_id}`"
         municipalities = ", ".join(citation.municipality_ids) or "unassigned"
         heading = f" — {citation.heading_context}" if citation.heading_context else ""
         runs = ", ".join(f"`{value}`" for value in citation.extraction_run_ids) or "n/a"
         artifacts = ", ".join(f"`{value}`" for value in citation.graph_artifact_ids) or "n/a"
         lines.append(
             f"- [{citation.label}] [{citation.document_id}]({citation.source_url}) — "
-            f"{locator}{heading}; municipalities: {municipalities}; "
+            f"{locator}{heading}; {hierarchy}; municipalities: {municipalities}; "
             f"snapshot: `{citation.database_snapshot_id}`; evidence: `{citation.evidence_id}`; "
             f"extraction runs: {runs}; graph artifacts: {artifacts}"
         )

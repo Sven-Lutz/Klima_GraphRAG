@@ -120,6 +120,102 @@ def store_embeddings_sqlite(
     )
 
 
+def _validate_completed_artifact(
+    conn: sqlite3.Connection,
+    artifact_id: str,
+    corpus: list[tuple[str, str, str]],
+    dimension: int,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT chunk_id, source_content_hash, vector_dimension, length(embedding)
+        FROM chunk_embeddings WHERE artifact_id=? ORDER BY chunk_id
+        """,
+        (artifact_id,),
+    ).fetchall()
+    expected = [(chunk_id, content_hash) for chunk_id, content_hash, _text in corpus]
+    actual = [(str(row[0]), str(row[1])) for row in rows]
+    if actual != expected or any(
+        int(row[2]) != dimension or int(row[3]) != dimension * 4 for row in rows
+    ):
+        raise RuntimeError(
+            f"Completed embedding artifact is inconsistent and will not be reused: {artifact_id}"
+        )
+
+
+def _claim_embedding_artifact(
+    conn: sqlite3.Connection,
+    *,
+    artifact_id: str,
+    identity: EmbeddingIdentity,
+    source_database_id: str,
+    fingerprint: str,
+    corpus: list[tuple[str, str, str]],
+    created_at: str,
+) -> bool:
+    """Atomically claim one artifact; return false only for a valid completed artifact."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute(
+            "SELECT status, planned_count, embedded_count FROM embedding_artifacts "
+            "WHERE artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        if existing and existing[0] == "completed":
+            if (int(existing[1]), int(existing[2])) != (len(corpus), len(corpus)):
+                raise RuntimeError(
+                    f"Completed embedding artifact is inconsistent and will not be reused: "
+                    f"{artifact_id}"
+                )
+            _validate_completed_artifact(conn, artifact_id, corpus, identity.vector_dimension)
+            conn.execute("COMMIT")
+            return False
+        if existing and existing[0] == "running":
+            raise RuntimeError(
+                f"Embedding artifact is already owned by another active or interrupted writer: "
+                f"{artifact_id}. Mark it failed explicitly before retrying an interrupted run."
+            )
+        if existing:
+            conn.execute("DELETE FROM chunk_embeddings WHERE artifact_id=?", (artifact_id,))
+            conn.execute(
+                """
+                UPDATE embedding_artifacts
+                SET planned_count=?, embedded_count=0, status='running', created_at=?,
+                    completed_at=NULL
+                WHERE artifact_id=? AND status='failed'
+                """,
+                (len(corpus), created_at, artifact_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO embedding_artifacts(
+                  artifact_id, schema_version, provider, model, model_revision, vector_dimension,
+                  preprocessing_id, source_database_id, corpus_fingerprint, planned_count,
+                  embedded_count, status, created_at
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'running', ?)
+                """,
+                (
+                    artifact_id,
+                    identity.provider,
+                    identity.model,
+                    identity.model_revision,
+                    identity.vector_dimension,
+                    identity.preprocessing_id,
+                    source_database_id,
+                    fingerprint,
+                    len(corpus),
+                    created_at,
+                ),
+            )
+        conn.execute("COMMIT")
+        return True
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -161,64 +257,19 @@ def main(
             source_database_id=database.database_id,
             corpus_identity=fingerprint,
         )
-        existing = conn.execute(
-            "SELECT status, planned_count, embedded_count FROM embedding_artifacts "
-            "WHERE artifact_id=?",
-            (artifact_id,),
-        ).fetchone()
         now = datetime.now(timezone.utc).isoformat()
-        if existing and existing[0] == "completed":
-            stored_count = int(
-                conn.execute(
-                    "SELECT count(*) FROM chunk_embeddings WHERE artifact_id=?", (artifact_id,)
-                ).fetchone()[0]
-            )
-            if (int(existing[1]), int(existing[2]), stored_count) != (
-                len(corpus),
-                len(corpus),
-                len(corpus),
-            ):
-                raise RuntimeError(
-                    f"Completed embedding artifact is inconsistent and will not be rewritten: "
-                    f"{artifact_id}"
-                )
+        claimed = _claim_embedding_artifact(
+            conn,
+            artifact_id=artifact_id,
+            identity=identity,
+            source_database_id=database.database_id,
+            fingerprint=fingerprint,
+            corpus=corpus,
+            created_at=now,
+        )
+        if not claimed:
             print(f"Embedding artifact already completed: {artifact_id}")
             return
-        if existing:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM chunk_embeddings WHERE artifact_id=?", (artifact_id,))
-            conn.execute(
-                """
-                UPDATE embedding_artifacts
-                SET planned_count=?, embedded_count=0, status='running', created_at=?,
-                    completed_at=NULL
-                WHERE artifact_id=?
-                """,
-                (len(corpus), now, artifact_id),
-            )
-            conn.execute("COMMIT")
-        else:
-            conn.execute(
-                """
-                INSERT INTO embedding_artifacts(
-                  artifact_id, schema_version, provider, model, model_revision, vector_dimension,
-                  preprocessing_id, source_database_id, corpus_fingerprint, planned_count,
-                  embedded_count, status, created_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'running', ?)
-                """,
-                (
-                    artifact_id,
-                    identity.provider,
-                    identity.model,
-                    identity.model_revision,
-                    identity.vector_dimension,
-                    identity.preprocessing_id,
-                    database.database_id,
-                    fingerprint,
-                    len(corpus),
-                    now,
-                ),
-            )
         try:
             texts = [row[2] for row in corpus]
             print(f"⚙️  Embedding {len(texts)} Chunks…")
@@ -233,6 +284,10 @@ def main(
                 raise RuntimeError(
                     f"Model returned shape {embeddings.shape}; expected {(len(corpus), dimension)}"
                 )
+            if not np.all(np.isfinite(embeddings)) or np.any(
+                np.linalg.norm(embeddings, axis=1) == 0
+            ):
+                raise RuntimeError("Model returned a non-finite or zero embedding vector")
             completed_at = datetime.now(timezone.utc).isoformat()
             conn.execute("BEGIN IMMEDIATE")
             store_embeddings_sqlite(

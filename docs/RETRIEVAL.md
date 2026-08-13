@@ -53,7 +53,11 @@ There is no fallback database and a missing path is never created.
 
 Retrieval selects exactly one `completed` artifact matching the query embedder,
 manifest source, and current snapshot corpus. It validates exact coverage,
-per-vector content hashes, dimensions, finite vectors, and query-vector shape.
+including the ordered chunk-ID membership rather than counts alone, per-vector
+content hashes, dimensions, finite vectors, and query-vector shape. Artifact
+creation uses an atomic single-writer claim; a concurrent or interrupted
+`running` owner fails closed instead of allowing a second writer to corrupt its
+lifecycle state.
 Partial, mixed, stale, ambiguous, or legacy `chunks.embedding` data fails
 closed. Historical blobs are not rewritten or represented as verified.
 
@@ -79,11 +83,14 @@ It then executes one fixed, parameterized, application-owned Cypher query:
 
 - query terms are values, never executable Cypher;
 - entity matching expands to supported assertions at exactly one hop;
+- the selected projection must include the extraction run that produced the
+  deterministically identified graph artifact;
 - every assertion must have a `SUPPORTED_BY` evidence edge;
 - candidates are capped at 500 and final results at `top_k`;
 - the driver transmits a per-query server transaction timeout and uses read
   access;
-- returned application IDs are verified against authoritative SQLite.
+- returned application IDs and immutable evidence-municipality associations
+  are verified against authoritative SQLite.
 
 Graph connectivity does not establish authority and unsupported graph facts are
 never returned. Evidence is ranked by descending count of its matched supported
@@ -101,6 +108,9 @@ retrieval uses reciprocal-rank fusion with constant 60:
 Evidence is deduplicated by stable `evidence_id`. All method traces, graph
 assertions, extraction runs, and fusion contributions are retained. Final ties
 break by `evidence_id`, so identical query and state produce identical order.
+Each input channel must supply contiguous ranks and unique evidence IDs; a
+cross-channel identity collision fails rather than merging conflicting source
+or snapshot metadata.
 
 ### Global/community (`deferred`)
 
@@ -118,7 +128,8 @@ reflect context order only and do not participate in immutable identity.
 Each citation resolves to the evidence, URL, document, segment/chunk,
 municipalities, snapshot, extraction runs, and graph artifacts. Markdown and
 structured JSON renderers format these fields without asking an LLM to emit
-URLs or provenance IDs.
+URLs or provenance IDs. Markdown renders both the parent segment and chunk for
+chunk evidence rather than reducing that hierarchy to a display label.
 
 ## Context and grounding validation
 

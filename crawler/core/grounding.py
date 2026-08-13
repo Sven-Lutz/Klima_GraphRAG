@@ -69,6 +69,8 @@ def validate_grounded_answer(
         for sentence in _SENTENCE.split(answer)
         if require_citations and _requires_citation(sentence) and not _CITATION.search(sentence)
     )
+    if require_citations and not referenced and not uncited:
+        uncited = (answer.strip() or "<empty answer>",)
     used_evidence = {known[label].evidence_id for label in referenced if label in known}
     unused = tuple(
         citation.evidence_id
