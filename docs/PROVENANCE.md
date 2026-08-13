@@ -40,6 +40,42 @@ SQLite backup and rerun the idempotent migration. No migration is applied to
 the 27-GB Stage-0 crawl database during development; it currently has no graph
 triplets to migrate.
 
+### Corrective schema version 3
+
+Schema version 3 is the corrective provenance enforcement layer. It validates
+the complete v1/v2 marker chain before changing data and then rebuilds the
+provenance-owned tables inside one SQLite savepoint where stronger `CHECK`,
+foreign-key, and compound-key constraints cannot be added with `ALTER TABLE`.
+The migration is restartable and idempotent; its completion marker is written
+only after schema, index, trigger, and foreign-key postconditions pass.
+
+The corrective schema enforces:
+
+- complete extraction-run fields, allowed source and status values,
+  non-negative counters, and terminal timestamp consistency;
+- verified segment/chunk hierarchy and mandatory run/evidence references on
+  graph artifacts;
+- exact run-scoped graph uniqueness, including the partial-index predicate;
+- deterministic evidence identity with explicit rejection of conflicting
+  immutable metadata;
+- database triggers that reject evidence snapshot updates and deletes; and
+- all municipality associations from the canonical
+  `municipality_documents` many-to-many table in
+  `evidence_municipalities`. The scalar `municipality_id` remains a compatibility
+  field and is not interpreted as the complete association set.
+
+Existing `legacy_unclassified` graph rows are copied unchanged and are never
+promoted to verified provenance. Existing verified v2 rows are backfilled only
+when their complete source hierarchy, run reference, text, URL, model, and
+prompt metadata validate; ambiguous or malformed rows abort and roll back the
+corrective migration.
+
+Version 3 has been exercised only against temporary and in-memory fixture
+databases. Applying it to a production snapshot requires a separate backup,
+preflight validation, capacity estimate for table reconstruction, and explicit
+operator approval. The migration must not be run directly against
+`crawler/data/db/crawl.sqlite` as part of development or test validation.
+
 ## Target Neo4j contract
 
 ```text
