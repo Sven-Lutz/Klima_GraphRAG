@@ -110,7 +110,12 @@ def _safe_detail_text(value: str, *, limit: int = 300) -> str:
     lowered = message.lower()
     if any(secret in lowered for secret in ("password", "authorization:", "api_key", "token=")):
         return "sensitive provider or persistence detail redacted"
-    message = re.sub(r"https?://[^\s'\"]+", "[endpoint]", message)
+    message = re.sub(
+        r"(?:https?|(?:bolt|neo4j)(?:\+(?:s|ssc))?)://[^\s'\"]+",
+        "[endpoint]",
+        message,
+        flags=re.IGNORECASE,
+    )
     return message[:limit]
 
 

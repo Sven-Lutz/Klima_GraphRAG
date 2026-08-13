@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from crawler.core.database import (
+    RuntimeDatabase,
     bind_live_database_state,
     create_sqlite_database,
     resolve_runtime_database,
@@ -23,6 +24,7 @@ from crawler.core.extraction import (
     finalize_extraction_run,
     initialize_extraction_run,
     persist_graph_artifact,
+    safe_error_summary,
 )
 from crawler.core.neo4j_projection import (
     SCHEMA_CYPHER,
@@ -376,6 +378,70 @@ def test_partial_failure_is_recorded_and_resume_skips_completed_batches(tmp_path
     assert writer.batch_calls == Counter({1: 2, 0: 1, 2: 1})
 
 
+def test_reconciliation_failure_invalidates_batches_and_repairs_missing_remote_state(tmp_path):
+    binding, run_ids = projection_fixture(tmp_path)
+    configuration = _configuration()
+    plan = build_projection_plan(binding, run_ids, configuration)
+    ledger = ProjectionLedger(tmp_path / "projection-ledger.sqlite")
+
+    class OmitOneAssertionOnce(MemoryWriter):
+        def write_batch(self, selected_plan, batch):
+            super().write_batch(selected_plan, batch)
+            if batch.ordinal == 2 and self.batch_calls[2] == 1:
+                self.namespaces[selected_plan.projection_id]["Assertion"].pop()
+
+    writer = OmitOneAssertionOnce()
+    try:
+        with pytest.raises(ProjectionError, match="namespace verification failed"):
+            execute_projection(plan, configuration, ledger, writer)
+        statuses = {
+            row[0]
+            for row in ledger.connection.execute(
+                "SELECT status FROM neo4j_projection_batches WHERE projection_id=?",
+                (plan.projection_id,),
+            )
+        }
+        completed = execute_projection(plan, configuration, ledger, writer)
+    finally:
+        ledger.close()
+
+    assert statuses == {"failed"}
+    assert completed["status"] == "completed"
+    assert writer.namespace_counts(plan.projection_id) == dict(plan.expected_node_counts)
+    assert writer.batch_calls == Counter({0: 2, 1: 2, 2: 2})
+
+
+def test_remote_commit_before_ledger_update_is_replayed_idempotently(tmp_path):
+    binding, run_ids = projection_fixture(tmp_path)
+    configuration = _configuration()
+    plan = build_projection_plan(binding, run_ids, configuration)
+    ledger = ProjectionLedger(tmp_path / "projection-ledger.sqlite")
+    writer = MemoryWriter()
+    complete_batch = ledger.complete_batch
+    failed_once = False
+
+    def fail_before_local_completion(projection_id, ordinal):
+        nonlocal failed_once
+        if ordinal == 1 and not failed_once:
+            failed_once = True
+            raise RuntimeError("injected ledger update failure")
+        complete_batch(projection_id, ordinal)
+
+    ledger.complete_batch = fail_before_local_completion
+    try:
+        with pytest.raises(RuntimeError, match="ledger update failure"):
+            execute_projection(plan, configuration, ledger, writer)
+        assert ledger.record(plan.projection_id)["status"] == "failed"
+        ledger.complete_batch = complete_batch
+        completed = execute_projection(plan, configuration, ledger, writer)
+    finally:
+        ledger.close()
+
+    assert completed["status"] == "completed"
+    assert writer.namespace_counts(plan.projection_id) == dict(plan.expected_node_counts)
+    assert writer.batch_calls == Counter({1: 2, 0: 1, 2: 1})
+
+
 def test_changed_run_scope_coexists_without_stale_mixing(tmp_path):
     binding, run_ids = projection_fixture(tmp_path)
     configuration = _configuration()
@@ -408,6 +474,38 @@ def test_changed_snapshot_creates_a_distinct_projection_namespace(tmp_path):
     assert first.snapshot_database_id == second.snapshot_database_id
     assert first.snapshot_id != second.snapshot_id
     assert first.projection_id != second.projection_id
+
+
+def test_changed_neo4j_database_creates_a_distinct_projection_namespace(tmp_path):
+    binding, run_ids = projection_fixture(tmp_path)
+    first = build_projection_plan(binding, run_ids, _configuration())
+    second_configuration = ProjectionConfiguration(
+        target=Neo4jTarget("bolt://localhost:17687", "analytics", "projection-writer"),
+        batch_size=1,
+        query_timeout_seconds=5,
+    )
+    second = build_projection_plan(binding, run_ids, second_configuration)
+
+    assert first.target.target_id != second.target.target_id
+    assert first.projection_id != second.projection_id
+
+
+def test_incompatible_projection_configuration_cannot_resume_existing_scope(tmp_path):
+    binding, run_ids = projection_fixture(tmp_path)
+    configuration = _configuration(batch_size=1)
+    plan = build_projection_plan(binding, run_ids, configuration)
+    changed_configuration = _configuration(batch_size=2)
+    changed_plan = build_projection_plan(binding, run_ids, changed_configuration)
+    assert plan.projection_id == changed_plan.projection_id
+
+    ledger = ProjectionLedger(tmp_path / "projection-ledger.sqlite")
+    writer = MemoryWriter()
+    try:
+        execute_projection(plan, configuration, ledger, writer)
+        with pytest.raises(ProjectionLedgerError, match="immutable scope/configuration"):
+            execute_projection(changed_plan, changed_configuration, ledger, writer)
+    finally:
+        ledger.close()
 
 
 def test_namespace_verification_failure_never_records_completion(tmp_path):
@@ -460,6 +558,100 @@ def test_snapshot_mismatch_is_rejected_before_neo4j_write(tmp_path):
         build_projection_plan(mismatch_binding, ("mismatch-run",), _configuration())
 
 
+def test_forged_binding_cannot_redirect_projection_to_unmanifested_live_database(tmp_path):
+    binding, run_ids = projection_fixture(tmp_path)
+    live_path = Path(str(binding.manifest["source"]["origin_path"]))
+    forged_binding = SnapshotBinding(
+        database=RuntimeDatabase(
+            path=live_path,
+            source="explicit",
+            database_id=str(binding.manifest["source"]["database_id"]),
+            snapshot_id=binding.database.snapshot_id,
+        ),
+        manifest_path=binding.manifest_path,
+        manifest=binding.manifest,
+    )
+
+    with pytest.raises(ProjectionScopeError, match="exact database binding"):
+        build_projection_plan(forged_binding, run_ids, _configuration())
+
+
+def test_failed_source_outcome_is_rejected_before_neo4j_write(tmp_path):
+    source = tmp_path / "failed-outcome.sqlite"
+    _create_source_database(source)
+    second_text = "Die zweite Quelle bleibt ein erfolgreicher Extraktionsnachweis."
+    with sqlite3.connect(source) as connection:
+        connection.execute(
+            "INSERT INTO segments VALUES (?, 'doc-1', 1, 'body', ?, 'unused-2', NULL, "
+            "20, 0, 'Energie')",
+            ("seg-2", second_text),
+        )
+    database = bind_live_database_state(resolve_runtime_database(source))
+    configuration = ExtractionConfiguration(
+        provider="fixture",
+        model="fixture-model",
+        prompt_version="fixture-v1",
+        parameters={"temperature": 0},
+        seed=42,
+        source_type="segment",
+    )
+    with sqlite3.connect(source) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        initialize_extraction_run(
+            connection,
+            configuration=configuration,
+            database=database,
+            selected_sources=[
+                SelectedSource("segment", "seg-1", SEGMENT_TEXT),
+                SelectedSource("segment", "seg-2", second_text),
+            ],
+            run_id="failed-outcome-run",
+        )
+        for source_id, text in (("seg-1", SEGMENT_TEXT), ("seg-2", second_text)):
+            rowid = connection.execute(
+                "SELECT rowid FROM segments WHERE segment_id=?", (source_id,)
+            ).fetchone()[0]
+            persist_graph_artifact(
+                connection,
+                provenance=GraphProvenance(
+                    source_type="segment",
+                    source_id=source_id,
+                    segment_id=source_id,
+                    chunk_id=None,
+                    document_id="doc-1",
+                    municipality_id="muni-1",
+                    source_url="https://example.test/plan",
+                    source_text=text,
+                    extraction_model="fixture-model",
+                    prompt_version="fixture-v1",
+                    extraction_run_id="failed-outcome-run",
+                ),
+                artifact=GraphArtifact(
+                    legacy_rowid=int(rowid),
+                    segment_hash=hashlib.sha256(text.encode()).hexdigest(),
+                    graph_json=json.dumps(
+                        {"entities": ENTITIES, "relationships": ASSERTIONS[:1]},
+                        ensure_ascii=False,
+                    ),
+                    entity_count=len(ENTITIES),
+                    relationship_count=1,
+                ),
+            )
+        finalize_extraction_run(connection, "failed-outcome-run")
+        connection.execute(
+            "UPDATE extraction_source_outcomes SET outcome='failed' "
+            "WHERE extraction_run_id='failed-outcome-run' AND source_id='seg-1'"
+        )
+        connection.execute(
+            "UPDATE graph_extraction_runs SET status='completed_with_errors', "
+            "succeeded_count=1, failed_count=1 WHERE run_id='failed-outcome-run'"
+        )
+    binding = export_database_snapshot(source, tmp_path / "failed-outcome-snapshot.sqlite")
+
+    with pytest.raises(ProjectionScopeError, match="lacks inserted outcome"):
+        build_projection_plan(binding, ("failed-outcome-run",), _configuration())
+
+
 def test_missing_successful_artifact_is_rejected_before_neo4j_write(tmp_path):
     source = tmp_path / "incomplete.sqlite"
     _create_source_database(source)
@@ -506,8 +698,34 @@ def test_neo4j_target_rejects_embedded_or_implicit_connection_identity():
         Neo4jTarget("bolt://localhost:7687", "", "writer").validate()
 
 
+def test_neo4j_endpoint_is_sanitized_from_operational_errors():
+    summary = safe_error_summary(
+        RuntimeError("connection refused at neo4j+s://internal.example.test:7687/routing")
+    )
+
+    assert "internal.example.test" not in summary
+    assert "[endpoint]" in summary
+
+
 def test_legacy_exporter_is_only_a_delegating_alias():
     from crawler.scripts import export_graph_to_neo4j
 
     with pytest.raises(RuntimeError, match="legacy Python exporter API was removed"):
         export_graph_to_neo4j.main()
+
+
+def test_legacy_community_writer_fails_closed():
+    from crawler.scripts import detect_communities
+
+    with pytest.raises(
+        detect_communities.CommunityProjectionCompatibilityError,
+        match="legacy Neo4j writer is incompatible",
+    ):
+        detect_communities.main()
+
+
+def test_disposable_neo4j_fixture_publishes_only_to_loopback():
+    compose = (Path(__file__).parent / "integration/docker-compose.neo4j.yml").read_text()
+
+    assert '"127.0.0.1:17474:7474"' in compose
+    assert '"127.0.0.1:17687:7687"' in compose

@@ -89,7 +89,12 @@ def cli(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(
                 f"Neo4j projection failed before writes: {safe_error_summary(exc)}"
             ) from None
-        record = execute_projection(plan, configuration, ledger, writer)
+        try:
+            record = execute_projection(plan, configuration, ledger, writer)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            raise SystemExit(f"Neo4j projection failed: {safe_error_summary(exc)}") from None
     finally:
         if writer is not None:
             writer.close()

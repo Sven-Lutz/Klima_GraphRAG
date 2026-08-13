@@ -4,8 +4,8 @@ services:
     environment:
       NEO4J_AUTH: neo4j/projection-test-password
     ports:
-      - "17474:7474"
-      - "17687:7687"
+      - "127.0.0.1:17474:7474"
+      - "127.0.0.1:17687:7687"
     healthcheck:
       test:
         [

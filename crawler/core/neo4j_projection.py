@@ -26,7 +26,11 @@ from crawler.core.database import (
 )
 from crawler.core.extraction import safe_error_summary
 from crawler.core.provenance import validate_provenance_v4_schema
-from crawler.core.snapshots import SnapshotBinding
+from crawler.core.snapshots import (
+    SnapshotBinding,
+    SnapshotManifestError,
+    validate_snapshot_manifest,
+)
 
 PROJECTION_SCHEMA_VERSION = 1
 LEDGER_SCHEMA_VERSION = 1
@@ -348,6 +352,18 @@ def build_projection_plan(
 ) -> ProjectionPlan:
     """Validate and materialize one immutable projection scope before any graph write."""
     configuration.validate()
+    try:
+        validated_binding = validate_snapshot_manifest(binding.manifest_path)
+    except SnapshotManifestError as exc:
+        raise ProjectionScopeError(f"Neo4j projection snapshot is invalid: {exc}") from exc
+    if (
+        validated_binding.database != binding.database
+        or validated_binding.manifest != binding.manifest
+    ):
+        raise ProjectionScopeError(
+            "Neo4j projection requires the exact database binding returned by manifest validation"
+        )
+    binding = validated_binding
     run_ids = tuple(
         sorted(set(str(value).strip() for value in extraction_run_ids if str(value).strip()))
     )
@@ -938,6 +954,16 @@ class ProjectionLedger:
             ),
         )
 
+    def fail_reconciliation(self, projection_id: str, error: BaseException) -> None:
+        """Invalidate all batches so an idempotent retry can repair remote omissions."""
+        summary = safe_error_summary(error)
+        self.connection.execute(
+            "UPDATE neo4j_projection_batches SET status='failed', completed_at=NULL, "
+            "error_category=?, error_summary=? WHERE projection_id=?",
+            (type(error).__name__, summary, projection_id),
+        )
+        self.fail_projection(projection_id, error)
+
     def interrupt(self, projection_id: str, error: BaseException) -> None:
         self.fail_projection(projection_id, error, status="interrupted")
 
@@ -1156,19 +1182,17 @@ class Neo4jProjectionWriter:
         self.driver = driver
         self.driver.verify_connectivity()
 
-    def _run_transaction(self, statements: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
-        timeout = self.configuration.query_timeout_seconds
+    def _timed_query(self, cypher: str) -> Any:
+        try:
+            import neo4j
+        except ImportError:
+            return cypher
+        return neo4j.Query(cypher, timeout=self.configuration.query_timeout_seconds)
 
+    def _run_transaction(self, statements: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
         def work(transaction: Any) -> None:
-            try:
-                import neo4j
-            except ImportError:
-                neo4j_query = None
-            else:
-                neo4j_query = neo4j.Query
             for cypher, parameters in statements:
-                query = neo4j_query(cypher, timeout=timeout) if neo4j_query else cypher
-                transaction.run(query, parameters).consume()
+                transaction.run(self._timed_query(cypher), parameters).consume()
 
         with self.driver.session(database=self.configuration.target.database) as session:
             session.execute_write(work)
@@ -1178,9 +1202,9 @@ class Neo4jProjectionWriter:
 
     def database_identity(self) -> Mapping[str, str]:
         with self.driver.session(database=self.configuration.target.database) as session:
-            record = session.run("CALL db.info() YIELD id, name RETURN id, name").single(
-                strict=True
-            )
+            record = session.run(
+                self._timed_query("CALL db.info() YIELD id, name RETURN id, name")
+            ).single(strict=True)
         return {
             "configured_database": self.configuration.target.database,
             "target_id": self.configuration.target.target_id,
@@ -1237,7 +1261,10 @@ class Neo4jProjectionWriter:
                 "Assertion",
             ):
                 record = session.run(
-                    f"MATCH (n:{label} {{projection_id: $projection_id}}) RETURN count(n) AS count",
+                    self._timed_query(
+                        f"MATCH (n:{label} {{projection_id: $projection_id}}) "
+                        "RETURN count(n) AS count"
+                    ),
                     projection_id=projection_id,
                 ).single()
                 result[label] = int(record["count"])
@@ -1278,7 +1305,7 @@ def execute_projection(
                 "Neo4j namespace verification failed: expected "
                 f"{dict(plan.expected_node_counts)!r}, found {actual_counts!r}"
             )
-            ledger.fail_projection(plan.projection_id, error)
+            ledger.fail_reconciliation(plan.projection_id, error)
             raise error
         ledger.complete(plan.projection_id, database_identity, len(plan.artifacts))
         return ledger.record(plan.projection_id)

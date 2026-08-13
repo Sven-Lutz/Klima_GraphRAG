@@ -80,7 +80,7 @@ crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
   resolve_entities.py    Stage 2c — Entity Resolution (kuratierte Aliase + Fuzzy)
   project_graph_to_neo4j.py Stage 3 — kanonische Snapshot/Run-Projektion
   export_graph_to_neo4j.py veralteter Alias; delegiert an die kanonische Projektion
-  detect_communities.py  Stage 3b — Leiden-Communities + LLM-Reports (Global Search)
+  detect_communities.py  Stage 3b — deaktiviert bis zum projektionsgebundenen Lifecycle
   summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
   query_agent.py         Stage 4 — Router: Local Search / Global Search / Text2Cypher
   evaluate.py            Stage 5 — Benchmarking: AutoQ/AutoE, Fixtures, eval_runs/

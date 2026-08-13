@@ -99,6 +99,11 @@ projection failed. Resume replays failed/running batches and skips locally
 completed batches. If Neo4j committed but local bookkeeping was interrupted,
 replay remains safe because graph writes are idempotent.
 
+If exact namespace reconciliation fails after all batches were recorded, every
+batch is invalidated for replay. This repairs missing remote state on retry;
+unexpected extra state remains failed for explicit investigation because
+normal reconciliation never performs a destructive graph wipe.
+
 Completion is recorded only after all batches complete and Neo4j per-label
 counts exactly match the plan. The server's Neo4j database ID is required and
 recorded; it supplements rather than replaces explicit target identity.
@@ -123,7 +128,9 @@ python -m crawler.scripts.project_graph_to_neo4j \
 
 `crawler.scripts.export_graph_to_neo4j` is a deprecated CLI alias that delegates
 to this command. Its former Python API fails closed because a rowid-oriented
-call cannot express the required snapshot/run scope.
+call cannot express the required snapshot/run scope. The incompatible legacy
+community writer has also been removed; `detect_communities` fails closed until
+a projection-bound community-report lifecycle exists.
 
 ## Security assumptions and limitations
 

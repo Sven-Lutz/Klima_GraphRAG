@@ -243,22 +243,11 @@ Embedding-Stage schreibt nicht mehr parallel nach Neo4j.
 
 **Skript:** `crawler/scripts/detect_communities.py`
 
-1. Leiden-Algorithmus (Neo4j GDS) findet thematische Cluster im Entity-Graph.
-2. Pro Community generiert ein LLM einen **Community Report** (Titel,
-   Zusammenfassung, Importance, Key Claims).
-3. Reports landen in Neo4j (`CommunityReport`) und SQLite.
-
-Community Reports sind das Rückgrat der **Global Search** (Map-Reduce über
-Reports → landesweite/aggregierende Antworten, „Sensemaking").
-
-```bash
-python -m crawler.scripts.detect_communities
-python -m crawler.scripts.detect_communities --algorithm louvain --min-size 3
-python -m crawler.scripts.detect_communities --parallel 4   # Reports parallel
-```
-
-**Status:** noch nicht an das kanonische Projektionsmodell angepasst. Nicht als
-Folgestufe der neuen Stage 3 ausführen.
+**Status: unsupported.** Die frühere Implementierung schrieb direkt in das
+veraltete Neo4j-Modell. Sie wurde entfernt; das Kommando bricht vor jedem
+SQLite-, Neo4j- oder LLM-Zugriff mit einer Erklärung ab. Community Reports und
+Global Search bleiben geplant, bis eine eigene projektionsgebundene Lifecycle-
+und Provenienzimplementierung vorliegt.
 
 ---
 
