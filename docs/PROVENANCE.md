@@ -98,8 +98,11 @@ represent the complete lifecycle:
 writer. It creates the run and its ordered `extraction_run_sources` ledger
 before invoking Ollama. The ledger records one content hash per selected
 segment/chunk, making the input set deterministic and detecting changed text
-before provider or persistence work. A zero-input experiment is retained as a
-`completed` run with `no_inputs_selected` status detail.
+before provider or persistence work. When the canonical
+`municipality_documents` table exists, the document must have an explicit row
+for its declared municipality; an absent association is rejected before the
+provider call. A zero-input experiment is retained as a `completed` run with
+`no_inputs_selected` status detail.
 
 Every run persists provider, model, prompt version, canonical JSON parameters,
 seed, source type, database path identity, manifested `database_snapshot_id`
@@ -144,9 +147,9 @@ run records.
 
 Known limitations:
 
-- provider cancellation is cooperative between source calls; an in-flight
-  blocking Ollama HTTP request is bounded by its request timeout but is not
-  remotely cancelled;
+- provider cancellation is checked before and after each source call and as
+  parallel results arrive; an in-flight blocking Ollama HTTP request is bounded
+  by its request timeout but is not remotely cancelled;
 - unmanifested writable databases have a path identity and recorded live-state
   identity, but deliberately have no `database_snapshot_id`; and
 - schema v4, like v3, is validated against fixtures only and must not be applied

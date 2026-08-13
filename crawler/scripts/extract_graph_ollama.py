@@ -550,10 +550,8 @@ def validate_source_hierarchy(
                 (document_id,),
             )
         }
-        if associations and municipality_id not in associations:
-            raise ProvenanceError(
-                f"Document {document_id!r} municipality association is contradictory"
-            )
+        if municipality_id not in associations:
+            raise ProvenanceError(f"Document {document_id!r} has no valid municipality association")
 
     provenance = GraphProvenance(
         source_type=source_type,  # type: ignore[arg-type]
@@ -775,6 +773,8 @@ def main(
                         raise
                     except BaseException as exc:
                         result = exc
+                    if cancellation_requested and cancellation_requested():
+                        raise ExtractionCancelledError("Cooperative cancellation requested")
                     _handle_result(row, provenance, result)
                     if sleep_between > 0:
                         time.sleep(sleep_between)
@@ -794,6 +794,10 @@ def main(
                         for row, provenance in prepared
                     }
                     for future in as_completed(futures):
+                        if cancellation_requested and cancellation_requested():
+                            for pending in futures:
+                                pending.cancel()
+                            raise ExtractionCancelledError("Cooperative cancellation requested")
                         row, provenance = futures[future]
                         try:
                             result = future.result()
@@ -801,6 +805,10 @@ def main(
                             raise
                         except BaseException as exc:
                             result = exc
+                        if cancellation_requested and cancellation_requested():
+                            for pending in futures:
+                                pending.cancel()
+                            raise ExtractionCancelledError("Cooperative cancellation requested")
                         _handle_result(row, provenance, result)
             summary = finalize_extraction_run(conn, run_id)
         except ExtractionCancelledError as exc:
