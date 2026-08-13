@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from crawler.core.citations import CitationRegistry
 
 _CITATION = re.compile(r"\[([A-Za-z]+\d+)\]")
+_BRACKETED = re.compile(r"\[([^\]\n]*)\]")
 _SENTENCE = re.compile(r"(?<=[.!?])(?:\s+|$)|\n+")
 
 
@@ -22,6 +24,7 @@ class GroundingValidationError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class GroundingReport:
     citations_referenced: tuple[str, ...]
+    malformed_citations: tuple[str, ...]
     unknown_citations: tuple[str, ...]
     unsupported_citations: tuple[str, ...]
     retrieved_evidence_unused: tuple[str, ...]
@@ -30,12 +33,21 @@ class GroundingReport:
 
     @property
     def accepted(self) -> bool:
-        return not (self.unknown_citations or self.unsupported_citations or self.uncited_claims)
+        return not (
+            self.malformed_citations
+            or self.unknown_citations
+            or self.unsupported_citations
+            or self.uncited_claims
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
     @property
     def summary(self) -> str:
         return (
             "Generated answer failed grounding validation: "
+            f"malformed={list(self.malformed_citations)}, "
             f"unknown={list(self.unknown_citations)}, "
             f"unsupported={list(self.unsupported_citations)}, "
             f"uncited_claims={len(self.uncited_claims)}"
@@ -61,6 +73,13 @@ def validate_grounded_answer(
     """Validate labels and report coverage; this does not claim semantic faithfulness."""
     known = registry.by_label
     referenced = tuple(dict.fromkeys(_CITATION.findall(answer)))
+    malformed = tuple(
+        dict.fromkeys(
+            f"[{match.group(1)}]"
+            for match in _BRACKETED.finditer(answer)
+            if re.search(r"[Cc]\d", match.group(1)) and _CITATION.fullmatch(match.group(0)) is None
+        )
+    )
     unknown = tuple(label for label in referenced if label not in known)
     allowed = set(known) if supported_labels is None else set(supported_labels)
     unsupported = tuple(label for label in referenced if label in known and label not in allowed)
@@ -79,6 +98,7 @@ def validate_grounded_answer(
     )
     report = GroundingReport(
         citations_referenced=referenced,
+        malformed_citations=malformed,
         unknown_citations=unknown,
         unsupported_citations=unsupported,
         retrieved_evidence_unused=unused,

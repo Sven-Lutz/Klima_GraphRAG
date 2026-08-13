@@ -282,9 +282,25 @@ python -m crawler.scripts.query \
   "Welche Kommunen beschreiben Solaranlagen?"
 ```
 
-Die Ausgabe enthält getypte Provenienz und deterministische Markdown-/JSON-
-Zitate; sie erzeugt noch keine LLM-Antwort. Der vollständige Architektur-,
-Sicherheits- und Limitationsvertrag steht in [RETRIEVAL.md](RETRIEVAL.md).
+Ohne `--answer` enthält die Ausgabe getypte Provenienz und deterministische
+Markdown-/JSON-Zitate. Mit `--answer` läuft dieselbe Retrieval-Anfrage durch
+die kanonische, begrenzte Antwortschicht. Sie verlangt Provider/Modell und
+einen expliziten append-only JSONL-Run-Log; SQLite und Neo4j bleiben read-only.
+
+```bash
+mkdir -p generated/answer-runs
+python -m crawler.scripts.query \
+  --db snapshots/work.sqlite \
+  --manifest snapshots/work.sqlite.manifest.json \
+  --mode semantic --top-k 8 \
+  --answer --generation-provider ollama --generation-model llama3.1:8b \
+  --answer-run-log generated/answer-runs/answers.jsonl --output markdown \
+  "Welche Kommunen beschreiben Solaranlagen?"
+```
+
+Der vollständige Retrieval-Vertrag steht in [RETRIEVAL.md](RETRIEVAL.md); die
+Antwort-API, Evidenzauswahl, Prompt-Version, Fehlerzustände, deterministische
+Grenze und Sicherheitsannahmen in [ANSWER_GENERATION.md](ANSWER_GENERATION.md).
 `query_agent.py` ist nur ein veralteter CLI-Alias; seine frühere Python-API
 bricht explizit ab.
 

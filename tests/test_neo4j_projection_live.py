@@ -11,6 +11,13 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from crawler.core.answer_generation import (
+    AnswerRequest,
+    AnswerStatus,
+    CanonicalAnswerGenerator,
+    GenerationParameters,
+    ProviderResponse,
+)
 from crawler.core.database import connect_existing_read_only
 from crawler.core.neo4j_projection import (
     Neo4jProjectionWriter,
@@ -164,16 +171,46 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
     ledger = ProjectionLedger(tmp_path / "live-retrieval-ledger.sqlite")
     writer = Neo4jProjectionWriter(configuration, password=password)
     backend = Neo4jReadBackend(writer.driver, database=configuration.target.database)
+
+    class Provider:
+        name = "fixture"
+
+        def generate(self, generation_input):
+            assert generation_input.evidence_context
+            return ProviderResponse("Live graph evidence is documented [C1] [C2].")
+
+    class Recorder:
+        def __init__(self):
+            self.records = []
+
+        def record(self, record):
+            self.records.append(record)
+
     try:
         execute_projection(plan, configuration, ledger, writer)
-        result = CanonicalRetriever(graph_backend=backend).retrieve(
-            RetrievalRequest(
-                query="Stadtwerke Solaranlage",
-                manifest_path=str(binding.manifest_path),
-                mode=RetrievalMode.GRAPH,
-                top_k=10,
-                projection_id=plan.projection_id,
-                extraction_run_ids=plan.extraction_run_ids,
+        retrieval_request = RetrievalRequest(
+            query="Stadtwerke Solaranlage",
+            manifest_path=str(binding.manifest_path),
+            mode=RetrievalMode.GRAPH,
+            top_k=10,
+            projection_id=plan.projection_id,
+            extraction_run_ids=plan.extraction_run_ids,
+        )
+        retriever = CanonicalRetriever(graph_backend=backend)
+        result = retriever.retrieve(retrieval_request)
+        recorder = Recorder()
+        answer = CanonicalAnswerGenerator(
+            retriever=retriever,
+            providers={"fixture": Provider()},
+            run_recorder=recorder,
+        ).generate(
+            AnswerRequest(
+                question=retrieval_request.query,
+                retrieval_request=retrieval_request,
+                database_snapshot_id=plan.snapshot_id,
+                generation_provider="fixture",
+                generation_model="fixture-answer-model",
+                generation_parameters=GenerationParameters(seed=42),
             )
         )
         with writer.driver.session(database=configuration.target.database) as session:
@@ -205,6 +242,9 @@ def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path)
         ledger.close()
 
     assert {item.source_type for item in result.items} == {"segment", "chunk"}
+    assert answer.status == AnswerStatus.ANSWERED
+    assert {citation.source_type for citation in answer.citations} == {"segment", "chunk"}
+    assert recorder.records[-1].status == "succeeded"
     assert all(item.assertions for item in result.items)
     assert all(item.database_snapshot_id == plan.snapshot_id for item in result.items)
     assert representative["snapshot_id"] == plan.snapshot_id

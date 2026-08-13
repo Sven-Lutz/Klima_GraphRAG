@@ -3,8 +3,10 @@
 Status: **implemented** for manifested SQLite snapshots, canonical chunk
 embedding artifacts, and bounded one-hop reads from the approved Neo4j
 projection. Answer-context construction and deterministic grounding validation
-are implemented. LLM answer quality, semantic faithfulness, global/community
-retrieval, Text2Cypher, and an interactive UI are **unsupported**.
+are implemented, and the canonical answer owner consumes this result contract.
+LLM answer quality, semantic faithfulness, global/community retrieval,
+Text2Cypher, and an interactive UI are **unsupported**. See
+[`ANSWER_GENERATION.md`](ANSWER_GENERATION.md).
 
 ## Architecture and authority
 
@@ -151,8 +153,11 @@ Unknown, unsupported, and required-but-missing citations raise by default. The
 validator never silently rewrites an invented label. Citation presence is only
 a structural grounding signal and is not presented as semantic faithfulness.
 
-No model-calling answer generator is enabled by this revision; the context and
-validation contracts are the minimal adapter boundary for a later generator.
+The model-calling owner is `crawler.core.answer_generation`; it only accepts
+this canonical retrieval result, selects whole bounded evidence units, and
+validates generated labels through this grounding contract. Answer semantics,
+provider failures, run records, and rendering are documented separately in
+[`ANSWER_GENERATION.md`](ANSWER_GENERATION.md).
 
 ## CLI
 
@@ -207,4 +212,5 @@ alias to this command; its former Python `answer()` interface fails closed.
   read-only authorization are operator responsibilities in addition to client
   controls.
 - No global/community retrieval, Text2Cypher, answer-quality evaluator,
-  interactive UI, or production-readiness claim is included.
+  interactive UI, semantic-faithfulness guarantee, or production-readiness
+  claim is included.

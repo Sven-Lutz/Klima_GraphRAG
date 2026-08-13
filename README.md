@@ -8,7 +8,8 @@ Inhalte (Konzepte, Förderprogramme, Maßnahmen, CO₂-Ziele) und macht sie
 ```
 Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
      → kanonische Neo4j-Projektion
-     → kanonisches Semantic/Graph/Hybrid Retrieval → deterministische Zitate
+     → kanonisches Retrieval → begrenzter Evidenzkontext
+     → strukturell geerdete Antwort + deterministische Zitate
 ```
 
 | Dokument | Inhalt |
@@ -17,6 +18,7 @@ Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
 | **[docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md)** | Laufzeit-DB, sichere SQLite-Verbindungen und Snapshot-Manifeste |
 | **[docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md)** | Snapshot-gebundene Neo4j-Projektion und Graphmodell |
 | **[docs/RETRIEVAL.md](docs/RETRIEVAL.md)** | Kanonisches Retrieval, Embedding-Lineage, Zitate und Grounding-Grenzen |
+| **[docs/ANSWER_GENERATION.md](docs/ANSWER_GENERATION.md)** | Kanonische Antwort-API, Evidenzbudget, Provider- und Sicherheitsvertrag |
 | **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
 | **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
@@ -86,7 +88,7 @@ crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
   export_graph_to_neo4j.py veralteter Alias; delegiert an die kanonische Projektion
   detect_communities.py  Stage 3b — deaktiviert bis zum projektionsgebundenen Lifecycle
   summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
-  query.py               Stage 4 — kanonisches Semantic/Graph/Hybrid Retrieval
+  query.py               Stage 4 — kanonisches Retrieval; optionale geerdete Antwort
   query_agent.py         veralteter CLI-Alias; frühere Python-API deaktiviert
   evaluate.py            historisches Benchmark-Gerüst; kanonischer Lauf deaktiviert
   analyze_topics.py      Ergänzend — BERTopic-Themenanalyse (HPC Stage 5)
@@ -208,9 +210,13 @@ Semantic/Graph/Hybrid Retrieval sind implementiert. Embeddings besitzen einen
 versionierten Lineage-Vertrag; Graph-Treffer werden vor Rückgabe zur
 autoritativen SQLite-Evidenz aufgelöst. Deterministische Markdown-/JSON-Zitate,
 isolierter Antwortkontext und strukturelle Grounding-Prüfung sind implementiert.
-Global/Community Retrieval, Text2Cypher, Antwortqualitätsgarantien und eine
-interaktive UI sind nicht unterstützt. Details:
-[docs/RETRIEVAL.md](docs/RETRIEVAL.md).
+Die getypte, providerunabhängige Antwortschicht mit explizitem Evidenzbudget,
+Ollama-Adapter, fehlertoleranter Insufficient-Evidence-Semantik und
+struktureller Zitationsvalidierung ist implementiert. Das ist keine Garantie
+für semantische Faithfulness oder faktische Richtigkeit. Global/Community
+Retrieval, Text2Cypher, Answer-Quality-Evaluation und eine interaktive UI sind
+nicht unterstützt. Details: [docs/RETRIEVAL.md](docs/RETRIEVAL.md) und
+[docs/ANSWER_GENERATION.md](docs/ANSWER_GENERATION.md).
 
 Worker und kanonisches Retrieval führen nicht-mutierende Prüfungen aus. Der
 Worker benötigt eine vorhandene, vollständige `seed_jobs`-Tabelle; Retrieval

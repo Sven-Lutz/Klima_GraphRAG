@@ -57,7 +57,7 @@ flowchart TD
 
 ---
 
-## 2. Query-Time Pipeline (Canonical Retrieval)
+## 2. Query-Time Pipeline (Canonical Retrieval and Answer Generation)
 
 ```mermaid
 flowchart TD
@@ -70,7 +70,11 @@ flowchart TD
     A --> F
     F --> D["Deduplicate by evidence_id; typed retrieval result"]
     D --> Z["Immutable citation IDs + ordered C1/C2 labels"]
-    Z --> X["Untrusted evidence context + grounding validator"]
+    Z --> B["Deterministic whole-evidence budget"]
+    B --> X["Versioned prompt + untrusted evidence boundary"]
+    X --> P["Explicit generation provider/model; no fallback"]
+    P --> GV["Structural citation grounding validator"]
+    GV --> R["Typed AnswerResult + JSON/Markdown"]
 ```
 
 ---
@@ -87,7 +91,7 @@ flowchart LR
     end
 
     subgraph QA["QA — Answer Generation"]
-        AQ5 --> QA1[canonical retrieval/context adapter\nanswer generation deferred]
+        AQ5 --> QA1[canonical grounded answer API\nimplemented; evaluation adapter deferred]
         QA1 --> QA2[EvalResult\nquestion · answer · contexts\nroute_used · latency_s]
     end
 

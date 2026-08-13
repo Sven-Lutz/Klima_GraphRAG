@@ -40,5 +40,6 @@ eval_runs/
 topic_out/
 snapshots/
 generated/projections/
+generated/answer-runs/
 .pytest_cache/
 .ruff_cache/
