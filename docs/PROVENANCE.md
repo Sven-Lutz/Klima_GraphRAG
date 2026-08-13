@@ -156,17 +156,13 @@ Known limitations:
   directly to the production crawl database without a separately approved
   backup and migration preflight.
 
-## Target Neo4j contract (planned; not implemented by this lifecycle)
+## Neo4j projection contract (implemented)
 
-```text
-Municipality -> HAS_DOCUMENT -> Document
-Document -> HAS_SEGMENT -> Segment
-Segment -> HAS_CHUNK -> Chunk
-Segment|Chunk -> MENTIONS -> Entity
-Entity -> typed relation -> Entity
-```
+The canonical snapshot/run-scoped projection is documented in
+[NEO4J_PROJECTION.md](NEO4J_PROJECTION.md). Explicit `GraphArtifact`,
+`EntityMention`, `Assertion` and `Evidence` nodes prevent multiple assertions
+from collapsing into weighted entity relationships. SQLite remains the
+authoritative immutable evidence store; Neo4j retains stable reconstruction
+identifiers and metadata.
 
-Source nodes retain `source_id`, document metadata, URL and text required to
-construct deterministic citations. Entity relations retain the same source
-identity and evidence; no relationship is citeable without a reconstructable
-source node.
+Retrieval and deterministic citation rendering over this model remain planned.

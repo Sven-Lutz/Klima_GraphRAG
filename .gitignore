@@ -38,5 +38,6 @@ demo/graph.html
 eval_runs/
 topic_out/
 snapshots/
+generated/projections/
 .pytest_cache/
 .ruff_cache/

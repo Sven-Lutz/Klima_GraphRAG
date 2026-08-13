@@ -33,8 +33,8 @@ tail -f logs/chunk_embed_<JOBID>.out
 | — Transfer | lokal→Cluster | `transfer_db.sh` | rsync | Minuten |
 | 2 Chunk+Embed | Cluster (GPU) | `02_chunk_embed.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
 | 3 Graph-Extraktion | Cluster (GPU) | `03_extract_graph.sbatch` | 1 GPU, 48G, 24h | 4–12 h (`--parallel 4`) |
-| 4 Neo4j Export | Cluster (CPU) | `04_neo4j_export.sbatch` | CPU, 16G, 4h | 1–2 h |
-| 5 Community Detection | Cluster (GPU) | `05_community_detect.sbatch` | 1 GPU, 32G, 8h | 4–8 h |
+| 4 Neo4j Projection | **unsupported** | `04_neo4j_export.sbatch` | exits safely | — |
+| 5 Community Detection | **unsupported with canonical model** | `05_community_detect.sbatch` | — | — |
 | 6 Evaluation | Cluster (GPU) | `06_evaluate.sbatch` | 1 GPU, 32G, 4h | 2–4 h |
 
 **Gesamt auf dem Cluster:** ~20–40 Stunden Maschinen-Zeit
@@ -49,7 +49,15 @@ tail -f logs/chunk_embed_<JOBID>.out
 - Mindestens 16 GB VRAM für `qwen2.5:14b` (oder `llama3.1:8b` mit 8 GB)
 
 ### Neo4j
-Drei Optionen (in `04_neo4j_export.sbatch` dokumentiert):
+
+Die HPC-Stufen 4–6 sind noch nicht auf die kanonische Snapshot/Run-Projektion
+migriert und dürfen nicht als vollständige Pipeline ausgeführt werden. Das
+Stage-4-Skript bricht deshalb absichtlich mit einer Erklärung ab. Der lokale
+Projektionsvertrag steht in `docs/NEO4J_PROJECTION.md`; HPC-Enablement ist
+separat geplant.
+
+Die folgenden Optionen dokumentieren nur die historische Infrastruktur und
+sind derzeit kein ausführbarer Projektionspfad:
 
 **Option A (empfohlen):** Neo4j läuft auf einem dedizierten Server/VM
 ```bash

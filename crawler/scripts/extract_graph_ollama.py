@@ -11,8 +11,8 @@ Replaces the OpenAI-based extract_graph.py with a fully local pipeline:
              were missed ("Did you overlook anything?") — significantly
              increases extraction recall on dense municipal documents.
 
-Graph output is written to the same `graph_triplets` table so the
-existing Neo4j exporter (export_graph_to_neo4j.py) works unchanged.
+Graph output is written to canonical audited SQLite artifacts. A manifested
+snapshot can later be projected with ``project_graph_to_neo4j.py``.
 
 MODELS tested (German-language performance, descending):
   - qwen2.5:14b          best quality, needs 10+ GB VRAM

@@ -93,7 +93,6 @@ def test_live_state_binding_is_frozen_for_one_invocation(tmp_path):
         ("crawler.scripts.generate_embeddings", "cli"),
         ("crawler.scripts.extract_graph_ollama", "cli"),
         ("crawler.scripts.resolve_entities", "cli"),
-        ("crawler.scripts.export_graph_to_neo4j", "cli"),
         ("crawler.scripts.detect_communities", "cli"),
         ("crawler.scripts.summarize_documents", "cli"),
         ("crawler.scripts.analyze_topics", "cli"),

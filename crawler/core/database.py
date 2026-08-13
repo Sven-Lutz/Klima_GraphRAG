@@ -19,7 +19,12 @@ from typing import Literal
 from crawler.core.config import DEFAULT_DB_PATH, resolve_db_path
 
 DatabasePathSource = Literal["explicit", "environment", "default"]
-DatabaseCreationPurpose = Literal["fixture", "snapshot", "initialization"]
+DatabaseCreationPurpose = Literal[
+    "fixture",
+    "snapshot",
+    "initialization",
+    "projection_ledger",
+]
 _SNAPSHOT_MANIFEST_FORMAT = "graphrag-al-sqlite-snapshot"
 
 
@@ -208,8 +213,8 @@ def create_sqlite_database(
     wal: bool = False,
     row_factory: type | None = None,
 ) -> sqlite3.Connection:
-    """Explicitly create a fixture, snapshot, or initialization database."""
-    if purpose not in {"fixture", "snapshot", "initialization"}:
+    """Explicitly create a fixture, snapshot, initialization, or projection ledger."""
+    if purpose not in {"fixture", "snapshot", "initialization", "projection_ledger"}:
         raise DatabaseConfigurationError(f"Unsupported database creation purpose: {purpose!r}")
     resolved = Path(path).expanduser().resolve()
     _require_not_manifested_snapshot(path, resolved)

@@ -29,4 +29,5 @@ pythonpath = ["."]
 addopts = "-q -p no:cacheprovider"
 markers = [
     "network: test intentionally requires live network access",
+    "neo4j_integration: test requires the explicit disposable Neo4j fixture",
 ]

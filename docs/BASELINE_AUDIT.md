@@ -1,5 +1,10 @@
 # Technical Baseline Audit
 
+> **Historical record:** this document intentionally describes the
+> pre-remediation implementation. Its command inventory is not current and must
+> not be used as an operating guide. See `README.md`, `docs/PIPELINE.md` and
+> `docs/NEO4J_PROJECTION.md` for implemented commands.
+
 ## Scope and method
 
 This audit records the repository baseline before remediation work. It is based

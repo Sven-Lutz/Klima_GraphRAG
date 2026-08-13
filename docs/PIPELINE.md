@@ -115,7 +115,8 @@ python -m crawler.scripts.chunk_documents --min-score 10 --limit 50000
 
 Berechnet Vektor-Embeddings lokal (keine API-Calls).
 **Modell:** `paraphrase-multilingual-MiniLM-L12-v2` (384 Dim., deutschtauglich).
-Optional Push nach Neo4j inkl. nativem Vektor-Index (`--neo4j`).
+Speichert ausschließlich in SQLite. Eine Vektor-Projektion ist im kanonischen
+Neo4j-Modell noch nicht implementiert.
 
 ```bash
 python -m crawler.scripts.generate_embeddings
@@ -124,7 +125,7 @@ python -m crawler.scripts.generate_embeddings --model intfloat/multilingual-e5-l
 
 | Liest | Schreibt |
 |---|---|
-| `chunks` (embedding IS NULL) | `chunks.embedding` (float32-BLOB), optional Neo4j `Chunk`-Nodes |
+| `chunks` (embedding IS NULL) | `chunks.embedding` (float32-BLOB) |
 
 ---
 
@@ -210,17 +211,31 @@ python -m crawler.scripts.resolve_entities --min-freq 2 --similarity 0.85
 
 ---
 
-## Stage 3 — Neo4j-Export
+## Stage 3 — kanonische Neo4j-Projektion
 
-**Skript:** `crawler/scripts/export_graph_to_neo4j.py`
+**Skript:** `crawler/scripts/project_graph_to_neo4j.py`
 
-Überträgt den Graphen nach Neo4j: `Municipality`-, `Document`-, `Chunk`-,
-`Entity`-Nodes samt Beziehungen. Merge-Key: normalisierter Name + Typ +
-Kategorie (fragmentierungsarm).
+Projiziert ausschließlich verifizierte Artefakte ausgewählter, abgeschlossener
+Extraktions-Runs aus einem validierten SQLite-Snapshot. SQLite bleibt Source of
+Truth. Explizite `Evidence`-, `EntityMention`- und `Assertion`-Knoten bewahren
+die Provenienz mehrerer Aussagen zwischen demselben Entitätspaar. Ein lokaler
+SQLite-Ledger protokolliert Batches, Fehler und Abschlusszustand.
 
 ```bash
-python -m crawler.scripts.export_graph_to_neo4j
+export GRAPHRAG_NEO4J_PROJECTION_PASSWORD='replace-with-a-secret'
+python -m crawler.scripts.project_graph_to_neo4j \
+  --snapshot-manifest snapshots/crawl.sqlite.manifest.json \
+  --run-id RUN_ID \
+  --ledger generated/projections/neo4j-ledger.sqlite \
+  --neo4j-uri neo4j+s://graph.example.test:7687 \
+  --neo4j-database neo4j \
+  --neo4j-user graphrag_projection_writer \
+  --neo4j-password-env GRAPHRAG_NEO4J_PROJECTION_PASSWORD
 ```
+
+Vollständiger Vertrag: [NEO4J_PROJECTION.md](NEO4J_PROJECTION.md). Der alte
+`export_graph_to_neo4j`-Name ist nur noch ein veralteter CLI-Alias. Die
+Embedding-Stage schreibt nicht mehr parallel nach Neo4j.
 
 ---
 
@@ -242,7 +257,8 @@ python -m crawler.scripts.detect_communities --algorithm louvain --min-size 3
 python -m crawler.scripts.detect_communities --parallel 4   # Reports parallel
 ```
 
-**Voraussetzungen:** Neo4j 5.x + GDS-Plugin ≥ 2.6, Stage 3 abgeschlossen, Ollama läuft.
+**Status:** noch nicht an das kanonische Projektionsmodell angepasst. Nicht als
+Folgestufe der neuen Stage 3 ausführen.
 
 ---
 

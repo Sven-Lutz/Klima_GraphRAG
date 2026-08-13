@@ -6,14 +6,16 @@ Inhalte (Konzepte, Förderprogramme, Maßnahmen, CO₂-Ziele) und macht sie
 über einen Wissensgraphen in natürlicher Sprache durchsuchbar.
 
 ```
-Crawl → Segmente → Chunks → Embeddings → Wissensgraph (Ollama-LLM)
-     → Neo4j → Community Detection → Query Agent → Evaluation
+Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
+     → kanonische Neo4j-Projektion
+     → Retrieval / Community / Zitate (Migration geplant)
 ```
 
 | Dokument | Inhalt |
 |---|---|
 | **[docs/PIPELINE.md](docs/PIPELINE.md)** | Alle Pipeline-Stages: Kommandos, Ein-/Ausgabetabellen, Konfiguration |
 | **[docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md)** | Laufzeit-DB, sichere SQLite-Verbindungen und Snapshot-Manifeste |
+| **[docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md)** | Snapshot-gebundene Neo4j-Projektion und Graphmodell |
 | **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
 | **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
@@ -45,8 +47,8 @@ docker compose up -d
 docker compose exec ollama ollama pull llama3.1:8b
 ```
 
-Die Defaults in `config.py` passen direkt auf diese Dienste — Neo4j-Browser
-unter `http://localhost:7474`, GDS- und APOC-Plugin sind vorinstalliert.
+Der Neo4j-Browser läuft lokal unter `http://localhost:7474`. Die kanonische
+Projektion verlangt Endpoint, Datenbank und Credentials trotzdem explizit.
 
 ---
 
@@ -73,10 +75,11 @@ crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
   run_worker.py          Stage 0 — Crawl-Worker (--workers N, --limit N)
   init_seed_jobs.py      Stage 0 — befüllt seed_jobs aus municipalities.sqlite
   chunk_documents.py     Stage 1 — Segmente → Chunks (600 Tok / 60 Overlap)
-  generate_embeddings.py Stage 2a — SentenceTransformers → chunks.embedding (+ Neo4j)
+  generate_embeddings.py Stage 2a — SentenceTransformers → chunks.embedding (SQLite)
   extract_graph_ollama.py Stage 2b — LLM-Extraktion Entitäten/Beziehungen (--parallel N)
   resolve_entities.py    Stage 2c — Entity Resolution (kuratierte Aliase + Fuzzy)
-  export_graph_to_neo4j.py Stage 3 — Graph nach Neo4j (UNWIND-Batches, Dangling-Filter)
+  project_graph_to_neo4j.py Stage 3 — kanonische Snapshot/Run-Projektion
+  export_graph_to_neo4j.py veralteter Alias; delegiert an die kanonische Projektion
   detect_communities.py  Stage 3b — Leiden-Communities + LLM-Reports (Global Search)
   summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
   query_agent.py         Stage 4 — Router: Local Search / Global Search / Text2Cypher
@@ -105,8 +108,8 @@ docs/
   *.pptx + create_onepagers.py  Projekt-OnePager (Vorarbeiten & Ausschreibung) + Generator
 
 hpc/                     SLURM-Pipeline für bwUniCluster (Stages 2–6)
-tests/                   47 Tests: Chunker, URL-Kanonisierung, Graph-Schema,
-                           Export-Integrität, Storage-Upsert, Entity Resolution
+tests/                   Unit-/Integrationssuite: Provenienz, Extraktion,
+                           Projektion, Storage, Chunking und Sicherheitsverträge
 .github/workflows/ci.yml Lint (ruff) + Tests bei jedem Push
 ```
 
@@ -147,9 +150,10 @@ python -m crawler.scripts.chunk_documents --db crawler/data/db/crawl.sqlite
 python -m crawler.scripts.generate_embeddings --db crawler/data/db/crawl.sqlite
 python -m crawler.scripts.extract_graph_ollama --db crawler/data/db/crawl.sqlite --chunk-mode --parallel 4
 python -m crawler.scripts.resolve_entities --db crawler/data/db/crawl.sqlite
-python -m crawler.scripts.export_graph_to_neo4j --db crawler/data/db/crawl.sqlite
-python -m crawler.scripts.detect_communities --db crawler/data/db/crawl.sqlite --parallel 4
-python -m crawler.scripts.query_agent --db crawler/data/db/crawl.sqlite "Welche Kommunen fördern Photovoltaik?"
+python -m crawler.scripts.create_database_snapshot --db crawler/data/db/crawl.sqlite \
+  --output snapshots/crawl.sqlite
+# Danach Run-ID(s), Neo4j-Ziel und Ledger explizit an project_graph_to_neo4j übergeben.
+# Retrieval und Community Detection sind noch nicht auf dieses Modell migriert.
 ```
 
 **Evaluation** (reproduzierbar: fester Seed, Prompt-Version, Run-Historie):
@@ -177,7 +181,7 @@ Umgebungsvariable — kein Skript hat hartkodierte Pfade:
 |---|---|---|
 | `KLIMA_DB_PATH` | `crawler/data/db/crawl.sqlite` | Arbeits-Datenbank |
 | `KLIMA_OLLAMA_URL` / `KLIMA_OLLAMA_MODEL` | `localhost:11434` / `llama3.1:8b` | LLM |
-| `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | `bolt://localhost:7687` | Graph-DB |
+| `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | Legacy-Pfade | Von der kanonischen Projektion nicht verwendet |
 | `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
 | `KLIMA_TLS_VERIFY` | `0` | TLS-Zertifikate beim Crawlen prüfen (Default aus: viele kommunale Server haben kaputte Zertifikatsketten) |
 
@@ -194,6 +198,11 @@ python -m crawler.scripts.create_database_snapshot \
 ```
 
 Details und Validierungsvertrag: [docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md).
+
+Die kanonische Neo4j-Projektion ist für verifizierte Extraktionsartefakte
+implementiert. Retrieval, Community Detection, deterministische Zitate,
+Vektor-Projektion und Text2Cypher sind noch nicht an das neue Graphmodell
+angebunden. Details: [docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md).
 
 **Text2Cypher ist experimentell und standardmäßig deaktiviert.** Eine Aktivierung
 erfordert `KLIMA_TEXT2CYPHER_ENABLED=1`, separat konfigurierte Credentials für

@@ -16,7 +16,8 @@ Community Reports are the backbone of GraphRAG *Global Search*:
 
 Prerequisites:
   - Neo4j 5.x with Graph Data Science (GDS) plugin >= 2.6
-  - Populated Entity + Relationship nodes (run export_graph_to_neo4j.py first)
+  - Legacy Entity + Relationship graph. This module is not yet compatible with
+    the canonical snapshot-scoped projection model.
   - Ollama running locally (or set OPENAI_API_KEY for cloud fallback)
 
 Usage:

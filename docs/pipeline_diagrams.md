@@ -26,7 +26,6 @@ flowchart TD
     subgraph EMBED["🔢 Stage 2a — Vector Embeddings"]
         S2A[(chunks\nembedding IS NULL)] --> S2B[SentenceTransformers\nparaphrase-multilingual-MiniLM-L12-v2\n384-dim · CUDA/MPS/CPU]
         S2B --> S2C[float32 BLOB\n→ SQLite chunks.embedding]
-        S2B --> S2D[Neo4j Chunk nodes\nchunk_embedding vector index\ncosine similarity]
     end
 
     subgraph GRAPH["🧠 Stage 2b — Graph Extraction (Ollama)"]
@@ -39,11 +38,9 @@ flowchart TD
         S3F --> S3G[(SQLite\ngraph_triplets)]
     end
 
-    subgraph NEO4J["🗄️ Stage 2c — Neo4j Export"]
-        S4A[(graph_triplets)] --> S4B[export_graph_to_neo4j.py\nentity_canonical resolution\nfuzzy name normalisation]
-        S4B --> S4C[(Neo4j\nEntity nodes\nRelationship edges\nSegment · Document · Chunk)]
-        S4B --> S4D[document_links\nLINKS_TO edges]
-        S4D --> S4C
+    subgraph NEO4J["🗄️ Stage 2c — Canonical Neo4j Projection"]
+        S4A[(manifested SQLite snapshot\nverified selected runs)] --> S4B[project_graph_to_neo4j.py\nstable projection namespace\nlocal lifecycle ledger]
+        S4B --> S4C[(Neo4j\nArtifact · Evidence · Assertion\nMention · Entity · Source hierarchy)]
     end
 
     subgraph COMM["🔍 Stage 3 — Community Detection"]
@@ -127,7 +124,11 @@ flowchart LR
 
 ---
 
-## 4. Data Model (Neo4j Graph Schema)
+## 4. Legacy downstream Neo4j schema (not compatible with canonical projection)
+
+The following diagram describes the pre-projection community/query modules.
+They are not enabled for the canonical model. See
+[`NEO4J_PROJECTION.md`](NEO4J_PROJECTION.md) for the implemented schema.
 
 ```mermaid
 graph LR
@@ -154,19 +155,17 @@ python -m crawler.scripts.run_worker
 python -m crawler.scripts.chunk_documents --chunk-size 600 --overlap 60 --min-score 15
 
 # 2a. Generate embeddings (local GPU)
-python -m crawler.scripts.generate_embeddings --model paraphrase-multilingual-MiniLM-L12-v2 --neo4j
+python -m crawler.scripts.generate_embeddings --model paraphrase-multilingual-MiniLM-L12-v2
 
 # 2b. Extract entity graph (Ollama, privacy-compliant)
 python -m crawler.scripts.extract_graph_ollama --model llama3.1:8b --gleaning 1 --chunk-mode
 
-# 2c. Export to Neo4j
-python -m crawler.scripts.export_graph_to_neo4j
+# 2c. Create a snapshot, then project selected completed extraction run IDs.
+python -m crawler.scripts.create_database_snapshot --db crawler/data/db/crawl.sqlite \
+  --output snapshots/crawl.sqlite
+# See docs/NEO4J_PROJECTION.md for the explicit projection command.
 
-# 3. Community detection + LLM reports
-python -m crawler.scripts.detect_communities --algorithm leiden --min-size 3
-
-# 4. Interactive query (multi-agent)
-python -m crawler.scripts.query_agent --interactive
+# Community detection and query are not yet migrated to the canonical graph.
 
 # 5. Scientific evaluation
 python -m crawler.scripts.evaluate --questions 30 --output eval_results.json

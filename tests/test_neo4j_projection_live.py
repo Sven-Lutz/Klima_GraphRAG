@@ -1,0 +1,136 @@
+"""Opt-in contract test for a disposable Neo4j 5 service.
+
+Run only with the repository's disposable Compose fixture (see
+``tests/integration/README.md``). No production endpoint is accepted implicitly.
+"""
+
+from __future__ import annotations
+
+import os
+from urllib.parse import urlsplit
+
+import pytest
+
+from crawler.core.neo4j_projection import (
+    Neo4jProjectionWriter,
+    Neo4jTarget,
+    ProjectionConfiguration,
+    ProjectionError,
+    ProjectionLedger,
+    build_projection_plan,
+    execute_projection,
+)
+from tests.test_neo4j_projection import projection_fixture
+
+pytestmark = [pytest.mark.network, pytest.mark.neo4j_integration]
+
+
+def _live_configuration() -> tuple[ProjectionConfiguration, str]:
+    if os.environ.get("GRAPHRAG_NEO4J_TEST_DISPOSABLE") != "1":
+        pytest.skip("disposable Neo4j integration service was not explicitly enabled")
+    uri = os.environ.get("GRAPHRAG_NEO4J_TEST_URI", "bolt://127.0.0.1:17687")
+    if urlsplit(uri).hostname not in {"127.0.0.1", "localhost", "::1"}:
+        pytest.fail("live projection tests only accept an explicitly disposable loopback service")
+    password = os.environ.get("GRAPHRAG_NEO4J_TEST_PASSWORD", "projection-test-password")
+    return (
+        ProjectionConfiguration(
+            target=Neo4jTarget(uri, "neo4j", "neo4j"),
+            batch_size=1,
+            query_timeout_seconds=15,
+        ),
+        password,
+    )
+
+
+def test_disposable_neo4j_clean_repeat_and_constraints(tmp_path):
+    configuration, password = _live_configuration()
+    binding, run_ids = projection_fixture(tmp_path)
+    plan = build_projection_plan(binding, run_ids, configuration)
+    ledger = ProjectionLedger(tmp_path / "live-projection-ledger.sqlite")
+    writer = Neo4jProjectionWriter(configuration, password=password)
+    try:
+        first = execute_projection(plan, configuration, ledger, writer)
+        first_counts = writer.namespace_counts(plan.projection_id)
+        second = execute_projection(plan, configuration, ledger, writer)
+        second_counts = writer.namespace_counts(plan.projection_id)
+        with writer.driver.session(database=configuration.target.database) as session:
+            constraint_count = session.run(
+                "SHOW CONSTRAINTS YIELD properties "
+                "WHERE properties = ['projection_key'] RETURN count(*) AS count"
+            ).single()["count"]
+            assertion_paths = session.run(
+                """
+                MATCH (:GraphArtifact {projection_id:$projection_id})-[:HAS_ASSERTION]->
+                      (a:Assertion)-[:SUPPORTED_BY]->(e:Evidence)-[:DERIVED_FROM]->(source)
+                RETURN count(a) AS count,
+                       count(DISTINCT a.extraction_run_id) AS run_count,
+                       count(DISTINCT e.evidence_id) AS evidence_count,
+                       collect(DISTINCT labels(source)[0]) AS source_labels
+                """,
+                projection_id=plan.projection_id,
+            ).single()
+    finally:
+        writer.close()
+        ledger.close()
+
+    assert first["status"] == second["status"] == "completed"
+    assert first_counts == second_counts == dict(plan.expected_node_counts)
+    assert constraint_count >= len(plan.expected_node_counts)
+    assert assertion_paths["count"] == 4
+    assert assertion_paths["run_count"] == 3
+    assert assertion_paths["evidence_count"] == 2
+    assert set(assertion_paths["source_labels"]) == {"Segment", "Chunk"}
+
+
+def test_disposable_neo4j_partial_failure_resume_and_scope_coexistence(tmp_path):
+    configuration, password = _live_configuration()
+    binding, run_ids = projection_fixture(tmp_path)
+    plan = build_projection_plan(binding, run_ids, configuration)
+    narrower = build_projection_plan(binding, run_ids[:1], configuration)
+    ledger = ProjectionLedger(tmp_path / "live-resume-ledger.sqlite")
+    real_writer = Neo4jProjectionWriter(configuration, password=password)
+
+    class FailSecondBatchOnce:
+        def __init__(self):
+            self.failed = False
+
+        def ensure_schema(self):
+            real_writer.ensure_schema()
+
+        def database_identity(self):
+            return real_writer.database_identity()
+
+        def initialize_scope(self, selected_plan):
+            real_writer.initialize_scope(selected_plan)
+
+        def write_batch(self, selected_plan, batch):
+            if batch.ordinal == 1 and not self.failed:
+                self.failed = True
+                raise RuntimeError("injected interruption between live transactions")
+            real_writer.write_batch(selected_plan, batch)
+
+        def namespace_counts(self, projection_id):
+            return real_writer.namespace_counts(projection_id)
+
+        def close(self):
+            pass
+
+    failing_writer = FailSecondBatchOnce()
+    try:
+        with pytest.raises(ProjectionError, match="batch 1 failed"):
+            execute_projection(plan, configuration, ledger, failing_writer)
+        failed = ledger.record(plan.projection_id)
+        completed = execute_projection(plan, configuration, ledger, failing_writer)
+        narrow_completed = execute_projection(narrower, configuration, ledger, real_writer)
+        full_counts = real_writer.namespace_counts(plan.projection_id)
+        narrow_counts = real_writer.namespace_counts(narrower.projection_id)
+    finally:
+        real_writer.close()
+        ledger.close()
+
+    assert failed["status"] == "failed"
+    assert failed["projected_count"] == 1
+    assert completed["status"] == narrow_completed["status"] == "completed"
+    assert full_counts == dict(plan.expected_node_counts)
+    assert narrow_counts == dict(narrower.expected_node_counts)
+    assert plan.projection_id != narrower.projection_id

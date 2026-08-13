@@ -48,6 +48,6 @@ echo "[3/3] SentenceTransformer-Embeddings (paraphrase-multilingual-MiniLM-L12-v
 python -m crawler.scripts.generate_embeddings \
     --model paraphrase-multilingual-MiniLM-L12-v2 \
     --batch 128
-# --neo4j wird NICHT hier übergeben: Neo4j-Export läuft separat in Stage 4
+# Neo4j-Vektorprojektion ist im kanonischen Modell nicht implementiert.
 
 echo "✅ Chunk+Embed abgeschlossen: $(date '+%Y-%m-%d %H:%M:%S')"

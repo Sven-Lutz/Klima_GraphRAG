@@ -1,0 +1,20 @@
+services:
+  neo4j-projection-test:
+    image: neo4j:5.26
+    environment:
+      NEO4J_AUTH: neo4j/projection-test-password
+    ports:
+      - "17474:7474"
+      - "17687:7687"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p projection-test-password 'RETURN 1' || exit 1",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    tmpfs:
+      - /data
+      - /logs
