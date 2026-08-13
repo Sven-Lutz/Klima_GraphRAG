@@ -115,8 +115,11 @@ python -m crawler.scripts.chunk_documents --min-score 10 --limit 50000
 
 Berechnet Vektor-Embeddings lokal (keine API-Calls).
 **Modell:** `paraphrase-multilingual-MiniLM-L12-v2` (384 Dim., deutschtauglich).
-Speichert ausschließlich in SQLite. Eine Vektor-Projektion ist im kanonischen
-Neo4j-Modell noch nicht implementiert.
+Speichert ausschließlich in SQLite als vollständiges versioniertes Artefakt.
+Provider, Modell/Revision, Dimension, Preprocessing-ID, Datenbankidentität,
+Korpus-Fingerprint und Chunk-Content-Hashes werden fest gebunden. Partielle
+Artefakte sind nicht retrievalfähig. Eine Vektor-Projektion ist im
+kanonischen Neo4j-Modell nicht implementiert.
 
 ```bash
 python -m crawler.scripts.generate_embeddings
@@ -125,7 +128,7 @@ python -m crawler.scripts.generate_embeddings --model intfloat/multilingual-e5-l
 
 | Liest | Schreibt |
 |---|---|
-| `chunks` (embedding IS NULL) | `chunks.embedding` (float32-BLOB) |
+| `chunks` (vollständiger Korpus) | `embedding_artifacts`, `chunk_embeddings` |
 
 ---
 
@@ -251,45 +254,52 @@ und Provenienzimplementierung vorliegt.
 
 ---
 
-## Stage 4 — Query Agent
+## Stage 4 — Canonical Retrieval
 
-**Skript:** `crawler/scripts/query_agent.py`
+**Skript:** `crawler/scripts/query.py`
 
-Retriever-Router: Ein LLM entscheidet pro Anfrage, welches Werkzeug passt —
+Status: **implemented** for explicit manifested snapshots.
 
-| Modus | Für | Mechanik |
+| Modus | Mechanik | Status |
 |---|---|---|
-| **Local Search** | Spezifische Fragen zu einer Kommune | Vektorsuche + Graph-Nachbarschaft |
-| **Global Search** | Aggregierende/vergleichende Fragen | Map-Reduce über Community Reports |
-| **Text2Cypher** | Exakte strukturelle Abfragen | LLM generiert Cypher |
+| `semantic` | vollständiges, lineage-validiertes Chunk-Artefakt; Cosine-Rang | implemented |
+| `graph` | begrenztes anwendungseigenes 1-Hop-Cypher; SQLite-Auflösung | implemented |
+| `hybrid` | deterministische Reciprocal Rank Fusion, Deduplikation per `evidence_id` | implemented |
+| global/community | kein genehmigter Report-/Projektions-Lifecycle | deferred |
+| Text2Cypher | keine Ausführung nutzergenerierter Queries | unsupported |
 
-Ein Answer Critic prüft die Antwort auf Vollständigkeit und stößt bei Bedarf
-eine neue Suchrunde an (max. `MAX_CRITIC_LOOPS = 3`).
-
-> **Status: experimentell, standardmäßig deaktiviert.** Text2Cypher wird nur
-> mit `KLIMA_TEXT2CYPHER_ENABLED=1`, einer separat konfigurierten und
-> datenbankseitig schreibgeschützten Neo4j-Identität sowie
-> `KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED=1` ausgeführt. Die Anwendung
-> beschränkt Cypher auf einen kleinen read-only-Unterraum und erzwingt Timeout
-> und Ergebnislimit. Diese Kontrollen ergänzen, ersetzen aber nicht, die
-> Datenbankberechtigungen.
-
-Der Query Agent akzeptiert ebenfalls `--db`; dieser Wert gilt für die gesamte
-Anfrage. Vor einer Anfrage prüft er die SQLite-Schema-Voraussetzungen und das
-Vorhandensein eingebetteter Chunks. Text2Cypher prüft bei Aktivierung zusätzlich
-die read-only-Neo4j-Verbindung sowie vorhandene `Entity`-Knoten. Alle Preflight-
-Prüfungen sind schreibgeschützt und erzeugen keine Ersatzdatenbanken.
+Jede Anfrage verlangt `--db` und `--manifest`; beide müssen dieselbe validierte
+Snapshot-Datei bezeichnen. Graph/Hybrid verlangt zusätzlich die exakte
+Projection-ID und einen explizit bestätigten read-only Neo4j-Principal. Fragen
+werden ausschließlich als Parameter/Werte behandelt und werden nie SQL oder
+Cypher.
 
 ```bash
-python -m crawler.scripts.query_agent --db crawler/data/db/crawl.sqlite "Welche Kommunen fördern Photovoltaik?"
-python -m crawler.scripts.query_agent --llm openai "..."   # Cloud-Fallback
+python -m crawler.scripts.query \
+  --db snapshots/work.sqlite \
+  --manifest snapshots/work.sqlite.manifest.json \
+  --mode semantic --top-k 8 --output markdown \
+  "Welche Kommunen beschreiben Solaranlagen?"
 ```
+
+Die Ausgabe enthält getypte Provenienz und deterministische Markdown-/JSON-
+Zitate; sie erzeugt noch keine LLM-Antwort. Der vollständige Architektur-,
+Sicherheits- und Limitationsvertrag steht in [RETRIEVAL.md](RETRIEVAL.md).
+`query_agent.py` ist nur ein veralteter CLI-Alias; seine frühere Python-API
+bricht explizit ab.
 
 ---
 
 ## Stage 5 — Evaluation
 
 **Skript:** `crawler/scripts/evaluate.py`
+
+**Status: unsupported für das kanonische Retrieval.** Das vorhandene
+Benchmarking-Gerüst stammt aus dem deaktivierten Query-Agent-Pfad. Es darf erst
+wieder ausgeführt werden, wenn Fragen, Retrieval-Trace, Citation Registry,
+Grounding-Report und LLM-Run-Metadaten an den neuen Vertrag gebunden sind. Die
+folgenden Beschreibungen dokumentieren den historischen Entwurf und sind keine
+aktuell verifizierten Befehle.
 
 Benchmarking-Gerüst (Ausbau ist Kern der Bachelorarbeit):
 

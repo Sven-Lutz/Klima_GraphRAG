@@ -103,11 +103,11 @@ Nach erfolgreichem Durchlauf:
 | Logs | `logs/*.out` / `logs/*.err` |
 | Neo4j Graph | Bolt-Server (persistiert) |
 
-## Interaktive Abfrage (nach Pipeline)
+## Abfrage nach der Pipeline
 
-```bash
-# Auf einem GPU-Node (interaktiv):
-srun --partition=gpu --gres=gpu:1 --mem=16G --pty bash
-conda activate klima
-python -m crawler.scripts.query_agent --interactive
-```
+Eine interaktive UI ist derzeit nicht implementiert. Das kanonische CLI
+verlangt eine explizite Snapshot-Datei und deren Manifest. Graph-/Hybrid-Modi
+benötigen außerdem die exakte Projection-ID und einen separaten read-only
+Neo4j-Principal. Siehe [../docs/RETRIEVAL.md](../docs/RETRIEVAL.md). Die Befehle
+für konkrete HPC-Snapshot- und Servicepfade sind umgebungsspezifisch und hier
+nicht verifiziert.

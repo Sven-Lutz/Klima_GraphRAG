@@ -450,7 +450,13 @@ def run_evaluation(
     autoq_model: Optional[str] = None,
     db_path: str | Path | RuntimeDatabase | None = None,
 ) -> dict:
-    from crawler.scripts.query_agent import answer as qa_answer
+    raise RuntimeError(
+        "The legacy query-agent evaluator is disabled until it is migrated to the canonical "
+        "manifested retrieval, citation, grounding, and LLM-run-metadata contracts"
+    )
+
+    # Historical implementation retained below as an explicit migration reference.
+    from crawler.scripts.query_agent import answer as qa_answer  # pragma: no cover
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     model_name = OLLAMA_MODEL if backend == "ollama" else OPENAI_MODEL

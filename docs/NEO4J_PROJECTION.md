@@ -1,8 +1,9 @@
 # Canonical Neo4j projection
 
-Status: **implemented** for verified graph-extraction artifacts. Retrieval,
-community detection, deterministic citation rendering, vector projection and
-Text2Cypher integration with this model are **not yet implemented**.
+Status: **implemented** for verified graph-extraction artifacts. Bounded
+canonical graph retrieval and deterministic citation rendering are implemented
+against this model. Community detection, vector projection into Neo4j, and
+Text2Cypher are **unsupported**.
 
 ## Authority and scope
 
@@ -134,20 +135,20 @@ a projection-bound community-report lifecycle exists.
 
 ## Security assumptions and limitations
 
-The principal is a write identity used only by projection. Future read paths
-must use a separate least-privilege principal. Neo4j Community Edition cannot
-provide every enterprise authorization guarantee, so this code does not claim
-database-enforced read-only security for future readers. Text2Cypher remains
-disabled and outside this projection contract.
+The principal is a write identity used only by projection. Canonical retrieval
+uses a separate explicitly confirmed read-only principal. Neo4j Community
+Edition cannot provide every enterprise authorization guarantee, so this code
+does not claim database-enforced read-only security for future readers.
+Text2Cypher remains disabled and outside this projection contract.
 
 TLS behavior is explicit in the URI scheme. The implementation does not
 disable certificate verification: `neo4j+s`/`bolt+s` use verified TLS, while
 `+ssc` explicitly requests self-signed-certificate trust. Endpoint, database
 and credentials have no projection defaults.
 
-Full evidence text, document links, embeddings, community reports and legacy
-retrieval relationships are not projected. Existing community and query
-modules target the legacy shape and are not enabled for this canonical model.
+Full evidence text, document links, embeddings, and community reports are not
+projected. Retrieval resolves projected identities back to authoritative
+SQLite. The legacy query-agent Python path is disabled.
 
 ## Validation
 

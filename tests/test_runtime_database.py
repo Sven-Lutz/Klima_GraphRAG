@@ -113,21 +113,20 @@ def test_stage_clis_pass_explicit_database_to_stage(monkeypatch, tmp_path, modul
     assert Path(captured["db_path"]).resolve() == explicit.resolve()
 
 
-def test_query_cli_passes_explicit_database(monkeypatch, tmp_path, capsys):
+def test_legacy_query_cli_delegates_to_canonical_entrypoint(monkeypatch, tmp_path):
     from crawler.scripts import query_agent
 
     explicit = tmp_path / "query.sqlite"
     captured = {}
 
-    def fake_answer(query, **kwargs):
-        captured.update(query=query, db_path=kwargs["db_path"])
-        return "ok"
+    def fake_main(argv):
+        captured["argv"] = argv
 
-    monkeypatch.setattr(query_agent, "answer", fake_answer)
-    query_agent.main(["--db", str(explicit), "question"])
+    monkeypatch.setattr(query_agent, "canonical_query_main", fake_main)
+    argv = ["--db", str(explicit), "--manifest", "snapshot.json", "question"]
+    query_agent.main(argv)
 
-    assert captured == {"query": "question", "db_path": str(explicit)}
-    assert capsys.readouterr().out.strip() == "ok"
+    assert captured == {"argv": argv}
 
 
 def test_evaluation_cli_passes_explicit_database(monkeypatch, tmp_path):

@@ -20,12 +20,12 @@ flowchart TD
 
     subgraph CHUNK["📄 Stage 1 — Tiktoken Chunking"]
         S1A[(segments\nimpact_score ≥ threshold)] --> S1B[chunker.py\ncl100k_base\n600 tokens / 60 overlap]
-        S1B --> S1C[(SQLite\nchunks table\nchunk_id · heading_context\nimpact_score · embedding BLOB)]
+        S1B --> S1C[(SQLite\nchunks table\nchunk_id · heading_context\nimpact_score · content identity)]
     end
 
     subgraph EMBED["🔢 Stage 2a — Vector Embeddings"]
-        S2A[(chunks\nembedding IS NULL)] --> S2B[SentenceTransformers\nparaphrase-multilingual-MiniLM-L12-v2\n384-dim · CUDA/MPS/CPU]
-        S2B --> S2C[float32 BLOB\n→ SQLite chunks.embedding]
+        S2A[(complete chunk corpus)] --> S2B[SentenceTransformers\nexplicit model revision + preprocessing ID\nCUDA/MPS/CPU]
+        S2B --> S2C[(embedding_artifacts + chunk_embeddings\ncontent-bound vectors + completion counts)]
     end
 
     subgraph GRAPH["🧠 Stage 2b — Graph Extraction (Ollama)"]
@@ -38,53 +38,39 @@ flowchart TD
         S3F --> S3G[(SQLite\ngraph_triplets)]
     end
 
-    subgraph NEO4J["🗄️ Stage 2c — Canonical Neo4j Projection"]
+    subgraph NEO4J["🗄️ Stage 3 — Canonical Neo4j Projection"]
         S4A[(manifested SQLite snapshot\nverified selected runs)] --> S4B[project_graph_to_neo4j.py\nstable projection namespace\nlocal lifecycle ledger]
         S4B --> S4C[(Neo4j\nArtifact · Evidence · Assertion\nMention · Entity · Source hierarchy)]
     end
 
-    subgraph COMM["🔍 Stage 3 — Community Detection"]
-        S5A[(Neo4j Entity graph)] --> S5B[GDS graph.project\nklimiaEntities\n9 rel-types UNDIRECTED]
-        S5B --> S5C{Algorithm}
-        S5C -->|default| S5D[gds.leiden.write\ngamma=1.0]
-        S5C -->|alt| S5E[gds.louvain.write]
-        S5D --> S5F[communityId on Entity nodes]
-        S5E --> S5F
-        S5F --> S5G[LLM Community Report\nCommunityReport Pydantic\ntitle · summary · importance\ndomain · key_claims · key_entities]
-        S5G --> S5H[(Neo4j CommunityReport nodes\nBELONGS_TO_COMMUNITY edges)]
-        S5G --> S5I[(SQLite\ncommunity_reports table)]
+    subgraph COMM["🔍 Community / Global Retrieval"]
+        S5A[unsupported\nprojection-bound lifecycle and provenance deferred]
     end
 
     CRAWL --> CHUNK
     CHUNK --> EMBED
     CHUNK --> GRAPH
-    EMBED --> NEO4J
-    GRAPH --> NEO4J
-    NEO4J --> COMM
+    EMBED --> S4A
+    GRAPH --> S4A
+    S4C -. future validated lifecycle .-> S5A
 ```
 
 ---
 
-## 2. Query-Time Pipeline (Multi-Agent Retrieval)
+## 2. Query-Time Pipeline (Canonical Retrieval)
 
 ```mermaid
 flowchart TD
-    Q[User Query] --> R[Router LLM\nroute to tool]
-
-    R -->|factual / local| LS[local_search\nbrute-force cosine on SQLite BLOBs\n→ top-k chunks\n→ Entity neighbourhood Neo4j\ncontext assembly]
-
-    R -->|thematic / global| GS[global_search — LazyGraphRAG\nkeyword pre-filter on community reports\nmap: LLM summary per report\nreduce: final holistic answer]
-
-    R -->|structured / count| TC[text2cypher\nLLM → Cypher query\nNeo4j execute\n→ markdown table]
-
-    LS --> A[Draft Answer]
-    GS --> A
-    TC --> A
-
-    A --> C{Answer Critic\ncompleteness check}
-    C -->|complete| OUT[Final Answer]
-    C -->|incomplete\nloop ≤ MAX_CRITIC_LOOPS=3| FU[follow_up_query\nback to Router]
-    FU --> R
+    Q["User query + explicit snapshot + mode"] --> V["Validate manifest and bounds"]
+    V --> S["Semantic: compatible complete embedding artifact"]
+    V --> G["Graph: verify projection/snapshot/run scope"]
+    G --> C["Fixed parameterized 1-hop Cypher with cap/timeout"]
+    C --> A["Resolve IDs to authoritative SQLite evidence"]
+    S --> F["Deterministic rank or RRF fusion"]
+    A --> F
+    F --> D["Deduplicate by evidence_id; typed retrieval result"]
+    D --> Z["Immutable citation IDs + ordered C1/C2 labels"]
+    Z --> X["Untrusted evidence context + grounding validator"]
 ```
 
 ---
@@ -101,7 +87,7 @@ flowchart LR
     end
 
     subgraph QA["QA — Answer Generation"]
-        AQ5 --> QA1[query_agent.answer\nfor each question]
+        AQ5 --> QA1[canonical retrieval/context adapter\nanswer generation deferred]
         QA1 --> QA2[EvalResult\nquestion · answer · contexts\nroute_used · latency_s]
     end
 

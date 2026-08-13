@@ -20,6 +20,12 @@ from crawler.core.neo4j_projection import (
     build_projection_plan,
     execute_projection,
 )
+from crawler.core.retrieval import (
+    CanonicalRetriever,
+    Neo4jReadBackend,
+    RetrievalMode,
+    RetrievalRequest,
+)
 from tests.test_neo4j_projection import projection_fixture
 
 pytestmark = [pytest.mark.network, pytest.mark.neo4j_integration]
@@ -134,3 +140,32 @@ def test_disposable_neo4j_partial_failure_resume_and_scope_coexistence(tmp_path)
     assert full_counts == dict(plan.expected_node_counts)
     assert narrow_counts == dict(narrower.expected_node_counts)
     assert plan.projection_id != narrower.projection_id
+
+
+def test_disposable_neo4j_bounded_retrieval_resolves_sqlite_provenance(tmp_path):
+    configuration, password = _live_configuration()
+    binding, run_ids = projection_fixture(tmp_path)
+    plan = build_projection_plan(binding, run_ids, configuration)
+    ledger = ProjectionLedger(tmp_path / "live-retrieval-ledger.sqlite")
+    writer = Neo4jProjectionWriter(configuration, password=password)
+    backend = Neo4jReadBackend(writer.driver, database=configuration.target.database)
+    try:
+        execute_projection(plan, configuration, ledger, writer)
+        result = CanonicalRetriever(graph_backend=backend).retrieve(
+            RetrievalRequest(
+                query="Stadtwerke Solaranlage",
+                manifest_path=str(binding.manifest_path),
+                mode=RetrievalMode.GRAPH,
+                top_k=10,
+                projection_id=plan.projection_id,
+                extraction_run_ids=plan.extraction_run_ids,
+            )
+        )
+    finally:
+        # The backend and writer share one driver; close it exactly once.
+        writer.close()
+        ledger.close()
+
+    assert {item.source_type for item in result.items} == {"segment", "chunk"}
+    assert all(item.assertions for item in result.items)
+    assert all(item.database_snapshot_id == plan.snapshot_id for item in result.items)

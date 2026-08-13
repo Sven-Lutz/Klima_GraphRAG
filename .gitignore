@@ -1,6 +1,7 @@
 # System & Python
 __pycache__/
 .venv/
+.venv-*/
 .DS_Store
 
 # --- DER WICHTIGSTE TEIL ---

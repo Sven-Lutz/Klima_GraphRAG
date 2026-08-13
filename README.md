@@ -8,7 +8,7 @@ Inhalte (Konzepte, Förderprogramme, Maßnahmen, CO₂-Ziele) und macht sie
 ```
 Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
      → kanonische Neo4j-Projektion
-     → Retrieval / Community / Zitate (Migration geplant)
+     → kanonisches Semantic/Graph/Hybrid Retrieval → deterministische Zitate
 ```
 
 | Dokument | Inhalt |
@@ -16,6 +16,7 @@ Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
 | **[docs/PIPELINE.md](docs/PIPELINE.md)** | Alle Pipeline-Stages: Kommandos, Ein-/Ausgabetabellen, Konfiguration |
 | **[docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md)** | Laufzeit-DB, sichere SQLite-Verbindungen und Snapshot-Manifeste |
 | **[docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md)** | Snapshot-gebundene Neo4j-Projektion und Graphmodell |
+| **[docs/RETRIEVAL.md](docs/RETRIEVAL.md)** | Kanonisches Retrieval, Embedding-Lineage, Zitate und Grounding-Grenzen |
 | **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
 | **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
@@ -30,6 +31,9 @@ bash demo/run_poc.sh
 python demo/visualize_graph.py        # interaktiver Graph im Browser
 python demo/query_demo.py "Wärmepumpe Förderung"
 ```
+
+Diese SQLite-Demo ist ein isolierter historischer PoC und erfüllt nicht den
+manifest-/lineage-gebundenen Produktionsvertrag aus `crawler.core.retrieval`.
 
 **Vollbetrieb:**
 
@@ -75,15 +79,16 @@ crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
   run_worker.py          Stage 0 — Crawl-Worker (--workers N, --limit N)
   init_seed_jobs.py      Stage 0 — befüllt seed_jobs aus municipalities.sqlite
   chunk_documents.py     Stage 1 — Segmente → Chunks (600 Tok / 60 Overlap)
-  generate_embeddings.py Stage 2a — SentenceTransformers → chunks.embedding (SQLite)
+  generate_embeddings.py Stage 2a — versioniertes, vollständiges Embedding-Artefakt
   extract_graph_ollama.py Stage 2b — LLM-Extraktion Entitäten/Beziehungen (--parallel N)
   resolve_entities.py    Stage 2c — Entity Resolution (kuratierte Aliase + Fuzzy)
   project_graph_to_neo4j.py Stage 3 — kanonische Snapshot/Run-Projektion
   export_graph_to_neo4j.py veralteter Alias; delegiert an die kanonische Projektion
   detect_communities.py  Stage 3b — deaktiviert bis zum projektionsgebundenen Lifecycle
   summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
-  query_agent.py         Stage 4 — Router: Local Search / Global Search / Text2Cypher
-  evaluate.py            Stage 5 — Benchmarking: AutoQ/AutoE, Fixtures, eval_runs/
+  query.py               Stage 4 — kanonisches Semantic/Graph/Hybrid Retrieval
+  query_agent.py         veralteter CLI-Alias; frühere Python-API deaktiviert
+  evaluate.py            historisches Benchmark-Gerüst; kanonischer Lauf deaktiviert
   analyze_topics.py      Ergänzend — BERTopic-Themenanalyse (HPC Stage 5)
   prune_db.py            Wartung — DB-Report, Boilerplate-Markierung, VACUUM
   generate_municipalities_csv.py  Stammdaten-Provenienz: erzeugt municipalities-
@@ -153,15 +158,14 @@ python -m crawler.scripts.resolve_entities --db crawler/data/db/crawl.sqlite
 python -m crawler.scripts.create_database_snapshot --db crawler/data/db/crawl.sqlite \
   --output snapshots/crawl.sqlite
 # Danach Run-ID(s), Neo4j-Ziel und Ledger explizit an project_graph_to_neo4j übergeben.
-# Retrieval und Community Detection sind noch nicht auf dieses Modell migriert.
+# Retrieval nutzt die Snapshot-Datei und das Manifest; Community Detection ist deferred.
 ```
 
-**Evaluation** (reproduzierbar: fester Seed, Prompt-Version, Run-Historie):
-
-```bash
-python -m crawler.scripts.evaluate --questions 50 --save-questions questions.json
-python -m crawler.scripts.evaluate --load questions.json     # eingefrorenes Fixture
-```
+**Evaluation:** Der frühere Query-Agent-Benchmark ist noch nicht auf den
+kanonischen Retrieval-/Zitationsvertrag migriert und daher derzeit
+**unsupported**. Die Retrieval-Verträge werden mit deterministischen Fixtures
+und disposable Neo4j getestet; daraus werden noch keine Answer-Quality-Werte
+abgeleitet.
 
 **DB verkleinern** (ohne Flags nur Report — gefahrlos):
 
@@ -199,24 +203,20 @@ python -m crawler.scripts.create_database_snapshot \
 
 Details und Validierungsvertrag: [docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md).
 
-Die kanonische Neo4j-Projektion ist für verifizierte Extraktionsartefakte
-implementiert. Retrieval, Community Detection, deterministische Zitate,
-Vektor-Projektion und Text2Cypher sind noch nicht an das neue Graphmodell
-angebunden. Details: [docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md).
+Die kanonische Neo4j-Projektion und das snapshot-gebundene
+Semantic/Graph/Hybrid Retrieval sind implementiert. Embeddings besitzen einen
+versionierten Lineage-Vertrag; Graph-Treffer werden vor Rückgabe zur
+autoritativen SQLite-Evidenz aufgelöst. Deterministische Markdown-/JSON-Zitate,
+isolierter Antwortkontext und strukturelle Grounding-Prüfung sind implementiert.
+Global/Community Retrieval, Text2Cypher, Antwortqualitätsgarantien und eine
+interaktive UI sind nicht unterstützt. Details:
+[docs/RETRIEVAL.md](docs/RETRIEVAL.md).
 
-**Text2Cypher ist experimentell und standardmäßig deaktiviert.** Eine Aktivierung
-erfordert `KLIMA_TEXT2CYPHER_ENABLED=1`, separat konfigurierte Credentials für
-einen **datenbankseitig read-only** Neo4j-Principal sowie die explizite
-Bestätigung `KLIMA_TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED=1`. Die Anwendung
-akzeptiert nur einen kleinen read-only-Cypher-Unterraum und erzwingt Timeout
-sowie Ergebnislimit; dies ersetzt keine Neo4j-Berechtigungen.
-
-Worker und Query Agent führen vor der Ausführung eine nicht-mutierende
-Preflight-Prüfung aus. Der Worker benötigt eine vorhandene, vollständige
-`seed_jobs`-Tabelle; der Query Agent benötigt eingebettete Chunks. Text2Cypher
-prüft zusätzlich die konfigurierte read-only-Neo4j-Verbindung und vorhandene
-`Entity`-Knoten. Fehler verlangen ausdrücklich den jeweiligen Vorgänger-Schritt
-und erzeugen weder Ersatzdatenbanken noch partielle Stage-Ergebnisse.
+Worker und kanonisches Retrieval führen nicht-mutierende Prüfungen aus. Der
+Worker benötigt eine vorhandene, vollständige `seed_jobs`-Tabelle; Retrieval
+verlangt ein validiertes Snapshot-Manifest und vollständige, kompatible
+Embedding-/Projektionsartefakte. Fehler erzeugen weder Ersatzdatenbanken noch
+partielle Stage-Ergebnisse.
 Die Worker-Schema-Prüfung liest die SQLite-Datei direkt, damit ein Datenbank-
 Artefakt im WAL-Modus keine `-wal`- oder `-shm`-Dateien durch einen bloßen
 Preflight erhält.
