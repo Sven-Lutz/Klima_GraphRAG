@@ -19,9 +19,10 @@ from crawler.core.database import (
     live_database_state_id,
     require_existing_database,
 )
+from crawler.core.provenance import ProvenanceError, validated_provenance_schema_version
 
 MANIFEST_FORMAT = "graphrag-al-sqlite-snapshot"
-MANIFEST_FORMAT_VERSION = 1
+MANIFEST_FORMAT_VERSION = 2
 SNAPSHOT_ASSUMPTION = "sqlite-backup-single-file"
 
 
@@ -76,6 +77,10 @@ def _table_exists(connection, table: str) -> bool:
 
 
 def _sqlite_metadata(connection) -> dict[str, Any]:
+    try:
+        provenance_schema_version = validated_provenance_schema_version(connection)
+    except ProvenanceError as exc:
+        raise SnapshotManifestError(f"Snapshot provenance schema is invalid: {exc}") from exc
     migrations: list[dict[str, Any]] = []
     if _table_exists(connection, "schema_migrations"):
         columns = {
@@ -96,6 +101,7 @@ def _sqlite_metadata(connection) -> dict[str, Any]:
         "page_size": int(connection.execute("PRAGMA page_size").fetchone()[0]),
         "page_count": int(connection.execute("PRAGMA page_count").fetchone()[0]),
         "journal_mode": str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower(),
+        "provenance_schema_version": provenance_schema_version,
         "provenance_migrations": migrations,
     }
 
@@ -142,6 +148,12 @@ def export_database_snapshot(
     )
     if target_manifest.exists():
         raise SnapshotManifestError(f"Snapshot manifest already exists: {target_manifest}")
+    if target_manifest.parent != target_path.parent or not target_manifest.name.endswith(
+        ".manifest.json"
+    ):
+        raise SnapshotManifestError(
+            "Snapshot manifest must use a .manifest.json filename beside its snapshot"
+        )
 
     with connect_existing_read_only(source_path) as source:
         source.execute("BEGIN")
@@ -291,6 +303,7 @@ def validate_snapshot_manifest(
         "page_size",
         "page_count",
         "journal_mode",
+        "provenance_schema_version",
         "provenance_migrations",
     ):
         if sqlite_manifest.get(field) != actual_metadata[field]:

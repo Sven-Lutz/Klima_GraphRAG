@@ -30,7 +30,8 @@ Operational connections are intentionally separated:
 - `connect_existing_read_only`: requires an existing file, uses SQLite
   `mode=ro`, `query_only`, foreign keys, and a bounded busy timeout.
 - `connect_existing_read_write`: requires an existing file and applies the
-  shared WAL, foreign-key, synchronous, and timeout settings.
+  shared WAL, foreign-key, synchronous, and timeout settings. It rejects any
+  database claimed by a colocated snapshot manifest.
 - `create_sqlite_database`: creation is explicit and limited to
   initialization, fixtures, or snapshot output.
 
@@ -54,9 +55,10 @@ python -m crawler.scripts.create_database_snapshot \
 The command uses SQLite's online backup API. It includes committed WAL content
 without checkpointing or modifying the source database. The output is a
 single-file, DELETE-journal snapshot accompanied by
-`crawl.sqlite.manifest.json` unless `--manifest` selects another manifest path.
+`crawl.sqlite.manifest.json` unless `--manifest` selects another
+`.manifest.json` filename beside the snapshot.
 
-## Manifest format version 1
+## Manifest format version 2
 
 The manifest records:
 
@@ -66,7 +68,7 @@ The manifest records:
 - source path identity and sampled live-state identity
 - snapshot filename, byte size, and SHA-256 checksum
 - SQLite version, schema/user versions, page metadata, and journal assumptions
-- recorded provenance migration rows, when present
+- the validated provenance schema version and exact migration rows, when present
 - pipeline-stage completion records only when an explicit compatible completion
   table exists
 
@@ -76,5 +78,9 @@ are never interpreted as proof that a stage completed.
 Validation recomputes the canonical manifest ID, verifies size and checksum,
 rejects WAL/SHM sidecars, then opens the checksum-validated snapshot with
 SQLite's immutable read-only mode and compares its metadata with the manifest.
+If provenance migrations are present, validation verifies the complete v1, v2,
+or v3 schema contract, including v3 evidence-immutability triggers, without
+attempting a migration. A malformed provenance schema cannot become a valid
+snapshot.
 Moving a snapshot and its unchanged manifest together does not change their
 identity.

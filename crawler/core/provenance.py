@@ -177,6 +177,13 @@ def _table_sql(conn: sqlite3.Connection, table: str) -> str:
     return str(row[0]) if row and row[0] else ""
 
 
+def _trigger_sql(conn: sqlite3.Connection, trigger: str) -> str:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (trigger,)
+    ).fetchone()
+    return str(row[0]) if row and row[0] else ""
+
+
 def _primary_key_columns(conn: sqlite3.Connection, table: str) -> tuple[str, ...]:
     rows = sorted(
         (row for row in conn.execute(f'PRAGMA table_info("{table}")') if row[5]),
@@ -651,6 +658,93 @@ def _validate_migration_chain(conn: sqlite3.Connection, *, through_v3: bool = Fa
 
     if errors:
         raise ProvenanceError("Provenance migration chain drift detected: " + "; ".join(errors))
+
+
+def _validate_provenance_v1_schema(conn: sqlite3.Connection) -> None:
+    errors: list[str] = []
+    if not _table_exists(conn, "graph_extraction_runs"):
+        errors.append("missing table graph_extraction_runs")
+    else:
+        if _table_columns(conn, "graph_extraction_runs") != _V1_RUN_COLUMNS:
+            errors.append("invalid graph_extraction_runs column set")
+        if _primary_key_columns(conn, "graph_extraction_runs") != ("run_id",):
+            errors.append("invalid graph_extraction_runs primary key")
+        _require_schema_fragments(
+            conn,
+            "graph_extraction_runs",
+            (
+                "CHECK(source_type IN ('segment', 'chunk'))",
+                "CHECK(status IN ('running', 'completed', 'failed'))",
+            ),
+            errors,
+        )
+    if _table_exists(conn, "graph_triplets"):
+        v1_graph_columns = _GRAPH_REQUIRED_COLUMNS - {"evidence_id"}
+        for column in sorted(v1_graph_columns - _table_columns(conn, "graph_triplets")):
+            errors.append(f"missing graph_triplets.{column}")
+        if not _index_matches(
+            conn,
+            "graph_triplets",
+            "uq_graph_triplets_source",
+            ("source_type", "source_id"),
+            unique=True,
+            predicate="source_type IN ('segment', 'chunk') AND source_id IS NOT NULL",
+        ):
+            errors.append("invalid uq_graph_triplets_source index definition")
+        if "uq_graph_triplets_seg" in _index_names(conn, "graph_triplets"):
+            errors.append("obsolete graph_triplets segment index")
+    if errors:
+        raise ProvenanceError("Provenance schema v1 drift detected: " + "; ".join(errors))
+
+
+def validated_provenance_schema_version(conn: sqlite3.Connection) -> int | None:
+    """Discover and validate the exact provenance schema version without migration."""
+    configure_provenance_connection(conn)
+    if not _table_exists(conn, "schema_migrations"):
+        provenance_tables = {
+            "graph_extraction_runs",
+            "evidence_snapshots",
+            "evidence_municipalities",
+            "extraction_source_outcomes",
+        }
+        present_tables = {
+            str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if provenance_tables & present_tables:
+            raise ProvenanceError(
+                "Provenance tables exist without the required schema_migrations registry"
+            )
+        return None
+    if _table_columns(conn, "schema_migrations") != {"version", "name", "applied_at"}:
+        raise ProvenanceError("Invalid provenance schema_migrations column set")
+    if _primary_key_columns(conn, "schema_migrations") != ("version",):
+        raise ProvenanceError("Invalid provenance schema_migrations primary key")
+    markers = [
+        (int(row[0]), str(row[1]))
+        for row in conn.execute("SELECT version, name FROM schema_migrations ORDER BY version")
+    ]
+    if not markers:
+        raise ProvenanceError("Provenance schema_migrations contains no migration markers")
+    expected_names = {
+        PROVENANCE_SCHEMA_VERSION: _V1_MIGRATION_NAME,
+        PROVENANCE_V2_SCHEMA_VERSION: PROVENANCE_V2_MIGRATION_NAME,
+        PROVENANCE_V3_SCHEMA_VERSION: PROVENANCE_V3_MIGRATION_NAME,
+    }
+    current = markers[-1][0]
+    expected_markers = [
+        (version, expected_names[version])
+        for version in range(PROVENANCE_SCHEMA_VERSION, current + 1)
+        if version in expected_names
+    ]
+    if current not in expected_names or markers != expected_markers:
+        raise ProvenanceError("Invalid or unsupported provenance migration marker chain")
+    if current == PROVENANCE_SCHEMA_VERSION:
+        _validate_provenance_v1_schema(conn)
+    elif current == PROVENANCE_V2_SCHEMA_VERSION:
+        _validate_migration_chain(conn)
+    else:
+        validate_provenance_v3_schema(conn)
+    return current
 
 
 def _municipality_ids_for_document(
@@ -1201,13 +1295,31 @@ def validate_provenance_v3_schema(conn: sqlite3.Connection) -> None:
     trigger_names = {
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
     }
-    for trigger in {
-        "evidence_snapshots_immutable_update",
-        "evidence_snapshots_immutable_delete",
-        "evidence_municipalities_immutable_update",
-        "evidence_municipalities_immutable_delete",
-    } - trigger_names:
-        errors.append(f"missing trigger {trigger}")
+    immutable_trigger_contracts = {
+        "evidence_snapshots_immutable_update": (
+            "BEFORE UPDATE ON evidence_snapshots",
+            "RAISE(ABORT, 'evidence snapshots are immutable')",
+        ),
+        "evidence_snapshots_immutable_delete": (
+            "BEFORE DELETE ON evidence_snapshots",
+            "RAISE(ABORT, 'evidence snapshots are immutable')",
+        ),
+        "evidence_municipalities_immutable_update": (
+            "BEFORE UPDATE ON evidence_municipalities",
+            "RAISE(ABORT, 'evidence municipality associations are immutable')",
+        ),
+        "evidence_municipalities_immutable_delete": (
+            "BEFORE DELETE ON evidence_municipalities",
+            "RAISE(ABORT, 'evidence municipality associations are immutable')",
+        ),
+    }
+    for trigger, fragments in immutable_trigger_contracts.items():
+        if trigger not in trigger_names:
+            errors.append(f"missing trigger {trigger}")
+            continue
+        normalized_sql = _normalize_sql(_trigger_sql(conn, trigger))
+        if any(_normalize_sql(fragment) not in normalized_sql for fragment in fragments):
+            errors.append(f"invalid trigger {trigger}")
     if _table_exists(conn, "graph_triplets"):
         for trigger in {
             "graph_triplets_verified_no_downgrade",

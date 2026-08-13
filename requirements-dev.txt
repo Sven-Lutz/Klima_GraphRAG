@@ -6,6 +6,7 @@ ruff>=0.4.0
 # Keep heavyweight extraction, embedding, and topic-model dependencies in
 # crawler/requirements.txt; clean test environments do not need them.
 beautifulsoup4>=4.12.0
+httpx>=0.27.0
 numpy>=1.26.0
 pydantic>=2.0.0
 requests>=2.32.0

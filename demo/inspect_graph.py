@@ -5,19 +5,21 @@ Usage:
     python demo/inspect_graph.py
     python demo/inspect_graph.py --db demo/demo.sqlite --top 20
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 from collections import Counter
 from pathlib import Path
+
+from crawler.core.database import connect_existing_read_only
 
 DEMO_DB = Path("demo/demo.sqlite")
 
 
 def main(db: Path, top: int) -> None:
-    con = sqlite3.connect(str(db))
+    con = connect_existing_read_only(db)
 
     # ── overview ──────────────────────────────────────────────────────────────
     n_rows = con.execute("SELECT COUNT(*) FROM graph_triplets").fetchone()[0]
@@ -28,11 +30,11 @@ def main(db: Path, top: int) -> None:
 
     total_e = con.execute("SELECT SUM(entity_count) FROM graph_triplets").fetchone()[0] or 0
     total_r = con.execute("SELECT SUM(relationship_count) FROM graph_triplets").fetchone()[0] or 0
-    model   = con.execute("SELECT model_name FROM graph_triplets LIMIT 1").fetchone()[0]
+    model = con.execute("SELECT model_name FROM graph_triplets LIMIT 1").fetchone()[0]
 
-    print(f"\n{'═'*60}")
+    print(f"\n{'═' * 60}")
     print(f" Graph-Statistiken  (Modell: {model})")
-    print(f"{'═'*60}")
+    print(f"{'═' * 60}")
     print(f"  Chunks mit Extraktion : {n_rows}")
     print(f"  Gesamt Entitäten      : {total_e}")
     print(f"  Gesamt Beziehungen    : {total_r}")
@@ -48,9 +50,9 @@ def main(db: Path, top: int) -> None:
 
     # ── entity type breakdown ─────────────────────────────────────────────────
     entity_types: Counter = Counter()
-    entity_cats:  Counter = Counter()
+    entity_cats: Counter = Counter()
     entity_names: Counter = Counter()
-    rel_types:    Counter = Counter()
+    rel_types: Counter = Counter()
 
     for (graph_json,) in con.execute("SELECT graph_json FROM graph_triplets"):
         try:
@@ -85,27 +87,30 @@ def main(db: Path, top: int) -> None:
     print("\n  Beispiel-Beziehungen (erste 10 mit evidence):")
     shown = 0
     for (graph_json,) in con.execute(
-            "SELECT graph_json FROM graph_triplets WHERE relationship_count > 0"):
+        "SELECT graph_json FROM graph_triplets WHERE relationship_count > 0"
+    ):
         kg = json.loads(graph_json)
         for rel in kg.get("relationships", []):
             if shown >= 10:
                 break
-            print(f"    [{rel.get('relation_type','?'):20s}]  "
-                  f"{rel.get('source_entity','?')!r}  →  {rel.get('target_entity','?')!r}")
+            print(
+                f"    [{rel.get('relation_type', '?'):20s}]  "
+                f"{rel.get('source_entity', '?')!r}  →  {rel.get('target_entity', '?')!r}"
+            )
             ev = rel.get("evidence", "")
             if ev:
-                print(f"       ↳ {ev[:120].replace(chr(10),' ')}")
+                print(f"       ↳ {ev[:120].replace(chr(10), ' ')}")
             shown += 1
         if shown >= 10:
             break
 
-    print(f"\n{'═'*60}\n")
+    print(f"\n{'═' * 60}\n")
     con.close()
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db",  default=str(DEMO_DB))
+    ap.add_argument("--db", default=str(DEMO_DB))
     ap.add_argument("--top", type=int, default=20)
     args = ap.parse_args()
     main(Path(args.db), args.top)

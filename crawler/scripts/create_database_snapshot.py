@@ -17,7 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source SQLite database; overrides KLIMA_DB_PATH for this invocation",
     )
     parser.add_argument("--output", required=True, help="New checkpointed SQLite snapshot")
-    parser.add_argument("--manifest", default=None, help="Manifest path (default: beside snapshot)")
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="Colocated .manifest.json path (default: beside snapshot)",
+    )
     return parser
 
 

@@ -11,6 +11,12 @@ import pytest
 from crawler.core import snapshots
 from crawler.core.database import create_sqlite_database
 from crawler.core.preflight import validate_sqlite_database
+from crawler.core.provenance import (
+    PROVENANCE_SCHEMA_VERSION,
+    PROVENANCE_V2_SCHEMA_VERSION,
+    PROVENANCE_V3_SCHEMA_VERSION,
+    ensure_provenance_v3,
+)
 from crawler.core.snapshots import (
     SnapshotManifestError,
     export_database_snapshot,
@@ -85,13 +91,7 @@ def test_manifest_identity_is_deterministic_for_canonical_content(tmp_path):
 def test_manifest_records_only_explicit_migrations_and_stage_completions(tmp_path):
     source = tmp_path / "source.sqlite"
     with create_sqlite_database(source, purpose="fixture") as connection:
-        connection.execute(
-            "CREATE TABLE schema_migrations "
-            "(version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)"
-        )
-        connection.execute(
-            "INSERT INTO schema_migrations VALUES (3, 'provenance-v3', '2026-08-13T10:00:00Z')"
-        )
+        ensure_provenance_v3(connection)
         connection.execute(
             "CREATE TABLE pipeline_stage_completions "
             "(stage TEXT PRIMARY KEY, status TEXT, completed_at TEXT)"
@@ -102,12 +102,12 @@ def test_manifest_records_only_explicit_migrations_and_stage_completions(tmp_pat
         )
     binding = export_database_snapshot(source, tmp_path / "snapshot.sqlite")
 
-    assert binding.manifest["sqlite"]["provenance_migrations"] == [
-        {
-            "version": 3,
-            "name": "provenance-v3",
-            "applied_at": "2026-08-13T10:00:00Z",
-        }
+    assert binding.manifest["sqlite"]["provenance_schema_version"] == 3
+    migrations = binding.manifest["sqlite"]["provenance_migrations"]
+    assert [(row["version"], row["name"]) for row in migrations] == [
+        (PROVENANCE_SCHEMA_VERSION, "explicit_graph_provenance"),
+        (PROVENANCE_V2_SCHEMA_VERSION, "extraction_runs_and_evidence"),
+        (PROVENANCE_V3_SCHEMA_VERSION, "provenance_constraints_and_immutability"),
     ]
     assert binding.manifest["pipeline_stage_completeness"] == {
         "status": "recorded",

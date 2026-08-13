@@ -33,6 +33,7 @@ from typing import Optional
 import spacy
 
 from crawler.core.config import PROMPT_VERSION
+from crawler.core.database import connect_existing_read_write
 from crawler.core.provenance import (
     GraphProvenance,
     ensure_provenance_schema,
@@ -487,7 +488,7 @@ def main(limit: int = 500, min_score: int = 0, db: Optional[Path] = None) -> Non
     print("Lade spaCy-Modell de_core_news_sm …")
     nlp = spacy.load("de_core_news_sm")
 
-    conn = sqlite3.connect(str(db_path), timeout=60.0, isolation_level=None)
+    conn = connect_existing_read_write(db_path)
     cur = conn.cursor()
     cur.executescript(_SETUP_SQL)
     ensure_provenance_schema(conn)
