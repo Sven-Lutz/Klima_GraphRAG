@@ -1192,10 +1192,17 @@ class Neo4jProjectionWriter:
     def _run_transaction(self, statements: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
         def work(transaction: Any) -> None:
             for cypher, parameters in statements:
-                transaction.run(self._timed_query(cypher), parameters).consume()
+                transaction.run(cypher, parameters).consume()
+
+        try:
+            import neo4j
+        except ImportError:
+            timed_work = work
+        else:
+            timed_work = neo4j.unit_of_work(timeout=self.configuration.query_timeout_seconds)(work)
 
         with self.driver.session(database=self.configuration.target.database) as session:
-            session.execute_write(work)
+            session.execute_write(timed_work)
 
     def ensure_schema(self) -> None:
         self._run_transaction([(statement, {}) for statement in SCHEMA_CYPHER])

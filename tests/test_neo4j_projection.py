@@ -28,6 +28,7 @@ from crawler.core.extraction import (
 )
 from crawler.core.neo4j_projection import (
     SCHEMA_CYPHER,
+    Neo4jProjectionWriter,
     Neo4jTarget,
     ProjectionBatch,
     ProjectionConfiguration,
@@ -705,6 +706,46 @@ def test_neo4j_endpoint_is_sanitized_from_operational_errors():
 
     assert "internal.example.test" not in summary
     assert "[endpoint]" in summary
+
+
+def test_managed_transaction_uses_driver_timeout_without_query_objects():
+    calls = []
+
+    class Result:
+        def consume(self):
+            return None
+
+    class Transaction:
+        def run(self, query, parameters):
+            calls.append((query, parameters))
+            return Result()
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute_write(self, work):
+            assert work.timeout == 5
+            work(Transaction())
+
+    class Driver:
+        def verify_connectivity(self):
+            return None
+
+        def session(self, *, database):
+            assert database == "neo4j"
+            return Session()
+
+        def close(self):
+            return None
+
+    writer = Neo4jProjectionWriter(_configuration(), password="fixture", driver=Driver())
+    writer._run_transaction([("RETURN $value", {"value": 1})])
+
+    assert calls == [("RETURN $value", {"value": 1})]
 
 
 def test_legacy_exporter_is_only_a_delegating_alias():
