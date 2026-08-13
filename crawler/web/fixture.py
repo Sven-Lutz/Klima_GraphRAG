@@ -47,6 +47,8 @@ from crawler.core.retrieval import (
 )
 from crawler.core.snapshots import export_database_snapshot
 from crawler.web.service import (
+    FIXTURE_PROVIDER_ACCEPTANCE_EVIDENCE,
+    ProviderAcceptance,
     ProviderAvailability,
     ProviderGate,
     ResearchApplicationService,
@@ -340,11 +342,13 @@ def create_fixture_service(runtime_dir: Path) -> ResearchApplicationService:
         extraction_run_ids=plan.extraction_run_ids,
         provider_gate=ProviderGate(
             availability=ProviderAvailability.ANSWER_GENERATION_READY,
-            acceptance_gate="fixture_only_live_provider_open",
+            acceptance=ProviderAcceptance.FIXTURE_PROVIDER_DETERMINISTIC,
+            acceptance_evidence=FIXTURE_PROVIDER_ACCEPTANCE_EVIDENCE,
             provider="fixture",
             model="fixture-answer-model",
             message=(
-                "Fixture generation is ready. Live Ollama acceptance remains OPEN after timeout."
+                "Deterministic fixture generation. This mode is independent of Ollama "
+                "and says nothing about live provider runtime availability."
             ),
         ),
         demo_mode=True,

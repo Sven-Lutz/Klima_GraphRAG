@@ -23,19 +23,31 @@ function showToast(message) {
   window.setTimeout(() => { toast.hidden = true; }, 4500);
 }
 
+const RUNTIME_LABELS = {
+  not_configured: "Retrieval-only",
+  not_probed: "Provider not yet contacted",
+  available: "Provider responding",
+  timeout: "Provider timed out",
+  unavailable: "Provider unreachable",
+  runtime_failure: "Provider response unusable",
+};
+
+function renderSystemState(gate) {
+  const label = gate.availability === "answer_generation_ready" ? "Generation configured" : "Retrieval-only ready";
+  const runtime = RUNTIME_LABELS[gate.runtime] || human(gate.runtime);
+  replace($("#system-state"), el("span", { class: "state-dot", "data-runtime": gate.runtime, "aria-hidden": "true" }),
+    el("div", {}, el("strong", {}, `${label} · ${runtime}`), el("small", {}, gate.runtime_message || gate.message)));
+}
+
 async function loadStatus() {
   try {
     const response = await fetch("/api/status");
     if (!response.ok) throw new Error("status unavailable");
     state.status = await response.json();
-    const gate = state.status.provider_gate;
-    const label = gate.availability === "answer_generation_ready" ? "Generation configured" : "Retrieval-only ready";
-    const system = $("#system-state");
-    replace(system, el("span", { class: "state-dot", "aria-hidden": "true" }),
-      el("div", {}, el("strong", {}, label), el("small", {}, gate.message)));
+    renderSystemState(state.status.provider_gate);
     if (state.status.demo_mode) {
       const banner = $("#demo-banner");
-      banner.textContent = `${state.status.demo_notice} Live generation provider acceptance remains open.`;
+      banner.textContent = state.status.demo_notice;
       banner.hidden = false;
       $("#question").value = "Welche Solarprojekte planen die Stadtwerke?";
     }
@@ -173,10 +185,13 @@ function renderProvenance(result) {
     ["Prompt version", answer?.generation.prompt_version],
     ["Generation parameters", answer ? JSON.stringify(answer.generation.parameters) : "—"],
     ["Grounding", grounding],
-    ["Provider acceptance gate", result.provider_gate.acceptance_gate],
+    ["Provider acceptance", human(result.provider_gate.acceptance)],
+    ["Acceptance evidence", result.provider_gate.acceptance_evidence],
+    ["Provider runtime state", human(result.provider_gate.runtime)],
   ];
   replace($("#provenance-panel"), metadataList(entries),
-    el("p", { class: "limitations" }, result.provider_gate.message));
+    el("p", { class: "limitations" }, result.provider_gate.message),
+    el("p", { class: "limitations" }, result.provider_gate.runtime_message));
 }
 
 function renderTrace(result) {
@@ -280,6 +295,7 @@ function renderExports(result) {
 
 function renderResult(result) {
   state.result = result;
+  renderSystemState(result.provider_gate);
   $("#empty-state").hidden = true; $("#research-result").hidden = false;
   renderStatus(result); renderAnswer(result); renderEvidence(result); renderProvenance(result);
   renderTrace(result); renderGraph(result); renderExports(result);
@@ -289,6 +305,10 @@ function renderResult(result) {
 async function executeQuery(event) {
   event.preventDefault();
   const button = $(".execute"); button.disabled = true; button.querySelector("span").textContent = "Running…";
+  const generating = $("#generate-answer").checked;
+  replace($("#system-state"), el("span", { class: "state-dot", "data-runtime": "pending", "aria-hidden": "true" }),
+    el("div", {}, el("strong", {}, generating ? "Contacting provider…" : "Retrieving…"),
+      el("small", {}, generating ? "A cold model load can take a while on the first request." : "Reading snapshot-bound evidence.")));
   const payload = {
     question: $("#question").value.trim(), mode: $("#mode").value,
     top_k: Number($("#top-k").value), max_evidence_items: Number($("#max-items").value),
@@ -300,6 +320,7 @@ async function executeQuery(event) {
     if (!response.ok) throw new Error(data.error?.message || "Research request failed safely.");
     renderResult(data);
   } catch (error) {
+    loadStatus();
     $("#empty-state").hidden = true; $("#research-result").hidden = false;
     const box = $("#result-status"); box.dataset.tone = "danger";
     replace(box, el("strong", {}, "Request failed safely"), el("span", {}, error.message));

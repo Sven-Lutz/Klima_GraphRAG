@@ -13,13 +13,22 @@ from crawler.core.answer_generation import (
     GenerationInput,
     ProviderResponse,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 from crawler.core.retrieval import RetrievalMode, RetrievalResult
 from crawler.core.snapshots import validate_snapshot_manifest
 from crawler.web.app import create_app
 from crawler.web.fixture import FIXTURE_QUESTION, create_fixture_service
 from crawler.web.runtime import LazyNeo4jReadBackend, create_production_service
-from crawler.web.service import QueryOptions, ResearchApplicationService
+from crawler.web.service import (
+    LIVE_PROVIDER_ACCEPTANCE_EVIDENCE,
+    ProviderAcceptance,
+    ProviderAvailability,
+    ProviderGate,
+    ProviderRuntime,
+    QueryOptions,
+    ResearchApplicationService,
+)
 
 
 @pytest.fixture(scope="module")
@@ -51,9 +60,14 @@ def test_initial_state_is_explicit_and_provider_gate_is_visible(client):
     assert page.status_code == 200
     assert "No query yet" in page.text
     assert "Retrieval-only exploration remains available" in page.text
+    # The result layout carries `hidden`; an author `display` rule would
+    # otherwise outrank the user-agent rule and render an empty result shell.
+    assert "[hidden] { display: none !important; }" in client.get("/static/app.css").text
     status = client.get("/api/status").json()
-    assert status["provider_gate"]["acceptance_gate"] == "fixture_only_live_provider_open"
-    assert "OPEN" in status["provider_gate"]["message"]
+    gate = status["provider_gate"]
+    assert gate["acceptance"] == "fixture_provider_deterministic"
+    assert "independent of Ollama" in gate["acceptance_evidence"]
+    assert gate["provider"] == "fixture"
 
 
 def test_fixture_mode_is_unambiguously_labeled(client):
@@ -257,6 +271,66 @@ def test_malformed_configuration_and_safe_unexpected_errors(client):
     assert response.json()["error"]["code"] == "backend_failure"
 
 
+def test_provider_runtime_state_is_observed_and_never_assumed(tmp_path):
+    """Acceptance is a fixed project record; runtime is derived per session."""
+    isolated = create_fixture_service(tmp_path / "runtime-observation")
+    assert isolated.provider_runtime is ProviderRuntime.NOT_PROBED
+    assert isolated.status()["provider_gate"]["runtime"] == "not_probed"
+
+    def run() -> dict:
+        return isolated.execute(
+            QueryOptions(FIXTURE_QUESTION, RetrievalMode.SEMANTIC, 8, 8, 24000, True)
+        )
+
+    assert run()["answer_result"]["status"] == "answered"
+    assert isolated.provider_runtime is ProviderRuntime.AVAILABLE
+
+    original = isolated.generator.providers
+    try:
+        for provider, expected in (
+            (ResponseProvider(error=ProviderTimeoutError("timed out")), ProviderRuntime.TIMEOUT),
+            (
+                ResponseProvider(error=ProviderUnavailableError("unreachable")),
+                ProviderRuntime.UNAVAILABLE,
+            ),
+            (ResponseProvider(error=ValueError("boom")), ProviderRuntime.RUNTIME_FAILURE),
+            (ResponseProvider("Recovered evidence is documented [C1]."), ProviderRuntime.AVAILABLE),
+        ):
+            isolated.generator.providers = {"fixture": provider}
+            run()
+            assert isolated.provider_runtime is expected
+    finally:
+        isolated.generator.providers = original
+
+    # Acceptance never moves with runtime health.
+    assert isolated.provider_gate.acceptance is ProviderAcceptance.FIXTURE_PROVIDER_DETERMINISTIC
+
+
+def test_retrieval_only_composition_reports_no_generation_runtime(service):
+    retrieval_only = ResearchApplicationService(
+        retriever=service.retriever,
+        generator=None,
+        manifest_path=service.manifest_path,
+        database_snapshot_id=service.database_snapshot_id,
+        provider_gate=ProviderGate(
+            availability=ProviderAvailability.RETRIEVAL_ONLY_READY,
+            acceptance=ProviderAcceptance.LIVE_PROVIDER_VALIDATED,
+            acceptance_evidence=LIVE_PROVIDER_ACCEPTANCE_EVIDENCE,
+            provider="ollama",
+            model="llama3.1:8b",
+            message="Retrieval is ready; answer generation is not enabled.",
+        ),
+    )
+    gate = retrieval_only.status()["provider_gate"]
+    assert gate["acceptance"] == "live_provider_validated"
+    assert gate["runtime"] == "not_configured"
+    result = retrieval_only.execute(
+        QueryOptions(FIXTURE_QUESTION, RetrievalMode.SEMANTIC, 8, 8, 24000, False)
+    )
+    assert result["result_kind"] == "retrieval"
+    assert result["provider_gate"]["runtime"] == "not_configured"
+
+
 def test_presentation_layer_has_no_retrieval_database_or_provider_logic():
     root = Path(__file__).resolve().parents[1]
     presentation = "\n".join(
@@ -287,9 +361,20 @@ def test_production_composition_requires_exact_database_and_defers_neo4j(
 
     production = create_production_service()
 
-    assert production.status()["provider_gate"]["availability"] == "retrieval_only_ready"
+    gate = production.status()["provider_gate"]
+    assert gate["availability"] == "retrieval_only_ready"
+    assert gate["acceptance"] == "live_provider_validated"
+    assert "Ollama 0.32.5" in gate["acceptance_evidence"]
+    # A closed acceptance gate must never be reported as live runtime availability.
+    assert gate["runtime"] == "not_configured"
     assert isinstance(production.retriever.graph_backend, LazyNeo4jReadBackend)
     assert production.retriever.graph_backend._backend is None
+
+    monkeypatch.setenv("KLIMA_UI_GENERATION_ENABLED", "1")
+    generation_gate = create_production_service().status()["provider_gate"]
+    assert generation_gate["availability"] == "answer_generation_ready"
+    assert generation_gate["acceptance"] == "live_provider_validated"
+    assert generation_gate["runtime"] == "not_probed"
 
     monkeypatch.setenv("KLIMA_UI_DB_PATH", str(tmp_path / "wrong.sqlite"))
     with pytest.raises(RuntimeError, match="exactly match"):

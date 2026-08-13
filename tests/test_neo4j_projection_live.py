@@ -37,6 +37,8 @@ from crawler.core.retrieval import (
 )
 from crawler.web.app import create_app
 from crawler.web.service import (
+    FIXTURE_PROVIDER_ACCEPTANCE_EVIDENCE,
+    ProviderAcceptance,
     ProviderAvailability,
     ProviderGate,
     ResearchApplicationService,
@@ -408,7 +410,8 @@ def test_disposable_neo4j_canonical_answer_reaches_ui_contract(tmp_path):
             extraction_run_ids=plan.extraction_run_ids,
             provider_gate=ProviderGate(
                 ProviderAvailability.ANSWER_GENERATION_READY,
-                "fixture_live_neo4j",
+                ProviderAcceptance.FIXTURE_PROVIDER_DETERMINISTIC,
+                FIXTURE_PROVIDER_ACCEPTANCE_EVIDENCE,
                 "fixture",
                 "fixture-answer-model",
                 "Disposable integration fixture.",

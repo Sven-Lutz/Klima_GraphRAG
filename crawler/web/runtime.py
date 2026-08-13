@@ -21,6 +21,8 @@ from crawler.scripts.generate_embeddings import (
     DEFAULT_PROVIDER,
 )
 from crawler.web.service import (
+    LIVE_PROVIDER_ACCEPTANCE_EVIDENCE,
+    ProviderAcceptance,
     ProviderAvailability,
     ProviderGate,
     ResearchApplicationService,
@@ -127,11 +129,13 @@ def create_production_service() -> ResearchApplicationService:
                 if generation_enabled
                 else ProviderAvailability.RETRIEVAL_ONLY_READY
             ),
-            acceptance_gate="open_live_provider_timeout",
+            acceptance=ProviderAcceptance.LIVE_PROVIDER_VALIDATED,
+            acceptance_evidence=LIVE_PROVIDER_ACCEPTANCE_EVIDENCE,
             provider="ollama",
             model=os.environ.get("KLIMA_OLLAMA_MODEL", OLLAMA_MODEL),
             message=(
-                "Ollama is configured, but live acceptance remains OPEN after timeout."
+                "Ollama answer generation is configured. Provider acceptance is closed; "
+                "runtime availability is reported separately per session."
                 if generation_enabled
                 else "Retrieval is ready; answer generation is not enabled."
             ),

@@ -13,6 +13,7 @@ from crawler.core.answer_context import EvidenceBudget
 from crawler.core.answer_generation import (
     AnswerRequest,
     AnswerResult,
+    AnswerStatus,
     CanonicalAnswerGenerator,
     GenerationParameters,
     render_answer_json,
@@ -30,15 +31,80 @@ from crawler.core.retrieval import (
 
 
 class ProviderAvailability(str, Enum):
+    """Configured capability of this composition — not a live health signal."""
+
     RETRIEVAL_ONLY_READY = "retrieval_only_ready"
     ANSWER_GENERATION_READY = "answer_generation_ready"
     ANSWER_GENERATION_UNAVAILABLE = "answer_generation_unavailable"
 
 
+class ProviderAcceptance(str, Enum):
+    """Repository-level acceptance record for a generation provider.
+
+    Acceptance is a project gate: it states whether the provider adapter was
+    validated against a real service under the canonical contract. It never
+    asserts that the provider is reachable right now; see ``ProviderRuntime``.
+    """
+
+    LIVE_PROVIDER_VALIDATED = "live_provider_validated"
+    FIXTURE_PROVIDER_DETERMINISTIC = "fixture_provider_deterministic"
+
+
+class ProviderRuntime(str, Enum):
+    """Observed runtime state of the configured generation provider.
+
+    Values are derived exclusively from canonical ``AnswerResult`` outcomes, so
+    the application never claims availability it has not actually observed.
+    """
+
+    NOT_CONFIGURED = "not_configured"
+    NOT_PROBED = "not_probed"
+    AVAILABLE = "available"
+    TIMEOUT = "timeout"
+    UNAVAILABLE = "unavailable"
+    RUNTIME_FAILURE = "runtime_failure"
+
+
+LIVE_PROVIDER_ACCEPTANCE_EVIDENCE = (
+    "Ollama 0.32.5 with llama3.1:8b: direct generation and canonical "
+    "OllamaGenerationProvider generation both succeeded, with exact "
+    "requested/served model identity, valid response parsing, token metadata, "
+    "and a reported finish reason."
+)
+FIXTURE_PROVIDER_ACCEPTANCE_EVIDENCE = (
+    "Deterministic in-process fixture provider; independent of Ollama and of "
+    "any live generation service."
+)
+
+_RUNTIME_MESSAGES: dict[ProviderRuntime, str] = {
+    ProviderRuntime.NOT_CONFIGURED: (
+        "Answer generation is not configured; retrieval remains available."
+    ),
+    ProviderRuntime.NOT_PROBED: (
+        "Provider configured; no generation has been attempted yet in this session."
+    ),
+    ProviderRuntime.AVAILABLE: "The provider responded to the most recent generation request.",
+    ProviderRuntime.TIMEOUT: (
+        "The most recent generation request timed out. A cold model load surfaces "
+        "the same way; retrieval remains available."
+    ),
+    ProviderRuntime.UNAVAILABLE: "The provider was unreachable for the most recent request.",
+    ProviderRuntime.RUNTIME_FAILURE: "The provider responded, but the response was not usable.",
+}
+
+_FAILURE_RUNTIME_STATES: dict[str, ProviderRuntime] = {
+    "provider_timeout": ProviderRuntime.TIMEOUT,
+    "provider_unavailable": ProviderRuntime.UNAVAILABLE,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderGate:
+    """Immutable acceptance/configuration facts about the generation provider."""
+
     availability: ProviderAvailability
-    acceptance_gate: str
+    acceptance: ProviderAcceptance
+    acceptance_evidence: str
     provider: str | None
     model: str | None
     message: str
@@ -46,6 +112,7 @@ class ProviderGate:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["availability"] = self.availability.value
+        payload["acceptance"] = self.acceptance.value
         return payload
 
 
@@ -226,6 +293,47 @@ class ResearchApplicationService:
         self.demo_mode = demo_mode
         self.demo_notice = demo_notice
         self.store = store or ImmutableResultStore()
+        self._runtime_lock = threading.Lock()
+        self._runtime = (
+            ProviderRuntime.NOT_PROBED
+            if generator is not None
+            and provider_gate.availability is ProviderAvailability.ANSWER_GENERATION_READY
+            else ProviderRuntime.NOT_CONFIGURED
+        )
+
+    @property
+    def provider_runtime(self) -> ProviderRuntime:
+        with self._runtime_lock:
+            return self._runtime
+
+    def provider_gate_payload(self) -> dict[str, Any]:
+        """Acceptance facts plus the runtime state actually observed so far."""
+        runtime = self.provider_runtime
+        payload = self.provider_gate.to_dict()
+        payload["runtime"] = runtime.value
+        payload["runtime_message"] = _RUNTIME_MESSAGES[runtime]
+        return payload
+
+    def _observe_runtime(self, canonical: RetrievalResult | AnswerResult) -> None:
+        """Derive runtime availability from the canonical result only.
+
+        ``insufficient_evidence`` deliberately leaves the state unchanged: the
+        canonical layer can reach it without ever calling the provider, so it is
+        not evidence either way.
+        """
+        if not isinstance(canonical, AnswerResult):
+            return
+        if canonical.status is AnswerStatus.INSUFFICIENT_EVIDENCE:
+            return
+        with self._runtime_lock:
+            if self._runtime is ProviderRuntime.NOT_CONFIGURED:
+                return
+            if canonical.status is AnswerStatus.GENERATION_FAILED:
+                code = canonical.failure.code if canonical.failure else ""
+                self._runtime = _FAILURE_RUNTIME_STATES.get(code, ProviderRuntime.RUNTIME_FAILURE)
+            else:
+                # answered / grounding_failed both required provider output.
+                self._runtime = ProviderRuntime.AVAILABLE
 
     def status(self) -> dict[str, Any]:
         return {
@@ -236,7 +344,7 @@ class ResearchApplicationService:
                 if self.demo_mode
                 else None
             ),
-            "provider_gate": self.provider_gate.to_dict(),
+            "provider_gate": self.provider_gate_payload(),
             "database_snapshot_id": self.database_snapshot_id,
             "projection_id": self.projection_id,
             "supported_modes": [mode.value for mode in RetrievalMode],
@@ -272,6 +380,7 @@ class ResearchApplicationService:
         else:
             canonical = self.retriever.retrieve(request)
 
+        self._observe_runtime(canonical)
         result_id = self.store.put(canonical)
         registry = _citation_registry(canonical)
         retrieval = canonical.retrieval_result if isinstance(canonical, AnswerResult) else canonical
@@ -286,7 +395,7 @@ class ResearchApplicationService:
             "citation_registry": registry.to_dict(),
             "evidence": _evidence_payload(canonical, registry),
             "graph": _graph_payload(canonical),
-            "provider_gate": self.provider_gate.to_dict(),
+            "provider_gate": self.provider_gate_payload(),
             "demo_mode": self.demo_mode,
         }
 
