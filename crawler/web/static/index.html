@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GraphRAG_AL Research</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22><text y=%22.9em%22 font-size=%2290%22>⌁</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#research-result">Skip to research result</a>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Evidence-centered municipal research</p>
+      <h1>GraphRAG<span>_AL</span></h1>
+    </div>
+    <div class="system-state" id="system-state" aria-live="polite">
+      <span class="state-dot" aria-hidden="true"></span>
+      <div><strong>Checking readiness</strong><small>Canonical services</small></div>
+    </div>
+  </header>
+
+  <div id="demo-banner" class="demo-banner" role="note" hidden></div>
+
+  <main>
+    <section class="query-workbench" aria-labelledby="query-heading">
+      <div class="section-heading">
+        <div><span class="index">01</span><h2 id="query-heading">Research query</h2></div>
+        <p>One question, snapshot-bound evidence, inspectable lineage.</p>
+      </div>
+      <form id="query-form">
+        <label for="question">Question</label>
+        <div class="question-row">
+          <textarea id="question" name="question" rows="2" required maxlength="4000"
+            placeholder="What evidence supports the municipality's solar plans?"></textarea>
+          <button class="execute" type="submit"><span>Execute</span><kbd>⌘ ↵</kbd></button>
+        </div>
+        <fieldset class="controls">
+          <legend>Retrieval configuration</legend>
+          <label>Mode
+            <select id="mode" name="mode">
+              <option value="semantic">Semantic</option>
+              <option value="graph">Graph</option>
+              <option value="hybrid" selected>Hybrid</option>
+            </select>
+          </label>
+          <label>Top-k <input id="top-k" type="number" min="1" max="100" value="8"></label>
+          <label>Evidence items <input id="max-items" type="number" min="1" max="100" value="8"></label>
+          <label>Character budget
+            <input id="max-characters" type="number" min="1" max="500000" value="24000">
+          </label>
+          <label class="toggle"><input id="generate-answer" type="checkbox" checked>
+            <span>Generate answer</span>
+          </label>
+        </fieldset>
+      </form>
+    </section>
+
+    <section id="empty-state" class="empty-state" aria-live="polite">
+      <span class="empty-mark" aria-hidden="true">⌁</span>
+      <h2>No query yet</h2>
+      <p>Ask a research question to retrieve canonical evidence. Retrieval-only exploration remains available when generation is unavailable.</p>
+    </section>
+
+    <section id="research-result" class="result-layout" tabindex="-1" hidden>
+      <article class="answer-column">
+        <div class="section-heading compact">
+          <div><span class="index">02</span><h2>Grounded result</h2></div>
+          <div class="export-actions" id="export-actions"></div>
+        </div>
+        <div id="result-status" class="result-status" role="status"></div>
+        <div id="answer-panel" class="answer-panel"></div>
+        <div class="evidence-heading">
+          <h3>Supporting evidence <span id="evidence-count"></span></h3>
+          <label class="filter-label" for="evidence-filter">Filter evidence
+            <input id="evidence-filter" type="search" placeholder="Municipality, source, text…">
+          </label>
+        </div>
+        <div id="evidence-list" class="evidence-list"></div>
+      </article>
+
+      <aside class="research-sidebar" aria-label="Research context">
+        <div class="tabs" role="tablist" aria-label="Research context views">
+          <button role="tab" aria-selected="true" aria-controls="provenance-panel" id="provenance-tab">Provenance</button>
+          <button role="tab" aria-selected="false" aria-controls="graph-panel" id="graph-tab">Graph</button>
+          <button role="tab" aria-selected="false" aria-controls="trace-panel" id="trace-tab">Trace</button>
+        </div>
+        <section id="provenance-panel" role="tabpanel" aria-labelledby="provenance-tab"></section>
+        <section id="graph-panel" role="tabpanel" aria-labelledby="graph-tab" hidden>
+          <p class="graph-notice"></p><div id="graph-canvas" class="graph-canvas"></div>
+          <div id="graph-selection" class="graph-selection" aria-live="polite">Select an assertion or evidence link.</div>
+        </section>
+        <section id="trace-panel" role="tabpanel" aria-labelledby="trace-tab" hidden></section>
+      </aside>
+    </section>
+  </main>
+
+  <dialog id="evidence-dialog" aria-labelledby="evidence-dialog-title">
+    <div class="dialog-head"><div><p class="eyebrow">Evidence detail</p><h2 id="evidence-dialog-title"></h2></div>
+      <button class="icon-button" id="close-dialog" aria-label="Close evidence detail">×</button></div>
+    <div id="evidence-detail"></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

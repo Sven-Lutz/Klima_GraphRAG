@@ -10,6 +10,7 @@ import os
 from urllib.parse import urlsplit
 
 import pytest
+from fastapi.testclient import TestClient
 
 from crawler.core.answer_generation import (
     AnswerRequest,
@@ -33,6 +34,12 @@ from crawler.core.retrieval import (
     Neo4jReadBackend,
     RetrievalMode,
     RetrievalRequest,
+)
+from crawler.web.app import create_app
+from crawler.web.service import (
+    ProviderAvailability,
+    ProviderGate,
+    ResearchApplicationService,
 )
 from tests.test_neo4j_projection import projection_fixture
 from tests.test_retrieval import FixtureEmbedder, _fixture
@@ -362,3 +369,75 @@ def test_disposable_neo4j_hybrid_grounded_answer_path(tmp_path):
     assert provider.inputs[0].allowed_citation_labels
     assert recorder.records[-1].retrieval_mode == "hybrid"
     assert recorder.records[-1].embedding_artifact_id == _embedding_artifact_id
+
+
+def test_disposable_neo4j_canonical_answer_reaches_ui_contract(tmp_path):
+    configuration, password = _live_configuration()
+    _source, binding, _unused_plan, _embedding_artifact_id = _fixture(tmp_path)
+    plan = build_projection_plan(binding, ("segment-run", "chunk-run"), configuration)
+    ledger = ProjectionLedger(tmp_path / "live-ui-ledger.sqlite")
+    writer = Neo4jProjectionWriter(configuration, password=password)
+    backend = Neo4jReadBackend(writer.driver, database=configuration.target.database)
+
+    class Provider:
+        name = "fixture"
+
+        def generate(self, generation_input):
+            return ProviderResponse(
+                "UI evidence is documented [C1] [C2].",
+                model=generation_input.model,
+            )
+
+    class Recorder:
+        def record(self, _record):
+            pass
+
+    try:
+        execute_projection(plan, configuration, ledger, writer)
+        retriever = CanonicalRetriever(embedder=FixtureEmbedder(), graph_backend=backend)
+        service = ResearchApplicationService(
+            retriever=retriever,
+            generator=CanonicalAnswerGenerator(
+                retriever=retriever,
+                providers={"fixture": Provider()},
+                run_recorder=Recorder(),
+            ),
+            manifest_path=str(binding.manifest_path),
+            database_snapshot_id=plan.snapshot_id,
+            projection_id=plan.projection_id,
+            extraction_run_ids=plan.extraction_run_ids,
+            provider_gate=ProviderGate(
+                ProviderAvailability.ANSWER_GENERATION_READY,
+                "fixture_live_neo4j",
+                "fixture",
+                "fixture-answer-model",
+                "Disposable integration fixture.",
+            ),
+            demo_mode=True,
+        )
+        client = TestClient(create_app(service))
+        assert "No query yet" in client.get("/").text
+        response = client.post(
+            "/api/query",
+            json={
+                "question": "Stadtwerke Solaranlage",
+                "mode": "hybrid",
+                "top_k": 10,
+                "max_evidence_items": 8,
+                "max_evidence_characters": 24000,
+                "generate_answer": True,
+            },
+        )
+        payload = response.json()
+        exported = client.get(f"/api/export/{payload['result_id']}.json")
+    finally:
+        writer.close()
+        ledger.close()
+
+    assert response.status_code == 200
+    assert payload["answer_result"]["status"] == "answered"
+    assert {item["source_type"] for item in payload["evidence"]} == {"segment", "chunk"}
+    assert any(edge["kind"] == "assertion" for edge in payload["graph"]["edges"])
+    assert payload["retrieval_result"]["projection_id"] == plan.projection_id
+    assert exported.status_code == 200
+    assert exported.json()["status"] == "answered"

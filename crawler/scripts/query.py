@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
-
-import numpy as np
 
 from crawler.core.answer_context import EvidenceBudget
 from crawler.core.answer_generation import (
@@ -20,19 +17,16 @@ from crawler.core.answer_generation import (
     render_answer_json,
     render_answer_markdown,
 )
-from crawler.core.citations import (
-    build_citation_registry,
-    render_citations_json,
-    render_citations_markdown,
-)
 from crawler.core.config import LLM_SEED, LLM_TEMPERATURE, OLLAMA_MODEL, OLLAMA_URL
+from crawler.core.query_embedding import SentenceTransformerQueryEmbedder
 from crawler.core.retrieval import (
     CanonicalRetriever,
-    EmbeddingIdentity,
     Neo4jReadBackend,
     RetrievalError,
     RetrievalMode,
     RetrievalRequest,
+    render_retrieval_json,
+    render_retrieval_markdown,
 )
 from crawler.core.snapshots import SnapshotManifestError, validate_snapshot_manifest
 from crawler.scripts.generate_embeddings import (
@@ -41,41 +35,6 @@ from crawler.scripts.generate_embeddings import (
     DEFAULT_PREPROCESSING_ID,
     DEFAULT_PROVIDER,
 )
-
-
-class SentenceTransformerQueryEmbedder:
-    """Lazy local query embedder with an explicit lineage identity."""
-
-    def __init__(
-        self,
-        *,
-        model: str,
-        model_revision: str,
-        vector_dimension: int,
-        preprocessing_id: str,
-    ):
-        self.identity = EmbeddingIdentity(
-            provider=DEFAULT_PROVIDER,
-            model=model,
-            model_revision=model_revision,
-            vector_dimension=vector_dimension,
-            preprocessing_id=preprocessing_id,
-        )
-        self._model = None
-
-    def embed_query(self, text: str) -> np.ndarray:
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-
-            revision = (
-                {}
-                if self.identity.model_revision == DEFAULT_MODEL_REVISION
-                else {"revision": self.identity.model_revision}
-            )
-            self._model = SentenceTransformer(self.identity.model, **revision)
-            self._model.max_seq_length = 256
-        vector = self._model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
-        return np.asarray(vector, dtype=np.float32)
 
 
 def _graph_backend(args: argparse.Namespace) -> Neo4jReadBackend:
@@ -95,22 +54,7 @@ def _graph_backend(args: argparse.Namespace) -> Neo4jReadBackend:
 
 
 def _render_markdown(result) -> str:
-    registry = build_citation_registry(result.items)
-    lines = [f"# Retrieval results ({result.mode})", ""]
-    for item, citation in zip(result.items, registry.citations, strict=True):
-        text = item.evidence_text.replace("\n", " ").strip()
-        lines.extend(
-            [
-                f"## [{citation.label}] rank {item.rank}",
-                "",
-                text,
-                "",
-                f"Method score: `{item.retrieval_score:.8f}`; evidence: `{item.evidence_id}`",
-                "",
-            ]
-        )
-    lines.append(render_citations_markdown(registry).rstrip())
-    return "\n".join(lines) + "\n"
+    return render_retrieval_markdown(result)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -187,8 +131,10 @@ def main(argv: list[str] | None = None) -> None:
     mode = RetrievalMode(args.mode)
     embedder = (
         SentenceTransformerQueryEmbedder(
+            provider=DEFAULT_PROVIDER,
             model=args.model,
             model_revision=args.model_revision,
+            default_model_revision=DEFAULT_MODEL_REVISION,
             vector_dimension=args.embedding_dimension,
             preprocessing_id=args.preprocessing_id,
         )
@@ -251,10 +197,7 @@ def main(argv: list[str] | None = None) -> None:
         print(renderer(answer_result), end="\n" if args.output == "json" else "")
     elif args.output == "json":
         assert result is not None
-        registry = build_citation_registry(result.items)
-        payload = result.to_dict()
-        payload["citation_registry"] = json.loads(render_citations_json(registry))
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+        print(render_retrieval_json(result))
     else:
         assert result is not None
         print(_render_markdown(result), end="")

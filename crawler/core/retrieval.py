@@ -158,6 +158,40 @@ class RetrievalResult:
         return asdict(self)
 
 
+def render_retrieval_json(result: RetrievalResult, *, indent: int | None = 2) -> str:
+    """Render the canonical retrieval contract with its deterministic citations."""
+    from crawler.core.citations import build_citation_registry
+
+    payload = result.to_dict()
+    payload["citation_registry"] = build_citation_registry(result.items).to_dict()
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=indent)
+
+
+def render_retrieval_markdown(result: RetrievalResult) -> str:
+    """Render retrieval output without recreating citation identity downstream."""
+    from crawler.core.citations import (
+        build_citation_registry,
+        render_citations_markdown,
+    )
+
+    registry = build_citation_registry(result.items)
+    lines = [f"# Retrieval results ({result.mode})", ""]
+    for item, citation in zip(result.items, registry.citations, strict=True):
+        text = item.evidence_text.replace("\n", " ").strip()
+        lines.extend(
+            [
+                f"## [{citation.label}] rank {item.rank}",
+                "",
+                text,
+                "",
+                f"Method score: `{item.retrieval_score:.8f}`; evidence: `{item.evidence_id}`",
+                "",
+            ]
+        )
+    lines.append(render_citations_markdown(registry).rstrip())
+    return "\n".join(lines) + "\n"
+
+
 class GraphReadBackend(Protocol):
     def read(
         self,

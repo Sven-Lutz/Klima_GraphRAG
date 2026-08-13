@@ -5,7 +5,8 @@ embedding artifacts, and bounded one-hop reads from the approved Neo4j
 projection. Answer-context construction and deterministic grounding validation
 are implemented, and the canonical answer owner consumes this result contract.
 LLM answer quality, semantic faithfulness, global/community retrieval,
-Text2Cypher, and an interactive UI are **unsupported**. See
+Text2Cypher are **unsupported**. A local interactive research UI is implemented;
+see [WEB_APPLICATION.md](WEB_APPLICATION.md). See
 [`ANSWER_GENERATION.md`](ANSWER_GENERATION.md).
 
 ## Architecture and authority
@@ -212,5 +213,5 @@ alias to this command; its former Python `answer()` interface fails closed.
   read-only authorization are operator responsibilities in addition to client
   controls.
 - No global/community retrieval, Text2Cypher, answer-quality evaluator,
-  interactive UI, semantic-faithfulness guarantee, or production-readiness
+  semantic-faithfulness guarantee, or production-readiness
   claim is included.

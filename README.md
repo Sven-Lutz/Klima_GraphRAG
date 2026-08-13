@@ -19,6 +19,7 @@ Crawl → Segmente → Chunks → Embeddings → auditierter SQLite-Wissensgraph
 | **[docs/NEO4J_PROJECTION.md](docs/NEO4J_PROJECTION.md)** | Snapshot-gebundene Neo4j-Projektion und Graphmodell |
 | **[docs/RETRIEVAL.md](docs/RETRIEVAL.md)** | Kanonisches Retrieval, Embedding-Lineage, Zitate und Grounding-Grenzen |
 | **[docs/ANSWER_GENERATION.md](docs/ANSWER_GENERATION.md)** | Kanonische Antwort-API, Evidenzbudget, Provider- und Sicherheitsvertrag |
+| **[docs/WEB_APPLICATION.md](docs/WEB_APPLICATION.md)** | Interaktive Research-UI, Fixture-Modus, Provider-Gate und Bedienung |
 | **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
 | **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
@@ -36,6 +37,20 @@ python demo/query_demo.py "Wärmepumpe Förderung"
 
 Diese SQLite-Demo ist ein isolierter historischer PoC und erfüllt nicht den
 manifest-/lineage-gebundenen Produktionsvertrag aus `crawler.core.retrieval`.
+
+**Kanonische interaktive Research-UI (kontrollierte Fixture-Daten):**
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m crawler.web --fixture --host 127.0.0.1 --port 8000
+```
+
+Danach `http://127.0.0.1:8000` öffnen. Die Anwendung unterstützt Semantic-,
+Graph- und Hybrid-Retrieval, Evidenz-/Provenienzinspektion, Graph-Kontext und
+kanonische Markdown-/JSON-Exporte. Fixture-Ergebnisse sind sichtbar als
+kontrollierte Testdaten markiert. Der Live-Ollama-Akzeptanz-Gate bleibt nach
+dem beobachteten Timeout **offen**; Retrieval-only bleibt vollständig nutzbar.
+Konfiguration und Grenzen: [docs/WEB_APPLICATION.md](docs/WEB_APPLICATION.md).
 
 **Vollbetrieb:**
 
@@ -213,10 +228,14 @@ isolierter Antwortkontext und strukturelle Grounding-Prüfung sind implementiert
 Die getypte, providerunabhängige Antwortschicht mit explizitem Evidenzbudget,
 Ollama-Adapter, fehlertoleranter Insufficient-Evidence-Semantik und
 struktureller Zitationsvalidierung ist implementiert. Das ist keine Garantie
-für semantische Faithfulness oder faktische Richtigkeit. Global/Community
-Retrieval, Text2Cypher, Answer-Quality-Evaluation und eine interaktive UI sind
-nicht unterstützt. Details: [docs/RETRIEVAL.md](docs/RETRIEVAL.md) und
-[docs/ANSWER_GENERATION.md](docs/ANSWER_GENERATION.md).
+für semantische Faithfulness oder faktische Richtigkeit. Die interaktive,
+evidenzzentrierte Research-UI ist für lokale, snapshot-gebundene
+Semantic-/Graph-/Hybrid-Workflows implementiert. Global/Community Retrieval,
+Text2Cypher, Answer-Quality-Evaluation, semantische Faithfulness-Garantien und
+Production Readiness sind nicht unterstützt. Details:
+[docs/RETRIEVAL.md](docs/RETRIEVAL.md),
+[docs/ANSWER_GENERATION.md](docs/ANSWER_GENERATION.md) und
+[docs/WEB_APPLICATION.md](docs/WEB_APPLICATION.md).
 
 Worker und kanonisches Retrieval führen nicht-mutierende Prüfungen aus. Der
 Worker benötigt eine vorhandene, vollständige `seed_jobs`-Tabelle; Retrieval

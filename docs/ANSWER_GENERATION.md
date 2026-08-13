@@ -4,7 +4,8 @@ Status: **implemented** for canonical semantic, graph, and hybrid retrieval
 results with the local Ollama provider adapter. The implementation provides
 structural citation grounding; it does **not** establish semantic faithfulness,
 factual correctness, production readiness, global/community GraphRAG, an
-autonomous agent, Text2Cypher, or an interactive UI.
+autonomous agent or Text2Cypher. The implemented interactive research UI consumes
+this contract through `crawler.web.service`; see [WEB_APPLICATION.md](WEB_APPLICATION.md).
 
 ## Canonical owner and flow
 
@@ -211,5 +212,5 @@ generation retain all explicit projection and read-only Neo4j requirements in
   separate immutable model-manifest contract.
 - Answer-quality evaluation and calibrated evidence-budget metrics are not yet
   implemented.
-- Global/community retrieval, reranking, interactive UI, and production
+- Global/community retrieval, reranking, and production
   deployment are deferred.

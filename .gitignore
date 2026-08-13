@@ -41,5 +41,6 @@ topic_out/
 snapshots/
 generated/projections/
 generated/answer-runs/
+generated/ui/
 .pytest_cache/
 .ruff_cache/
