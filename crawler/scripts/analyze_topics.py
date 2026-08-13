@@ -1,29 +1,71 @@
 from __future__ import annotations
 
-import sqlite3
+import argparse
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
-import pandas as pd
-import torch
-from bertopic import BERTopic
-from bertopic.representation import KeyBERTInspired
-from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import CountVectorizer
+if TYPE_CHECKING:
+    import pandas as pd
 
-from crawler.core.config import DB_PATH
+from crawler.core.database import connect_existing_read_only, resolve_runtime_database
 
 OUT_DIR = Path("topic_out")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 1. NEU: Erweiterte Liste für deutsche Stoppwörter (Behörden-Rauschen filtern)
 GERMAN_STOP_WORDS = [
-    "der", "die", "das", "und", "in", "den", "von", "zu", "im", "für", "mit",
-    "auf", "des", "sich", "als", "ein", "eine", "ist", "werden", "aus", "dem",
-    "bei", "um", "zur", "oder", "über", "sind", "auch", "am", "an", "nach",
-    "wie", "wir", "dass", "durch", "zum", "es", "nicht", "noch", "was", "wird",
-    "da", "kann", "können", "mehr", "nur", "so", "hat", "haben", "bis", "sehr"
+    "der",
+    "die",
+    "das",
+    "und",
+    "in",
+    "den",
+    "von",
+    "zu",
+    "im",
+    "für",
+    "mit",
+    "auf",
+    "des",
+    "sich",
+    "als",
+    "ein",
+    "eine",
+    "ist",
+    "werden",
+    "aus",
+    "dem",
+    "bei",
+    "um",
+    "zur",
+    "oder",
+    "über",
+    "sind",
+    "auch",
+    "am",
+    "an",
+    "nach",
+    "wie",
+    "wir",
+    "dass",
+    "durch",
+    "zum",
+    "es",
+    "nicht",
+    "noch",
+    "was",
+    "wird",
+    "da",
+    "kann",
+    "können",
+    "mehr",
+    "nur",
+    "so",
+    "hat",
+    "haben",
+    "bis",
+    "sehr",
 ]
+
 
 def load_scored_segments(
     db_path: Path,
@@ -60,7 +102,9 @@ def load_scored_segments(
     ORDER BY impact_score DESC
     LIMIT ?;
     """
-    with sqlite3.connect(str(db_path)) as conn:
+    import pandas as pd
+
+    with connect_existing_read_only(db_path) as conn:
         df = pd.read_sql_query(query, conn, params=(min_len, min_score, per_doc, limit))
 
     # Minimal Cleanup
@@ -75,11 +119,22 @@ def load_scored_segments(
     return df.reset_index(drop=True)
 
 
-def main():
+def main(db_path: str | None = None, out_dir: str | Path = OUT_DIR):
+    import numpy as np
+    import torch
+    from bertopic import BERTopic
+    from bertopic.representation import KeyBERTInspired
+    from sentence_transformers import SentenceTransformer
+    from sklearn.feature_extraction.text import CountVectorizer
+
+    database = resolve_runtime_database(db_path)
+    output_directory = Path(out_dir).expanduser().resolve()
+    output_directory.mkdir(parents=True, exist_ok=True)
+    print(f"database={database.path} database_id={database.database_id}")
     print("Lade Daten aus der SQLite-Datenbank...")
     # ---- Load corpus (scored) ----
     df = load_scored_segments(
-        DB_PATH,
+        database.path,
         limit=120_000,
         min_len=150,
         min_score=15,
@@ -97,9 +152,9 @@ def main():
     if torch.cuda.is_available():
         device = "cuda"  # HPC
     elif torch.backends.mps.is_available():
-        device = "mps"   # Apple Silicon (M1/M2/M3)
+        device = "mps"  # Apple Silicon (M1/M2/M3)
     else:
-        device = "cpu"   # Fallback
+        device = "cpu"  # Fallback
 
     print(f"Embedding Device erkannt: {device}")
 
@@ -120,12 +175,12 @@ def main():
     # ---- Vectorizer / Representation ----
     print("Stoppwörter und N-Gramme anwenden...")
     vectorizer_model = CountVectorizer(
-        stop_words=GERMAN_STOP_WORDS, # 3. NEU: Stoppwörter übergeben
+        stop_words=GERMAN_STOP_WORDS,  # 3. NEU: Stoppwörter übergeben
         ngram_range=(1, 3),
         min_df=5,
         max_df=0.95,
         max_features=120_000,
-        token_pattern=r"(?u)\b[\wäöüÄÖÜß]{3,}\b", # Mindestens 3 Buchstaben pro Wort
+        token_pattern=r"(?u)\b[\wäöüÄÖÜß]{3,}\b",  # Mindestens 3 Buchstaben pro Wort
     )
 
     representation_model = KeyBERTInspired()
@@ -147,18 +202,27 @@ def main():
     # ---- Save outputs ----
     print("Speichere Ergebnisse...")
     info = topic_model.get_topic_info()
-    info.to_csv(OUT_DIR / "topic_info.csv", index=False)
+    info.to_csv(output_directory / "topic_info.csv", index=False)
 
     out = df.copy()
     out["topic"] = topics
-    out.to_parquet(OUT_DIR / "segment_topics.parquet", index=False)
+    out.to_parquet(output_directory / "segment_topics.parquet", index=False)
 
-    topic_model.visualize_topics().write_html(str(OUT_DIR / "topic_map.html"))
+    topic_model.visualize_topics().write_html(str(output_directory / "topic_map.html"))
     topic_model.visualize_barchart(top_n_topics=15).write_html(
-        str(OUT_DIR / "topic_bar_chart.html"))
+        str(output_directory / "topic_bar_chart.html")
+    )
 
-    print(f"🎉 Fertig! Die Visualisierungen und Datensätze liegen im Ordner: {OUT_DIR.resolve()}")
+    print(f"🎉 Fertig! Die Visualisierungen und Datensätze liegen in: {output_directory}")
+
+
+def cli(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="BERTopic analysis of scored segments")
+    parser.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    parser.add_argument("--out-dir", default=str(OUT_DIR))
+    args = parser.parse_args(argv)
+    main(db_path=args.db, out_dir=args.out_dir)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

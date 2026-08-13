@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 from crawler.core.config import resolve_db_path
+from crawler.core.database import connect_existing_read_write, create_sqlite_database
 
 RAW_DIR = Path("crawler/data/raw")
 
@@ -34,24 +35,23 @@ class RawWriteResult:
 
 
 class Storage:
-    def __init__(self, db_path: str | Path | None = None, raw_dir: Path = RAW_DIR) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        raw_dir: Path = RAW_DIR,
+        *,
+        create: bool = False,
+    ) -> None:
         self.db_path = resolve_db_path(db_path)
         self.raw_dir = Path(raw_dir)
 
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
-
-        self.conn = sqlite3.connect(
-            str(self.db_path),
-            timeout=60.0,  # wait longer on locks
-            isolation_level=None,  # AUTOCOMMIT (minimizes lock duration)
-        )
-        self.conn.row_factory = sqlite3.Row
-
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.execute("PRAGMA busy_timeout=60000;")
-        self.conn.execute("PRAGMA foreign_keys=ON;")
+        if create:
+            self.conn = create_sqlite_database(
+                self.db_path, purpose="fixture", wal=True, row_factory=sqlite3.Row
+            )
+        else:
+            self.conn = connect_existing_read_write(self.db_path, row_factory=sqlite3.Row)
         self.conn.execute("PRAGMA temp_store=MEMORY;")
         self.conn.execute("PRAGMA cache_size=-64000;")
 

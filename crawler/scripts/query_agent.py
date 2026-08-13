@@ -43,6 +43,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import re
@@ -68,12 +69,17 @@ from crawler.core.config import (
     TEXT2CYPHER_READONLY_PRINCIPAL_CONFIRMED,
     TEXT2CYPHER_READONLY_USER,
     TEXT2CYPHER_TIMEOUT_SECONDS,
-    resolve_db_path,
 )
 from crawler.core.cypher_safety import (
     CypherValidationError,
     append_platform_limit,
     validate_read_only_cypher,
+)
+from crawler.core.database import (
+    RuntimeDatabase,
+    bind_live_database_state,
+    connect_existing_read_only,
+    resolve_runtime_database,
 )
 from crawler.core.preflight import PreflightError, validate_query_preflight
 
@@ -81,9 +87,14 @@ OPENAI_MODEL = "gpt-4o-mini"
 logger = logging.getLogger(__name__)
 
 
-def _query_db_path(value: str | Path | None = None) -> Path:
+def _query_database(value: str | Path | RuntimeDatabase | None = None) -> RuntimeDatabase:
+    database = value if isinstance(value, RuntimeDatabase) else resolve_runtime_database(value)
+    return bind_live_database_state(database)
+
+
+def _query_db_path(value: str | Path | RuntimeDatabase | None = None) -> Path:
     """Resolve the query database at runtime for one invocation."""
-    return resolve_db_path(value)
+    return _query_database(value).path
 
 
 # ---------------------------------------------------------------------------
@@ -172,18 +183,19 @@ _CHUNK_CORPUS: dict = {"sig": None}
 _REPORT_EMB_CACHE: dict = {}
 
 
-def _report_embedding(community_id: int, text: str) -> np.ndarray:
-    key = (community_id, hash(text))
+def _report_embedding(cache_namespace: str, community_id: int, text: str) -> np.ndarray:
+    text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    key = (cache_namespace, community_id, text_digest)
     if key not in _REPORT_EMB_CACHE:
         _REPORT_EMB_CACHE[key] = _embed_query(text)
     return _REPORT_EMB_CACHE[key]
 
 
-def _load_chunk_corpus(conn: sqlite3.Connection) -> dict:
+def _load_chunk_corpus(conn: sqlite3.Connection, cache_namespace: str) -> dict:
     sig = conn.execute(
         "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM chunks WHERE embedding IS NOT NULL"
     ).fetchone()
-    sig = (int(sig[0]), int(sig[1]))
+    sig = (cache_namespace, int(sig[0]), int(sig[1]))
     if _CHUNK_CORPUS["sig"] == sig:
         return _CHUNK_CORPUS
 
@@ -210,7 +222,7 @@ def local_search(
     top_k: int = 8,
     hop: int = 1,
     return_context: bool = False,
-    db_path: str | Path | None = None,
+    db_path: str | Path | RuntimeDatabase | None = None,
 ) -> str | tuple[str, list[str]]:
     """
     1. Embed query → cosine similarity over chunks table
@@ -221,11 +233,12 @@ def local_search(
     Mit return_context=True wird (answer, context_parts) zurückgegeben —
     die Evaluation braucht den echten Retrieval-Kontext für Faithfulness.
     """
-    conn = sqlite3.connect(str(_query_db_path(db_path)), timeout=30.0, isolation_level=None)
+    database = _query_database(db_path)
+    conn = connect_existing_read_only(database.path)
 
     # Vector search über das GESAMTE Korpus (Matrix gecacht, Matmul ist schnell)
     q_vec = _embed_query(query)
-    corpus = _load_chunk_corpus(conn)
+    corpus = _load_chunk_corpus(conn, database.cache_namespace)
 
     if corpus.get("matrix") is None:
         conn.close()
@@ -306,7 +319,7 @@ def global_search(
     backend: str,
     max_communities: int = 50,
     return_context: bool = False,
-    db_path: str | Path | None = None,
+    db_path: str | Path | RuntimeDatabase | None = None,
 ) -> str | tuple[str, list[str]]:
     """
     LazyGraphRAG Map-Reduce:
@@ -314,8 +327,9 @@ def global_search(
     2. Map: ask LLM to answer from each relevant report
     3. Reduce: synthesise all partial answers into one
     """
-    resolved_db_path = _query_db_path(db_path)
-    conn = sqlite3.connect(str(resolved_db_path), timeout=30.0, isolation_level=None)
+    database = _query_database(db_path)
+    resolved_db_path = database.path
+    conn = connect_existing_read_only(resolved_db_path)
 
     try:
         reports = conn.execute(
@@ -346,7 +360,7 @@ def global_search(
     scored = []
     for cid, title, summary, importance, key_entities_json in reports:
         report_text = f"{title}. {summary or ''} {key_entities_json or ''}"[:1000]
-        r_vec = _report_embedding(cid, report_text)
+        r_vec = _report_embedding(database.cache_namespace, cid, report_text)
         sim = float(r_vec @ q_vec)
         scored.append((cid, title, summary, importance, sim))
 
@@ -358,7 +372,7 @@ def global_search(
     query_words = set(re.findall(r"\w{4,}", query.lower()))
 
     # Augment with document summaries that overlap with query keywords
-    conn2 = sqlite3.connect(str(resolved_db_path), timeout=30.0, isolation_level=None)
+    conn2 = connect_existing_read_only(resolved_db_path)
     doc_summaries: list[str] = []
     try:
         rows = conn2.execute(
@@ -498,7 +512,9 @@ def _execute_read_only_cypher(cypher: str) -> list[dict]:
         driver.close()
 
 
-def validate_text2cypher_preflight(db_path: str | Path | None = None) -> Path:
+def validate_text2cypher_preflight(
+    db_path: str | Path | RuntimeDatabase | None = None,
+) -> Path:
     """Verify the required retrieval output and read-only graph service.
 
     This fixed query is not LLM-generated. It establishes that the selected
@@ -540,7 +556,7 @@ def text2cypher(
     query: str,
     backend: str,
     return_context: bool = False,
-    db_path: str | Path | None = None,
+    db_path: str | Path | RuntimeDatabase | None = None,
 ) -> str | tuple[str, list[str]]:
     """Translate and execute only a validated, bounded read-only query."""
     readiness_error = _text2cypher_readiness_error()
@@ -660,7 +676,7 @@ def answer(
     backend: str = "ollama",
     verbose: bool = False,
     return_context: bool = False,
-    db_path: str | Path | None = None,
+    db_path: str | Path | RuntimeDatabase | None = None,
 ) -> str | tuple[str, list[str]]:
     """Beantwortet eine Frage über den Router.
 
@@ -668,8 +684,14 @@ def answer(
     Liste aller Retrieval-Kontexte über sämtliche Critic-Loops hinweg.
     Die Evaluation braucht diese für Faithfulness/Context-Recall.
     """
-    selected_db_path = validate_query_preflight(_query_db_path(db_path))
-    logger.info("query_database=%s", selected_db_path)
+    database = _query_database(db_path)
+    selected_db_path = validate_query_preflight(database.path)
+    logger.info(
+        "query_database=%s query_database_id=%s query_snapshot_id=%s",
+        selected_db_path,
+        database.database_id,
+        database.snapshot_id,
+    )
     current_query = query
     all_answers = []
     all_contexts: list[str] = []
@@ -683,16 +705,14 @@ def answer(
         # Execute
         if tool == "local_search":
             result, ctx = local_search(
-                current_query, backend, return_context=True, db_path=selected_db_path
+                current_query, backend, return_context=True, db_path=database
             )
         elif tool == "global_search":
             result, ctx = global_search(
-                current_query, backend, return_context=True, db_path=selected_db_path
+                current_query, backend, return_context=True, db_path=database
             )
         else:
-            result, ctx = text2cypher(
-                current_query, backend, return_context=True, db_path=selected_db_path
-            )
+            result, ctx = text2cypher(current_query, backend, return_context=True, db_path=database)
 
         all_answers.append(result)
         all_contexts.extend(ctx)
@@ -733,7 +753,7 @@ def answer(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="GraphRAG Multi-Agent Query System (Stage 4)")
     ap.add_argument("query", nargs="?", default=None, help="Suchanfrage")
     ap.add_argument("--llm", choices=["ollama", "openai"], default="ollama")
@@ -744,7 +764,7 @@ def main() -> None:
     )
     ap.add_argument("--interactive", "-i", action="store_true")
     ap.add_argument("--verbose", "-v", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.interactive:
         print("GraphRAG Query Agent (Strg+C zum Beenden)\n")

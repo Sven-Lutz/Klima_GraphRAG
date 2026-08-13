@@ -7,7 +7,6 @@ import sys
 
 import pytest
 
-from crawler.core import preflight
 from crawler.core.preflight import (
     PreflightError,
     validate_query_preflight,
@@ -43,17 +42,13 @@ def test_worker_preflight_validates_required_schema(tmp_path):
     assert validate_worker_preflight(db_path) == db_path
 
 
-def test_worker_preflight_does_not_open_a_sqlite_connection(monkeypatch, tmp_path):
+def test_worker_preflight_does_not_change_database_contents(tmp_path):
     db_path = tmp_path / "worker.sqlite"
     _create_worker_database(db_path)
-
-    monkeypatch.setattr(
-        preflight.sqlite3,
-        "connect",
-        lambda *args, **kwargs: pytest.fail("worker preflight must inspect files directly"),
-    )
+    before = db_path.read_bytes()
 
     assert validate_worker_preflight(db_path) == db_path
+    assert db_path.read_bytes() == before
 
 
 def test_worker_preflight_rejects_incomplete_schema(tmp_path):
@@ -82,15 +77,9 @@ def test_query_preflight_requires_embedded_predecessor_output(tmp_path):
         validate_query_preflight(db_path)
 
 
-def test_query_preflight_missing_table_does_not_open_a_sqlite_connection(monkeypatch, tmp_path):
+def test_query_preflight_rejects_missing_table(tmp_path):
     db_path = tmp_path / "stage_zero.sqlite"
     _create_worker_database(db_path)
-
-    monkeypatch.setattr(
-        preflight.sqlite3,
-        "connect",
-        lambda *args, **kwargs: pytest.fail("missing-table preflight must not open SQLite"),
-    )
 
     with pytest.raises(PreflightError, match="missing required table 'chunks'"):
         validate_query_preflight(db_path)
@@ -115,7 +104,7 @@ def test_answer_preflights_and_propagates_selected_database(monkeypatch, tmp_pat
     )
 
     assert query_agent.answer("Frage", db_path=db_path) == "ok"
-    assert captured["db_path"] == db_path
+    assert captured["db_path"].path == db_path.resolve()
 
 
 def test_text2cypher_preflight_checks_graph_service_and_export(monkeypatch, tmp_path):

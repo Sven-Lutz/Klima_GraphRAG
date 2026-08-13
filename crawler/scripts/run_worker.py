@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sqlite3
 import sys
 import threading
 import time
 from datetime import timedelta
 from pathlib import Path
 
-from crawler.core.config import resolve_db_path
+from crawler.core.database import (
+    RuntimeDatabase,
+    connect_existing_read_write,
+    resolve_runtime_database,
+)
 from crawler.core.engine import Engine, EngineLimits
 from crawler.core.preflight import PreflightError, validate_worker_preflight
 from crawler.core.seed_jobs import (
@@ -101,7 +104,13 @@ SEED_ADDITIONAL_PATHS = [
 
 def resolve_worker_db_path(value: str | Path | None) -> Path:
     """Resolve and validate the one database used by a worker invocation."""
-    db_path = resolve_db_path(value)
+    return resolve_worker_database(value).path
+
+
+def resolve_worker_database(value: str | Path | None) -> RuntimeDatabase:
+    """Resolve and validate the immutable worker database binding."""
+    database = resolve_runtime_database(value)
+    db_path = database.path
     if not db_path.is_file():
         source = "--db" if value is not None else "KLIMA_DB_PATH/default"
         raise FileNotFoundError(
@@ -109,21 +118,17 @@ def resolve_worker_db_path(value: str | Path | None) -> Path:
             "Initialize seed jobs first with python -m crawler.scripts.init_seed_jobs "
             "--db <path>."
         )
-    return db_path
+    return database
 
 
 def _heartbeat_loop(
     db_path: Path, municipality_id: str, worker_id: str, stop: threading.Event
 ) -> None:
-    con = sqlite3.connect(str(db_path), timeout=60.0, isolation_level=None)
+    con = connect_existing_read_write(db_path)
     try:
-        con.execute("PRAGMA busy_timeout=60000;")
-        con.execute("PRAGMA journal_mode=WAL;")
         while not stop.wait(HEARTBEAT_EVERY_SECONDS):
             try:
                 heartbeat_job(con, municipality_id, worker_id)
-            except sqlite3.OperationalError:
-                pass
             except Exception:
                 pass
     finally:
@@ -145,9 +150,7 @@ def _worker_loop(
     eigener Scheduler). Parallelität entsteht ÜBER Kommunen hinweg — jede
     Kommune ist ein anderer Host, die Per-Host-Politeness bleibt gewahrt.
     """
-    con = sqlite3.connect(str(db_path), timeout=60.0, isolation_level=None)
-    con.execute("PRAGMA busy_timeout=60000;")
-    con.execute("PRAGMA journal_mode=WAL;")
+    con = connect_existing_read_write(db_path)
 
     engine = Engine(
         keywords=KLIMA_KEYWORDS,
@@ -210,7 +213,7 @@ def _worker_loop(
     return processed
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--db",
@@ -225,9 +228,10 @@ def main() -> None:
         default=1,
         help="Parallele Kommunen (je 1 Thread; Politeness pro Host bleibt erhalten)",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    db_path = resolve_worker_db_path(args.db)
+    database = resolve_worker_database(args.db)
+    db_path = database.path
     try:
         validate_worker_preflight(db_path)
     except PreflightError as exc:
@@ -241,6 +245,7 @@ def main() -> None:
     limit_counter = {"limit": args.limit, "claimed": 0}
 
     logger.info("worker_database=%s", db_path)
+    logger.info("worker_database_id=%s", database.database_id)
     logger.info(f"🚀 Starte Industrial-Worker (High-Recall Mode, workers={args.workers})")
     if args.limit:
         logger.info(f"🎯 Ziel-Limit: {args.limit} Kommunen")

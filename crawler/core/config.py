@@ -12,7 +12,7 @@ Environment variable precedence:
     KLIMA_NEO4J_PASSWORD   overrides NEO4J_PASSWORD
     KLIMA_OLLAMA_URL       overrides OLLAMA_URL
     KLIMA_OLLAMA_MODEL     overrides OLLAMA_MODEL
-    KLIMA_DB_PATH          overrides DB_PATH
+    KLIMA_DB_PATH          overrides the repository database default
 """
 
 from __future__ import annotations
@@ -23,10 +23,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-DEFAULT_DB_PATH = Path("crawler/data/db/crawl.sqlite")
-# Backwards-compatible import-time value for legacy callers. New entry points
-# must call resolve_db_path() at runtime so CLI configuration stays authoritative.
-DB_PATH: Path = Path(os.environ.get("KLIMA_DB_PATH", DEFAULT_DB_PATH))
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DB_PATH = REPOSITORY_ROOT / "crawler/data/db/crawl.sqlite"
 
 
 def resolve_db_path(value: str | Path | None = None) -> Path:
@@ -37,9 +35,8 @@ def resolve_db_path(value: str | Path | None = None) -> Path:
     invoking command because setup commands are allowed to create a database
     while workers must require one that already exists.
     """
-    if value is not None:
-        return Path(value).expanduser()
-    return Path(os.environ.get("KLIMA_DB_PATH", DEFAULT_DB_PATH)).expanduser()
+    selected = value if value is not None else os.environ.get("KLIMA_DB_PATH", DEFAULT_DB_PATH)
+    return Path(selected).expanduser().resolve()
 
 
 # ---------------------------------------------------------------------------

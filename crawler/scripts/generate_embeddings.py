@@ -22,6 +22,7 @@ Usage:
     python -m crawler.scripts.generate_embeddings --model intfloat/multilingual-e5-large --batch 64
     python -m crawler.scripts.generate_embeddings --neo4j   # also push to Neo4j
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,21 +33,22 @@ from datetime import datetime, timezone
 import numpy as np
 
 from crawler.core.config import (
-    DB_PATH,
     EMBED_BATCH_SIZE,
     EMBED_MODEL,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
 )
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 
 DEFAULT_MODEL = EMBED_MODEL
-DEFAULT_BATCH  = EMBED_BATCH_SIZE
+DEFAULT_BATCH = EMBED_BATCH_SIZE
 
 
 # ---------------------------------------------------------------------------
 # Serialisation helpers
 # ---------------------------------------------------------------------------
+
 
 def vec_to_blob(vec: np.ndarray) -> bytes:
     """Pack float32 numpy array to raw bytes for SQLite BLOB storage."""
@@ -62,6 +64,7 @@ def blob_to_vec(blob: bytes) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Embedding model
 # ---------------------------------------------------------------------------
+
 
 def load_model(model_name: str):
     """Load SentenceTransformer model with automatic device selection."""
@@ -85,9 +88,8 @@ def load_model(model_name: str):
 # SQLite
 # ---------------------------------------------------------------------------
 
-def get_unembed_chunks(
-    conn: sqlite3.Connection, limit: int = 10_000
-) -> list[tuple[str, str]]:
+
+def get_unembed_chunks(conn: sqlite3.Connection, limit: int = 10_000) -> list[tuple[str, str]]:
     """Return (chunk_id, text) for chunks without an embedding yet."""
     rows = conn.execute(
         """
@@ -107,10 +109,7 @@ def store_embeddings_sqlite(
     embeddings: np.ndarray,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    rows = [
-        (vec_to_blob(embeddings[i]), now, chunk_ids[i])
-        for i in range(len(chunk_ids))
-    ]
+    rows = [(vec_to_blob(embeddings[i]), now, chunk_ids[i]) for i in range(len(chunk_ids))]
     conn.executemany(
         "UPDATE chunks SET embedding=?, embedded_at=? WHERE chunk_id=?",
         rows,
@@ -120,6 +119,7 @@ def store_embeddings_sqlite(
 # ---------------------------------------------------------------------------
 # Neo4j
 # ---------------------------------------------------------------------------
+
 
 def push_to_neo4j(
     conn: sqlite3.Connection,
@@ -170,20 +170,23 @@ def push_to_neo4j(
             batch = rows[i : i + batch_size]
             params_list = []
             for row in batch:
-                chunk_id, doc_id, muni_id, text, heading_ctx, score, \
-                    chunk_idx, tok_count, blob = row
+                chunk_id, doc_id, muni_id, text, heading_ctx, score, chunk_idx, tok_count, blob = (
+                    row
+                )
                 vec = blob_to_vec(blob).tolist()
-                params_list.append({
-                    "chunk_id":       str(chunk_id),
-                    "doc_id":         str(doc_id),
-                    "muni_id":        str(muni_id),
-                    "text":           str(text)[:4000],
-                    "heading_context": str(heading_ctx) if heading_ctx else None,
-                    "impact_score":   int(score) if score else 0,
-                    "chunk_index":    int(chunk_idx),
-                    "token_count":    int(tok_count),
-                    "embedding":      vec,
-                })
+                params_list.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                        "muni_id": str(muni_id),
+                        "text": str(text)[:4000],
+                        "heading_context": str(heading_ctx) if heading_ctx else None,
+                        "impact_score": int(score) if score else 0,
+                        "chunk_index": int(chunk_idx),
+                        "token_count": int(tok_count),
+                        "embedding": vec,
+                    }
+                )
 
             session.run(
                 """
@@ -212,14 +215,18 @@ def push_to_neo4j(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(
     model_name: str = DEFAULT_MODEL,
     batch_size: int = DEFAULT_BATCH,
     limit: int = 50_000,
     push_neo4j: bool = False,
+    db_path: str | None = None,
 ) -> None:
+    database = resolve_runtime_database(db_path)
     model = load_model(model_name)
-    conn  = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+    conn = connect_existing_read_write(database.path)
+    print(f"database={database.path} database_id={database.database_id}")
 
     total_embedded = 0
 
@@ -229,7 +236,7 @@ def main(
             break
 
         chunk_ids = [r[0] for r in rows]
-        texts     = [r[1] for r in rows]
+        texts = [r[1] for r in rows]
 
         print(f"⚙️  Embedding {len(texts)} Chunks…")
         embeddings = model.encode(
@@ -259,12 +266,22 @@ def main(
     conn.close()
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="SentenceTransformer Embedding (Stage 2a)")
-    ap.add_argument("--model",    default=DEFAULT_MODEL, help="SentenceTransformers Modell-Name")
-    ap.add_argument("--batch",    type=int, default=DEFAULT_BATCH)
-    ap.add_argument("--limit",    type=int, default=50_000, help="Max. Chunks pro Lauf")
-    ap.add_argument("--neo4j",    action="store_true",
-                    help="Chunks + Vektoren nach Neo4j exportieren")
-    args = ap.parse_args()
-    main(model_name=args.model, batch_size=args.batch, limit=args.limit, push_neo4j=args.neo4j)
+    ap.add_argument("--model", default=DEFAULT_MODEL, help="SentenceTransformers Modell-Name")
+    ap.add_argument("--batch", type=int, default=DEFAULT_BATCH)
+    ap.add_argument("--limit", type=int, default=50_000, help="Max. Chunks pro Lauf")
+    ap.add_argument("--neo4j", action="store_true", help="Chunks + Vektoren nach Neo4j exportieren")
+    ap.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = ap.parse_args(argv)
+    main(
+        model_name=args.model,
+        batch_size=args.batch,
+        limit=args.limit,
+        push_neo4j=args.neo4j,
+        db_path=args.db,
+    )
+
+
+if __name__ == "__main__":
+    cli()

@@ -11,16 +11,19 @@ try:
 except ImportError:  # Modul bleibt für Tests/Tools ohne Neo4j importierbar
     GraphDatabase = None
 
-from crawler.core.config import DB_PATH, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from crawler.core.config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from crawler.core.database import connect_existing_read_only, resolve_runtime_database
 
 # ---------- normalization / keys ----------
 _WS = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\wäöüÄÖÜß\- ]+", re.UNICODE)
 
+
 def norm_name(s: str) -> str:
     s = (s or "").strip()
     s = _WS.sub(" ", s)
     return s
+
 
 def entity_key(name: str, etype: str, category: str) -> str:
     # stable merge key: normalized name + coarse type/category
@@ -55,6 +58,7 @@ ALLOWED_REL_TYPES = {
     "BEZIEHT_SICH_AUF",
 }
 
+
 def safe_rel_type(t: str) -> str:
     t = (t or "").strip().upper()
     # Neo4j relationship types cannot contain spaces; keep your German tokens
@@ -69,6 +73,7 @@ class TripletRow:
     document_id: str
     segment_rowid: int
     graph_json: str
+
 
 def iter_graph_triplets(
     conn: sqlite3.Connection, limit: Optional[int] = None
@@ -90,6 +95,7 @@ def iter_graph_triplets(
             segment_rowid=int(r[2]),
             graph_json=str(r[3]),
         )
+
 
 def get_segment_meta(
     conn: sqlite3.Connection, segment_rowid: int
@@ -148,6 +154,7 @@ SET m.weight = coalesce(m.weight, 0) + 1
 """
 
 # NOTE: requires APOC for apoc.map.merge. If you don't have APOC, remove metrics merge logic.
+
 
 def rel_edge_batch_query(rel_type: str) -> str:
     # dynamic relationship type — ein UNWIND-Batch pro Typ
@@ -210,15 +217,10 @@ def build_entity_key_index(
     return index
 
 
-def main(limit: Optional[int] = None):
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"DB not found: {DB_PATH}")
-
-    # SQLite
-    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA busy_timeout=60000;")
+def main(limit: Optional[int] = None, db_path: str | None = None):
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_only(database.path)
+    print(f"database={database.path} database_id={database.database_id}")
 
     # Load entity resolution map (if available)
     canonical_map = _load_canonical_map(conn)
@@ -267,14 +269,16 @@ def main(limit: Optional[int] = None):
 
             impact_score, seg_text, heading_ctx = get_segment_meta(conn, row.segment_rowid)
 
-            base_batch.append({
-                "muni_id": row.municipality_id,
-                "doc_id": row.document_id,
-                "seg_rowid": int(row.segment_rowid),
-                "impact_score": int(impact_score) if impact_score is not None else 0,
-                "seg_text": seg_text[:2000] if seg_text else None,  # cap to keep graph lean
-                "heading_context": heading_ctx,
-            })
+            base_batch.append(
+                {
+                    "muni_id": row.municipality_id,
+                    "doc_id": row.document_id,
+                    "seg_rowid": int(row.segment_rowid),
+                    "impact_score": int(impact_score) if impact_score is not None else 0,
+                    "seg_text": seg_text[:2000] if seg_text else None,  # cap to keep graph lean
+                    "heading_context": heading_ctx,
+                }
+            )
 
             try:
                 kg = json.loads(row.graph_json)
@@ -293,15 +297,17 @@ def main(limit: Optional[int] = None):
                 etype = e.get("type", "Dokument")
                 cat = e.get("category", "Sonstiges")
 
-                entity_batch.append({
-                    "key": key_by_name.get(name.lower()) or entity_key(name, etype, cat),
-                    "name": name,
-                    "type": etype,
-                    "category": cat,
-                    "status": e.get("status", "Unbekannt"),
-                    "metrics": e.get("metrics", {}) or {},
-                    "seg_rowid": int(row.segment_rowid),
-                })
+                entity_batch.append(
+                    {
+                        "key": key_by_name.get(name.lower()) or entity_key(name, etype, cat),
+                        "name": name,
+                        "type": etype,
+                        "category": cat,
+                        "status": e.get("status", "Unbekannt"),
+                        "metrics": e.get("metrics", {}) or {},
+                        "seg_rowid": int(row.segment_rowid),
+                    }
+                )
                 n_entities += 1
 
             # relationships — nur zwischen tatsächlich extrahierten Entitäten.
@@ -319,12 +325,14 @@ def main(limit: Optional[int] = None):
                     n_dangling += 1
                     continue
 
-                rel_batches.setdefault(rt, []).append({
-                    "src_key": src_key,
-                    "dst_key": dst_key,
-                    "seg_rowid": int(row.segment_rowid),
-                    "evidence": evidence,
-                })
+                rel_batches.setdefault(rt, []).append(
+                    {
+                        "src_key": src_key,
+                        "dst_key": dst_key,
+                        "seg_rowid": int(row.segment_rowid),
+                        "evidence": evidence,
+                    }
+                )
                 n_rels += 1
 
             if n_rows % batch_size == 0:
@@ -335,8 +343,9 @@ def main(limit: Optional[int] = None):
 
         print(f"✅ Done. triplets={n_rows}, entities_upserts~={n_entities}, rel_upserts~={n_rels}")
         if n_dangling:
-            print(f"   ⚠  {n_dangling} Relationships verworfen "
-                  f"(Endpunkt keine extrahierte Entität)")
+            print(
+                f"   ⚠  {n_dangling} Relationships verworfen (Endpunkt keine extrahierte Entität)"
+            )
 
         # Export document link graph (LINKS_TO edges)
         n_links = 0
@@ -369,6 +378,15 @@ def main(limit: Optional[int] = None):
     conn.close()
 
 
+def cli(argv: list[str] | None = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Export GraphRAG SQLite graph to Neo4j")
+    parser.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    parser.add_argument("--limit", type=int, default=500)
+    args = parser.parse_args(argv)
+    main(limit=args.limit, db_path=args.db)
+
+
 if __name__ == "__main__":
-    # set a small limit first, then remove
-    main(limit=500)
+    cli()

@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
-from crawler.core.config import DB_PATH as DEFAULT_CRAWL_DB_PATH
+from crawler.core.config import resolve_db_path
+from crawler.core.database import connect_existing_read_only, create_sqlite_database
 
 DEFAULT_MUNI_SQLITE_PATH = Path("crawler/data/db/municipalities.sqlite")
 DEFAULT_CSV_PATH = Path("crawler/data/seeds/municipalities.csv")
@@ -18,6 +19,7 @@ def _is_valid_url(url: str) -> bool:
         return p.scheme in ("http", "https") and bool(p.netloc)
     except Exception:
         return False
+
 
 def _norm_domain(domain: str) -> str:
     d = (domain or "").strip().lower()
@@ -32,12 +34,14 @@ def _norm_domain(domain: str) -> str:
             return ""
     return d
 
+
 def _derive_domain_from_url(url: str) -> str:
     try:
         host = urlparse(url).netloc.lower()
         return _norm_domain(host)
     except Exception:
         return ""
+
 
 def _parse_allowed_domains(raw: Optional[str], homepage_url: str) -> Set[str]:
     domains: Set[str] = set()
@@ -55,6 +59,7 @@ def _parse_allowed_domains(raw: Optional[str], homepage_url: str) -> Set[str]:
 
     return domains
 
+
 def load_seeds_from_sqlite(
     db_path: Path = DEFAULT_MUNI_SQLITE_PATH,
     limit: Optional[int] = None,
@@ -63,7 +68,7 @@ def load_seeds_from_sqlite(
     if not db_path.exists():
         raise FileNotFoundError(f"municipalities.sqlite not found: {db_path}")
 
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con = connect_existing_read_only(db_path)
 
     query = """
         SELECT ags, homepage_url, allowed_domains
@@ -84,7 +89,7 @@ def load_seeds_from_sqlite(
         seeds_all: List[Tuple[str, str]] = []
         allowed: Dict[str, Set[str]] = {}
 
-        for ags, homepage_url, allowed_domains in cur: # Lazy Iteration statt fetchall()
+        for ags, homepage_url, allowed_domains in cur:  # Lazy Iteration statt fetchall()
             muni_id = str(ags).strip()
             homepage = str(homepage_url).strip()
 
@@ -145,6 +150,7 @@ def load_seeds_from_csv(
     allowed_sliced = {m: allowed[m] for (m, _) in sliced}
     return sliced, allowed_sliced
 
+
 def ensure_seed_jobs_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """
@@ -170,9 +176,10 @@ def ensure_seed_jobs_schema(con: sqlite3.Connection) -> None:
         """
     )
 
+
 def upsert_seed_jobs(
     seeds: Iterable[Tuple[str, str]],
-    crawl_db_path: Path = DEFAULT_CRAWL_DB_PATH,
+    crawl_db_path: Path | None = None,
 ) -> int:
     """
     Inserts/updates seed_jobs in crawl.sqlite.
@@ -183,18 +190,12 @@ def upsert_seed_jobs(
     if not rows:
         return 0
 
-    print("upsert_seed_jobs -> crawl_db_path =", crawl_db_path)
+    selected_path = resolve_db_path(crawl_db_path)
+    print("upsert_seed_jobs -> crawl_db_path =", selected_path)
 
-    con = sqlite3.connect(
-        str(crawl_db_path),
-        timeout=60.0,
-        isolation_level=None
-    )
+    con = create_sqlite_database(selected_path, purpose="initialization", wal=True)
 
     try:
-        con.execute("PRAGMA journal_mode=WAL;")
-        con.execute("PRAGMA busy_timeout=60000;")
-
         ensure_seed_jobs_schema(con)
         before = con.total_changes
 

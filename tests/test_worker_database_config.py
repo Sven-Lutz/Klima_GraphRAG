@@ -32,6 +32,7 @@ def test_worker_module_imports():
 
 def test_runtime_default_uses_current_environment(monkeypatch, tmp_path):
     configured = tmp_path / "configured.sqlite"
+    _create_seed_jobs_database(configured)
     monkeypatch.setenv("KLIMA_DB_PATH", str(configured))
 
     assert resolve_db_path() == configured

@@ -13,8 +13,9 @@ Crawl → Chunking → Embeddings → Graph-Extraktion → Entity Resolution
 
 ## Konfiguration
 
-Zentrale Konfiguration: `crawler/core/config.py`. Alle Module importieren von
-dort — es gibt keine hartkodierten Pfade in den Skripten.
+Zentrale Konfiguration: `crawler/core/config.py`. Jede operative CLI löst ihre
+SQLite-Datenbank beim Aufruf auf; es gibt keine importzeitlich gebundene
+Arbeitsdatenbank.
 
 Überschreiben per Umgebungsvariable:
 
@@ -39,14 +40,23 @@ export KLIMA_DB_PATH=demo/demo.sqlite
 python -m crawler.scripts.chunk_documents
 ```
 
+Die Präzedenz ist für alle Stages identisch: ein explizites `--db` ist
+autoritativ, danach folgt `KLIMA_DB_PATH`, danach der absolute
+Repository-Default. Nach der Auflösung wird derselbe unveränderliche Pfad durch
+den gesamten Stage-Aufruf gereicht. Operative Lese- und Schreibverbindungen
+verlangen eine vorhandene Datei; nur Initialisierung, Test-Fixtures und
+Snapshot-Export dürfen Datenbanken explizit anlegen. Siehe
+[RUNTIME_DATABASE.md](RUNTIME_DATABASE.md).
+
 Für den Crawl-Worker ist `--db` die autoritative Auswahl für die gesamte
 Worker-Ausführung (Job-Claiming, Heartbeats und Crawl-Speicher). Ohne `--db`
 wird `KLIMA_DB_PATH` erst beim Start des Workers aufgelöst. Die ausgewählte
 Datei muss bereits existieren; zuvor `init_seed_jobs --db <pfad>` ausführen.
 Vor dem Start prüft der Worker die `seed_jobs`-Schema-Voraussetzungen
 schreibgeschützt und bricht bei Abweichungen explizit ab. Diese Schema-Prüfung
-liest die SQLite-Datei direkt statt eine SQLite-Verbindung zu öffnen; sie legt
-damit auch bei einer Datenbank im WAL-Modus keine `-wal`- oder `-shm`-Dateien an.
+öffnet die Live-Datenbank über SQLite in `mode=ro` und `query_only`. Dadurch
+prüft sie den tatsächlich committed Zustand einschließlich WAL statt nur die
+möglicherweise veraltete Hauptdatei und erzeugt keine fehlende Ersatzdatenbank.
 
 ---
 
@@ -288,6 +298,22 @@ python demo/query_demo.py "Wärmepumpe Förderung"
 
 Die Demo nutzt dieselben Pipeline-Module gegen `demo/demo.sqlite`
 (via `KLIMA_DB_PATH`).
+
+---
+
+## Reproduzierbarer SQLite-Snapshot
+
+```bash
+python -m crawler.scripts.create_database_snapshot \
+  --db crawler/data/db/crawl.sqlite \
+  --output snapshots/crawl.sqlite
+```
+
+Der Export nutzt die SQLite-Backup-API und erfasst damit committed WAL-Inhalte,
+ohne die Quelldatenbank zu checkpointen. Das Manifest enthält Prüfsumme, Größe,
+SQLite-/Provenance-Schemastand und nur explizit vorhandene Stage-Abschlüsse. Der
+deterministische `snapshot_id` kann später Runs, Caches, Exporte und Berichte an
+genau diesen Datenstand binden.
 
 ---
 

@@ -24,6 +24,7 @@ Usage:
     python -m crawler.scripts.chunk_documents
     python -m crawler.scripts.chunk_documents --min-score 10 --limit 50000
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,9 +32,8 @@ import hashlib
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
-from crawler.core.config import DB_PATH
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 from crawler.core.segmentation.chunker import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_OVERLAP,
@@ -44,10 +44,14 @@ from crawler.core.segmentation.chunker import (
 # Schema
 # ---------------------------------------------------------------------------
 
+
 def setup_db(conn: sqlite3.Connection) -> None:
     # Ensure columns that may be missing in older crawled DBs
-    for col, typ in [("impact_score", "INTEGER"), ("heading_context", "TEXT"),
-                     ("is_negative", "INTEGER")]:
+    for col, typ in [
+        ("impact_score", "INTEGER"),
+        ("heading_context", "TEXT"),
+        ("is_negative", "INTEGER"),
+    ]:
         try:
             conn.execute(f"ALTER TABLE segments ADD COLUMN {col} {typ}")
         except Exception:
@@ -103,6 +107,7 @@ def setup_db(conn: sqlite3.Connection) -> None:
 # Chunking logic
 # ---------------------------------------------------------------------------
 
+
 def process_segments(
     conn: sqlite3.Connection,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -154,22 +159,24 @@ def process_segments(
         batch = []
         for chunk in chunks:
             chunk_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
-            batch.append((
-                str(uuid.uuid4()),
-                doc_id,
-                muni_id,
-                seg_id,
-                chunk.chunk_index,
-                chunk_hash,
-                chunk.text,
-                chunk.start_token,
-                chunk.end_token,
-                chunk.end_token - chunk.start_token,
-                heading_ctx,
-                page_ref,
-                int(score),
-                now,
-            ))
+            batch.append(
+                (
+                    str(uuid.uuid4()),
+                    doc_id,
+                    muni_id,
+                    seg_id,
+                    chunk.chunk_index,
+                    chunk_hash,
+                    chunk.text,
+                    chunk.start_token,
+                    chunk.end_token,
+                    chunk.end_token - chunk.start_token,
+                    heading_ctx,
+                    page_ref,
+                    int(score),
+                    now,
+                )
+            )
         if batch:
             conn.executemany(insert_sql, batch)
             chunks_created += len(batch)
@@ -182,6 +189,7 @@ def process_segments(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_OVERLAP,
@@ -189,12 +197,15 @@ def main(
     limit: int = 100_000,
     db_path: str | None = None,
 ) -> None:
-    _db = Path(db_path) if db_path else DB_PATH
-    conn = sqlite3.connect(str(_db), timeout=60.0, isolation_level=None)
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_write(database.path)
     setup_db(conn)
 
-    print(f"⚙️  Chunking segments  (size={chunk_size} tok, overlap={overlap} tok, "
-          f"min_score={min_score})")
+    print(f"database={database.path} database_id={database.database_id}")
+    print(
+        f"⚙️  Chunking segments  (size={chunk_size} tok, overlap={overlap} tok, "
+        f"min_score={min_score})"
+    )
 
     with conn:
         segs, chunks = process_segments(
@@ -209,14 +220,14 @@ def main(
     conn.close()
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Segment → Chunk Mapping (Stage 1 GraphRAG)")
     ap.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
-    ap.add_argument("--overlap",    type=int, default=DEFAULT_OVERLAP)
-    ap.add_argument("--min-score",  type=int, default=10)
-    ap.add_argument("--limit",      type=int, default=100_000)
-    ap.add_argument("--db",         default=None, help="Pfad zur SQLite-DB (überschreibt config)")
-    args = ap.parse_args()
+    ap.add_argument("--overlap", type=int, default=DEFAULT_OVERLAP)
+    ap.add_argument("--min-score", type=int, default=10)
+    ap.add_argument("--limit", type=int, default=100_000)
+    ap.add_argument("--db", default=None, help="Pfad zur SQLite-DB (überschreibt config)")
+    args = ap.parse_args(argv)
     main(
         chunk_size=args.chunk_size,
         overlap=args.overlap,
@@ -224,3 +235,7 @@ if __name__ == "__main__":
         limit=args.limit,
         db_path=args.db,
     )
+
+
+if __name__ == "__main__":
+    cli()

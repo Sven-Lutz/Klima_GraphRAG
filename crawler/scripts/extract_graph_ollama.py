@@ -39,7 +39,6 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, ValidationError
 
 from crawler.core.config import (
-    DB_PATH,
     LLM_SEED,
     LLM_TEMPERATURE,
     OLLAMA_URL,
@@ -48,6 +47,7 @@ from crawler.core.config import (
 from crawler.core.config import (
     OLLAMA_MODEL as _DEFAULT_MODEL,
 )
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 from crawler.core.provenance import (
     GraphProvenance,
     ProvenanceError,
@@ -414,11 +414,14 @@ def main(
     use_chunks_table: bool = False,
     sleep_between: float = 0.0,
     parallel: int = 1,
+    db_path: str | None = None,
 ) -> None:
-    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_write(database.path)
     cur = conn.cursor()
     setup_db(cur)
     ensure_provenance_schema(conn)
+    print(f"database={database.path} database_id={database.database_id}")
 
     # Build canonical name map from resolve_entities output (if available)
     canonical_map: dict[str, str] = {}
@@ -581,7 +584,7 @@ def main(
     print("\n🏁 Done.")
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Ollama Graph Extraktion mit Gleaning (Stage 2b)")
     ap.add_argument("--model", default=MODEL_NAME)
     ap.add_argument("--gleaning", type=int, default=1, help="Anzahl Gleaning-Runden")
@@ -597,7 +600,8 @@ if __name__ == "__main__":
         default=1,
         help="Gleichzeitige LLM-Anfragen (HPC: 4-8, abhängig von VRAM)",
     )
-    args = ap.parse_args()
+    ap.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = ap.parse_args(argv)
     main(
         model=args.model,
         gleaning_rounds=args.gleaning,
@@ -606,4 +610,9 @@ if __name__ == "__main__":
         use_chunks_table=args.chunk_mode,
         sleep_between=args.sleep,
         parallel=args.parallel,
+        db_path=args.db,
     )
+
+
+if __name__ == "__main__":
+    cli()

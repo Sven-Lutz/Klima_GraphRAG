@@ -24,6 +24,7 @@ Usage:
     python -m crawler.scripts.detect_communities --algorithm louvain --min-size 3
     python -m crawler.scripts.detect_communities --llm openai  # use cloud LLM
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,7 +36,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from crawler.core.config import (
-    DB_PATH,
     GDS_GRAPH_NAME,
     LLM_SEED,
     LLM_TEMPERATURE,
@@ -45,6 +45,7 @@ from crawler.core.config import (
     OLLAMA_MODEL,
     OLLAMA_URL,
 )
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 
 OPENAI_MODEL = "gpt-4o-mini"
 
@@ -53,21 +54,20 @@ OPENAI_MODEL = "gpt-4o-mini"
 # Pydantic schema for community reports
 # ---------------------------------------------------------------------------
 
+
 class KeyClaim(BaseModel):
     claim: str
     importance: int = Field(ge=1, le=10)
-    evidence:   str
+    evidence: str
 
 
 class CommunityReport(BaseModel):
-    title:       str = Field(description="Prägnanter Titel (max. 10 Wörter)")
-    summary:     str = Field(description="3-5 Sätze: Kernaussagen der Community")
-    importance:  int = Field(ge=1, le=10,
-                             description="Wichtigkeit für das Forschungsprojekt (1-10)")
-    domain:      Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen",
-                         "Governance", "Gemischt"]
-    key_claims:  list[KeyClaim] = Field(default_factory=list, max_length=5)
-    key_entities: list[str]    = Field(default_factory=list, max_length=10)
+    title: str = Field(description="Prägnanter Titel (max. 10 Wörter)")
+    summary: str = Field(description="3-5 Sätze: Kernaussagen der Community")
+    importance: int = Field(ge=1, le=10, description="Wichtigkeit für das Forschungsprojekt (1-10)")
+    domain: Literal["Klimaschutz", "Energie", "Mobilität", "Finanzen", "Governance", "Gemischt"]
+    key_claims: list[KeyClaim] = Field(default_factory=list, max_length=5)
+    key_entities: list[str] = Field(default_factory=list, max_length=10)
 
 
 SYSTEM_REPORT = """\
@@ -82,6 +82,7 @@ Antworte ausschließlich mit einem JSON-Objekt – kein erklärender Text.
 # ---------------------------------------------------------------------------
 # Neo4j GDS: project graph + run Leiden / Louvain
 # ---------------------------------------------------------------------------
+
 
 def project_gds_graph(session, algorithm: str) -> None:
     """Project Entity nodes + all relationship types into a GDS in-memory graph."""
@@ -201,7 +202,7 @@ def build_report_prompt(ctx: dict) -> str:
     for r in ctx["relationships"][:20]:
         lines.append(f"  {r['src']} --[{r['rel']}]--> {r['dst']}")
         if r.get("evidence"):
-            lines.append(f"    Beleg: \"{r['evidence'][:120]}\"")
+            lines.append(f'    Beleg: "{r["evidence"][:120]}"')
     if ctx["chunk_snippets"]:
         lines.append("")
         lines.append("REPRÄSENTATIVE TEXTAUSZÜGE:")
@@ -214,19 +215,23 @@ def build_report_prompt(ctx: dict) -> str:
 # LLM call (Ollama or OpenAI)
 # ---------------------------------------------------------------------------
 
+
 def call_llm(prompt: str, backend: str) -> CommunityReport:
     if backend == "ollama":
         import urllib.request
-        payload = json.dumps({
-            "model":    OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_REPORT},
-                {"role": "user",   "content": prompt},
-            ],
-            "stream":  False,
-            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
-            "format":  "json",
-        }).encode()
+
+        payload = json.dumps(
+            {
+                "model": OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_REPORT},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
+                "format": "json",
+            }
+        ).encode()
         req = urllib.request.Request(
             f"{OLLAMA_URL}/api/chat",
             data=payload,
@@ -236,12 +241,13 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
             raw = json.loads(resp.read())["message"]["content"]
     else:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.beta.chat.completions.parse(
             model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_REPORT},
-                {"role": "user",   "content": prompt},
+                {"role": "user", "content": prompt},
             ],
             response_format=CommunityReport,
             temperature=LLM_TEMPERATURE,
@@ -260,6 +266,7 @@ def call_llm(prompt: str, backend: str) -> CommunityReport:
 # Store community report
 # ---------------------------------------------------------------------------
 
+
 def store_report_neo4j(session, community_id: int, report: CommunityReport) -> None:
     session.run(
         """
@@ -275,13 +282,13 @@ def store_report_neo4j(session, community_id: int, report: CommunityReport) -> N
         MERGE (e)-[:BELONGS_TO_COMMUNITY]->(cr)
         """,
         {
-            "cid":         community_id,
-            "title":       report.title,
-            "summary":     report.summary,
-            "importance":  report.importance,
-            "domain":      report.domain,
+            "cid": community_id,
+            "title": report.title,
+            "summary": report.summary,
+            "importance": report.importance,
+            "domain": report.domain,
             "key_entities": report.key_entities,
-            "key_claims":  [c.model_dump() for c in report.key_claims],
+            "key_claims": [c.model_dump() for c in report.key_claims],
         },
     )
 
@@ -325,6 +332,7 @@ def store_report_sqlite(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(
     algorithm: str = "leiden",
     min_community_size: int = 3,
@@ -332,11 +340,14 @@ def main(
     max_communities: int = 500,
     sleep_between: float = 0.3,
     parallel: int = 1,
+    db_path: str | None = None,
 ) -> None:
     from neo4j import GraphDatabase
 
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-    conn   = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_write(database.path)
+    print(f"database={database.path} database_id={database.database_id}")
 
     with driver.session() as session:
         print("📐 Projiziere Entity-Graph in GDS…")
@@ -374,10 +385,10 @@ def main(
                 time.sleep(sleep_between)
         else:
             from concurrent.futures import ThreadPoolExecutor, as_completed
+
             with ThreadPoolExecutor(max_workers=parallel) as pool:
                 futures = {
-                    pool.submit(call_llm, prompt, llm_backend): cid
-                    for cid, prompt in prompts
+                    pool.submit(call_llm, prompt, llm_backend): cid for cid, prompt in prompts
                 }
                 for fut in as_completed(futures):
                     cid = futures[fut]
@@ -401,17 +412,18 @@ def main(
     print(f"\n🏁 Fertig: {ok}/{min(len(communities), max_communities)} Community Reports erstellt.")
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Community Detection + LLM Reports (Stage 3)")
-    ap.add_argument("--algorithm",  choices=["leiden", "louvain"], default="leiden")
-    ap.add_argument("--min-size",   type=int,   default=3,       help="Minimale Community-Größe")
-    ap.add_argument("--llm",        choices=["ollama", "openai"], default="ollama")
-    ap.add_argument("--max",        type=int,   default=500,
-                    help="Max. Communities für Reports")
-    ap.add_argument("--sleep",      type=float, default=0.3)
-    ap.add_argument("--parallel",   type=int,   default=1,
-                    help="Gleichzeitige LLM-Anfragen für Reports (HPC: 4-8)")
-    args = ap.parse_args()
+    ap.add_argument("--algorithm", choices=["leiden", "louvain"], default="leiden")
+    ap.add_argument("--min-size", type=int, default=3, help="Minimale Community-Größe")
+    ap.add_argument("--llm", choices=["ollama", "openai"], default="ollama")
+    ap.add_argument("--max", type=int, default=500, help="Max. Communities für Reports")
+    ap.add_argument("--sleep", type=float, default=0.3)
+    ap.add_argument(
+        "--parallel", type=int, default=1, help="Gleichzeitige LLM-Anfragen für Reports (HPC: 4-8)"
+    )
+    ap.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = ap.parse_args(argv)
     main(
         algorithm=args.algorithm,
         min_community_size=args.min_size,
@@ -419,4 +431,9 @@ if __name__ == "__main__":
         max_communities=args.max,
         sleep_between=args.sleep,
         parallel=args.parallel,
+        db_path=args.db,
     )
+
+
+if __name__ == "__main__":
+    cli()

@@ -13,6 +13,7 @@ Crawl → Segmente → Chunks → Embeddings → Wissensgraph (Ollama-LLM)
 | Dokument | Inhalt |
 |---|---|
 | **[docs/PIPELINE.md](docs/PIPELINE.md)** | Alle Pipeline-Stages: Kommandos, Ein-/Ausgabetabellen, Konfiguration |
+| **[docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md)** | Laufzeit-DB, sichere SQLite-Verbindungen und Snapshot-Manifeste |
 | **[docs/pipeline_diagrams.md](docs/pipeline_diagrams.md)** | Architektur-Diagramme (Index- und Query-Pfad) |
 | **[hpc/README.md](hpc/README.md)** | Rechenintensive Stages auf dem Cluster (SLURM) |
 
@@ -142,12 +143,12 @@ watch -n 30 'sqlite3 crawler/data/db/crawl.sqlite \
 Nach dem Crawl (Details: [docs/PIPELINE.md](docs/PIPELINE.md)):
 
 ```bash
-python -m crawler.scripts.chunk_documents
-python -m crawler.scripts.generate_embeddings
-python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
-python -m crawler.scripts.resolve_entities
-python -m crawler.scripts.export_graph_to_neo4j
-python -m crawler.scripts.detect_communities --parallel 4
+python -m crawler.scripts.chunk_documents --db crawler/data/db/crawl.sqlite
+python -m crawler.scripts.generate_embeddings --db crawler/data/db/crawl.sqlite
+python -m crawler.scripts.extract_graph_ollama --db crawler/data/db/crawl.sqlite --chunk-mode --parallel 4
+python -m crawler.scripts.resolve_entities --db crawler/data/db/crawl.sqlite
+python -m crawler.scripts.export_graph_to_neo4j --db crawler/data/db/crawl.sqlite
+python -m crawler.scripts.detect_communities --db crawler/data/db/crawl.sqlite --parallel 4
 python -m crawler.scripts.query_agent --db crawler/data/db/crawl.sqlite "Welche Kommunen fördern Photovoltaik?"
 ```
 
@@ -179,6 +180,20 @@ Umgebungsvariable — kein Skript hat hartkodierte Pfade:
 | `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | `bolt://localhost:7687` | Graph-DB |
 | `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
 | `KLIMA_TLS_VERIFY` | `0` | TLS-Zertifikate beim Crawlen prüfen (Default aus: viele kommunale Server haben kaputte Zertifikatsketten) |
+
+Alle operativen CLIs lösen die Datenbank erst beim Aufruf auf. Die Rangfolge ist
+`--db` → `KLIMA_DB_PATH` → Repository-Default; der aufgelöste absolute Pfad
+bleibt für den gesamten Aufruf autoritativ. Fehlende operative Datenbanken
+werden nicht implizit angelegt. Eine konsistente, WAL-bewusste Kopie mit
+content-adressiertem Manifest lässt sich explizit erzeugen:
+
+```bash
+python -m crawler.scripts.create_database_snapshot \
+  --db crawler/data/db/crawl.sqlite \
+  --output snapshots/crawl-2026-08-13.sqlite
+```
+
+Details und Validierungsvertrag: [docs/RUNTIME_DATABASE.md](docs/RUNTIME_DATABASE.md).
 
 **Text2Cypher ist experimentell und standardmäßig deaktiviert.** Eine Aktivierung
 erfordert `KLIMA_TEXT2CYPHER_ENABLED=1`, separat konfigurierte Credentials für

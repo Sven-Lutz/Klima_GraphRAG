@@ -23,6 +23,7 @@ Usage:
     # Compare two systems head-to-head (AutoE)
     python -m crawler.scripts.evaluate --compare system_a.json system_b.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,12 +36,16 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from crawler.core.config import (
-    DB_PATH,
     LLM_SEED,
     LLM_TEMPERATURE,
     OLLAMA_MODEL,
     OLLAMA_URL,
     PROMPT_VERSION,
+)
+from crawler.core.database import (
+    RuntimeDatabase,
+    connect_existing_read_only,
+    resolve_runtime_database,
 )
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -50,41 +55,45 @@ OPENAI_MODEL = "gpt-4o-mini"
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TestQuestion:
-    question_id:   str
-    question:      str
+    question_id: str
+    question: str
     question_type: Literal["local", "global", "aggregation"]
     expected_entities: list[str] = field(default_factory=list)
-    cypher_ground_truth: Optional[str] = None   # for aggregation questions
-    source_community: Optional[int] = None       # for global questions
-    source_doc_id:    Optional[str] = None       # for local questions
+    cypher_ground_truth: Optional[str] = None  # for aggregation questions
+    source_community: Optional[int] = None  # for global questions
+    source_doc_id: Optional[str] = None  # for local questions
 
 
 @dataclass
 class EvalResult:
-    question_id:       str
-    question:          str
-    system_answer:     str
+    question_id: str
+    question: str
+    system_answer: str
     retrieved_context: list[str]
     # RAGAS metrics
-    context_recall:    Optional[float] = None
-    faithfulness:      Optional[float] = None
+    context_recall: Optional[float] = None
+    faithfulness: Optional[float] = None
     answer_correctness: Optional[float] = None
     # Claimify
-    n_claims:          int = 0
+    n_claims: int = 0
     n_supported_claims: int = 0
     # AutoE
-    autoe_score:       Optional[float] = None   # 0-1, from judge comparison
-    autoe_reasoning:   Optional[str] = None
+    autoe_score: Optional[float] = None  # 0-1, from judge comparison
+    autoe_reasoning: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # LLM helpers
 # ---------------------------------------------------------------------------
 
+
 def _llm(
-    system: str, user: str, backend: str,
+    system: str,
+    user: str,
+    backend: str,
     json_mode: bool = False,
     model: Optional[str] = None,
 ) -> str:
@@ -96,16 +105,19 @@ def _llm(
     """
     if backend == "ollama":
         import urllib.request
-        payload = json.dumps({
-            "model":    model or OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            "stream":  False,
-            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
-            **({"format": "json"} if json_mode else {}),
-        }).encode()
+
+        payload = json.dumps(
+            {
+                "model": model or OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "stream": False,
+                "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 2048},
+                **({"format": "json"} if json_mode else {}),
+            }
+        ).encode()
         req = urllib.request.Request(
             f"{OLLAMA_URL}/api/chat",
             data=payload,
@@ -115,12 +127,13 @@ def _llm(
             return json.loads(resp.read())["message"]["content"]
     else:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.chat.completions.create(
             model=model or OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user",   "content": user},
+                {"role": "user", "content": user},
             ],
             temperature=LLM_TEMPERATURE,
             seed=LLM_SEED,
@@ -173,13 +186,15 @@ def generate_local_questions(
         try:
             raw = _llm(SYSTEM_AUTOQ_LOCAL, ctx, backend, json_mode=True, model=model)
             data = json.loads(raw)
-            questions.append(TestQuestion(
-                question_id=f"local_{rowid}",
-                question=data["question"],
-                question_type="local",
-                expected_entities=data.get("expected_entities", []),
-                source_doc_id=doc_id,
-            ))
+            questions.append(
+                TestQuestion(
+                    question_id=f"local_{rowid}",
+                    question=data["question"],
+                    question_type="local",
+                    expected_entities=data.get("expected_entities", []),
+                    source_doc_id=doc_id,
+                )
+            )
         except Exception:
             continue
     return questions
@@ -191,7 +206,8 @@ def generate_global_questions(
     try:
         rows = conn.execute(
             "SELECT community_id, title, summary FROM community_reports "
-            "ORDER BY importance DESC LIMIT ?", (n,)
+            "ORDER BY importance DESC LIMIT ?",
+            (n,),
         ).fetchall()
     except Exception:
         return []
@@ -202,12 +218,14 @@ def generate_global_questions(
         try:
             raw = _llm(SYSTEM_AUTOQ_GLOBAL, ctx, backend, json_mode=True, model=model)
             data = json.loads(raw)
-            questions.append(TestQuestion(
-                question_id=f"global_{cid}",
-                question=data["question"],
-                question_type="global",
-                source_community=cid,
-            ))
+            questions.append(
+                TestQuestion(
+                    question_id=f"global_{cid}",
+                    question=data["question"],
+                    question_type="global",
+                    source_community=cid,
+                )
+            )
         except Exception:
             continue
     return questions
@@ -228,12 +246,14 @@ def generate_aggregation_questions(
         try:
             raw = _llm(SYSTEM_AUTOQ_AGG, f"Thema: {topic}", backend, json_mode=True, model=model)
             data = json.loads(raw)
-            questions.append(TestQuestion(
-                question_id=f"agg_{i}",
-                question=data["question"],
-                question_type="aggregation",
-                cypher_ground_truth=data.get("cypher"),
-            ))
+            questions.append(
+                TestQuestion(
+                    question_id=f"agg_{i}",
+                    question=data["question"],
+                    question_type="aggregation",
+                    cypher_ground_truth=data.get("cypher"),
+                )
+            )
         except Exception:
             continue
     return questions
@@ -264,8 +284,9 @@ Antworte mit JSON: {"factual_correctness": 0.0-1.0, "completeness": 0.0-1.0}
 
 def score_faithfulness(answer: str, context: list[str], backend: str) -> float:
     ctx = "\n---\n".join(context[:5])
-    raw = _llm(SYSTEM_FAITHFULNESS, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}",
-               backend, json_mode=True)
+    raw = _llm(
+        SYSTEM_FAITHFULNESS, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}", backend, json_mode=True
+    )
     try:
         return float(json.loads(raw).get("score", 0.5))
     except Exception:
@@ -274,8 +295,12 @@ def score_faithfulness(answer: str, context: list[str], backend: str) -> float:
 
 def score_context_recall(answer: str, context: list[str], backend: str) -> float:
     ctx = "\n---\n".join(context[:5])
-    raw = _llm(SYSTEM_CONTEXT_RECALL, f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}",
-               backend, json_mode=True)
+    raw = _llm(
+        SYSTEM_CONTEXT_RECALL,
+        f"ANTWORT: {answer[:1000]}\n\nKONTEXT:\n{ctx}",
+        backend,
+        json_mode=True,
+    )
     try:
         return float(json.loads(raw).get("score", 0.5))
     except Exception:
@@ -310,8 +335,9 @@ def claimify(answer: str, context: list[str], backend: str) -> tuple[int, int]:
     supported = 0
     for claim in claims[:10]:  # cap to avoid excessive LLM calls
         try:
-            r = _llm(SYSTEM_CLAIM_VERIFY, f"CLAIM: {claim}\n\nKONTEXT:\n{ctx}",
-                     backend, json_mode=True)
+            r = _llm(
+                SYSTEM_CLAIM_VERIFY, f"CLAIM: {claim}\n\nKONTEXT:\n{ctx}", backend, json_mode=True
+            )
             if json.loads(r).get("supported", False):
                 supported += 1
         except Exception:
@@ -339,11 +365,7 @@ Antworte mit JSON:
 
 
 def _autoe_single(question: str, answer_a: str, answer_b: str, backend: str) -> dict:
-    prompt = (
-        f"FRAGE: {question}\n\n"
-        f"ANTWORT A:\n{answer_a[:1500]}\n\n"
-        f"ANTWORT B:\n{answer_b[:1500]}"
-    )
+    prompt = f"FRAGE: {question}\n\nANTWORT A:\n{answer_a[:1500]}\n\nANTWORT B:\n{answer_b[:1500]}"
     raw = _llm(SYSTEM_AUTOE, prompt, backend, json_mode=True)
     try:
         return json.loads(raw)
@@ -377,13 +399,20 @@ def autoe_compare(question: str, answer_a: str, answer_b: str, backend: str) -> 
 # Full evaluation run
 # ---------------------------------------------------------------------------
 
+
 def _git_commit() -> Optional[str]:
     try:
         import subprocess
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip() or None
+
+        return (
+            subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+            or None
+        )
     except Exception:
         return None
 
@@ -411,19 +440,23 @@ def save_questions(questions: list[TestQuestion], path: Path) -> None:
 
 
 def run_evaluation(
-    n_local:       int = 20,
-    n_global:      int = 15,
+    n_local: int = 20,
+    n_global: int = 15,
     n_aggregation: int = 10,
-    backend:       str = "ollama",
-    output_path:   Optional[Path] = None,
+    backend: str = "ollama",
+    output_path: Optional[Path] = None,
     questions_file: Optional[Path] = None,
     save_questions_path: Optional[Path] = None,
-    autoq_model:   Optional[str] = None,
+    autoq_model: Optional[str] = None,
+    db_path: str | Path | RuntimeDatabase | None = None,
 ) -> dict:
     from crawler.scripts.query_agent import answer as qa_answer
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     model_name = OLLAMA_MODEL if backend == "ollama" else OPENAI_MODEL
+    database = (
+        db_path if isinstance(db_path, RuntimeDatabase) else resolve_runtime_database(db_path)
+    )
 
     # Report-Historie: nie überschreiben, jeder Lauf bekommt eine eigene Datei
     if output_path is None:
@@ -440,7 +473,7 @@ def run_evaluation(
             print("   ⚠  AutoQ nutzt dasselbe Modell wie das zu evaluierende System —")
             print("      Zirkularitäts-Bias! Besser: --autoq-model <anderes Modell>")
             print("      oder Fixture generieren, kuratieren und mit --load verwenden.")
-        conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+        conn = connect_existing_read_only(database.path)
         questions = []
         questions += generate_local_questions(conn, n_local, backend, model=autoq_model)
         questions += generate_global_questions(conn, n_global, backend, model=autoq_model)
@@ -450,10 +483,12 @@ def run_evaluation(
     if save_questions_path:
         save_questions(questions, save_questions_path)
 
-    print(f"   {len(questions)} Fragen  "
-          f"(local={sum(1 for q in questions if q.question_type=='local')}, "
-          f"global={sum(1 for q in questions if q.question_type=='global')}, "
-          f"agg={sum(1 for q in questions if q.question_type=='aggregation')})")
+    print(
+        f"   {len(questions)} Fragen  "
+        f"(local={sum(1 for q in questions if q.question_type == 'local')}, "
+        f"global={sum(1 for q in questions if q.question_type == 'global')}, "
+        f"agg={sum(1 for q in questions if q.question_type == 'aggregation')})"
+    )
 
     results = []
     n_missing_context = 0
@@ -463,7 +498,7 @@ def run_evaluation(
             # return_context=True liefert den ECHTEN Retrieval-Kontext —
             # Faithfulness gegen die Antwort selbst zu messen wäre wertlos.
             system_answer, context_snippets = qa_answer(
-                q.question, backend=backend, return_context=True
+                q.question, backend=backend, return_context=True, db_path=database
             )
         except Exception as ex:
             system_answer = f"ERROR: {ex}"
@@ -478,15 +513,18 @@ def run_evaluation(
 
         if context_snippets:
             try:
-                result.faithfulness = score_faithfulness(
-                    system_answer, context_snippets, backend)
+                result.faithfulness = score_faithfulness(system_answer, context_snippets, backend)
                 result.context_recall = score_context_recall(
-                    system_answer, context_snippets, backend)
+                    system_answer, context_snippets, backend
+                )
                 result.n_claims, result.n_supported_claims = claimify(
-                    system_answer, context_snippets, backend)
-                print(f"   faithfulness={result.faithfulness:.2f}  "
-                      f"ctx_recall={result.context_recall:.2f}  "
-                      f"claims={result.n_supported_claims}/{result.n_claims}")
+                    system_answer, context_snippets, backend
+                )
+                print(
+                    f"   faithfulness={result.faithfulness:.2f}  "
+                    f"ctx_recall={result.context_recall:.2f}  "
+                    f"claims={result.n_supported_claims}/{result.n_claims}"
+                )
             except Exception as ex:
                 print(f"   Metriken-Fehler: {ex}")
         else:
@@ -504,39 +542,38 @@ def run_evaluation(
         return sum(v) / len(v) if v else None
 
     summary = {
-        "run_id":            run_id,
-        "timestamp":         datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         # Reproduzierbarkeits-Metadaten — Pflicht für zitierfähige Benchmarks
-        "backend":           backend,
-        "model":             model_name,
-        "seed":              LLM_SEED,
-        "temperature":       LLM_TEMPERATURE,
-        "prompt_version":    PROMPT_VERSION,
-        "git_commit":        _git_commit(),
-        "questions_file":    str(questions_file) if questions_file else None,
-        "autoq_model":       autoq_model,
-        "n_questions":       len(results),
+        "backend": backend,
+        "model": model_name,
+        "seed": LLM_SEED,
+        "temperature": LLM_TEMPERATURE,
+        "prompt_version": PROMPT_VERSION,
+        "git_commit": _git_commit(),
+        "questions_file": str(questions_file) if questions_file else None,
+        "autoq_model": autoq_model,
+        "n_questions": len(results),
         "n_missing_context": n_missing_context,
-        "avg_faithfulness":  avg([r.faithfulness for r in results]),
+        "avg_faithfulness": avg([r.faithfulness for r in results]),
         "avg_context_recall": avg([r.context_recall for r in results]),
-        "avg_claim_support": avg([
-            r.n_supported_claims / r.n_claims if r.n_claims > 0 else None
-            for r in results
-        ]),
+        "avg_claim_support": avg(
+            [r.n_supported_claims / r.n_claims if r.n_claims > 0 else None for r in results]
+        ),
     }
 
     report = {
         "summary": summary,
         "questions": [
             {
-                "question_id":      r.question_id,
-                "question":         r.question,
-                "answer":           r.system_answer,
+                "question_id": r.question_id,
+                "question": r.question,
+                "answer": r.system_answer,
                 "retrieved_context": r.retrieved_context,
-                "faithfulness":     r.faithfulness,
-                "context_recall":   r.context_recall,
-                "n_claims":         r.n_claims,
-                "n_supported":      r.n_supported_claims,
+                "faithfulness": r.faithfulness,
+                "context_recall": r.context_recall,
+                "n_claims": r.n_claims,
+                "n_supported": r.n_supported_claims,
             }
             for r in results
         ],
@@ -562,21 +599,39 @@ def run_evaluation(
 # CLI
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="GraphRAG Evaluation Framework (Stage 5)")
-    ap.add_argument("--questions",  type=int, default=45,         help="Gesamtzahl Testfragen")
-    ap.add_argument("--llm",        choices=["ollama", "openai"],  default="ollama")
-    ap.add_argument("--output",     default=None,
-                    help="Ausgabedatei (Default: eval_runs/eval_report_<run_id>.json)")
-    ap.add_argument("--load",       default=None,
-                    help="Eingefrorenes Fragen-Fixture laden (reproduzierbarer Benchmark)")
-    ap.add_argument("--save-questions", default=None, metavar="PATH",
-                    help="Generierte Fragen als Fixture speichern (zum Kuratieren + Einchecken)")
-    ap.add_argument("--autoq-model", default=None, metavar="MODEL",
-                    help="Anderes Modell für die Fragen-Generierung (vermeidet Zirkularitäts-Bias)")
-    ap.add_argument("--compare",    nargs=2,  default=None,
-                    help="Zwei Systemantwort-JSONs vergleichen (AutoE, mit Positions-Swap)")
-    args = ap.parse_args()
+    ap.add_argument("--questions", type=int, default=45, help="Gesamtzahl Testfragen")
+    ap.add_argument("--llm", choices=["ollama", "openai"], default="ollama")
+    ap.add_argument(
+        "--output", default=None, help="Ausgabedatei (Default: eval_runs/eval_report_<run_id>.json)"
+    )
+    ap.add_argument(
+        "--load",
+        default=None,
+        help="Eingefrorenes Fragen-Fixture laden (reproduzierbarer Benchmark)",
+    )
+    ap.add_argument(
+        "--save-questions",
+        default=None,
+        metavar="PATH",
+        help="Generierte Fragen als Fixture speichern (zum Kuratieren + Einchecken)",
+    )
+    ap.add_argument(
+        "--autoq-model",
+        default=None,
+        metavar="MODEL",
+        help="Anderes Modell für die Fragen-Generierung (vermeidet Zirkularitäts-Bias)",
+    )
+    ap.add_argument(
+        "--compare",
+        nargs=2,
+        default=None,
+        help="Zwei Systemantwort-JSONs vergleichen (AutoE, mit Positions-Swap)",
+    )
+    ap.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = ap.parse_args(argv)
 
     if args.compare:
         a_data = json.loads(Path(args.compare[0]).read_text())
@@ -588,12 +643,15 @@ if __name__ == "__main__":
             wins[r.get("winner", "tie")] += 1
             if not r.get("consistent", True):
                 n_inconsistent += 1
-            print(f"  {qa['question'][:60]}…  → Winner: {r.get('winner')}"
-                  f"{'' if r.get('consistent', True) else '  (positions-inkonsistent → tie)'}")
+            print(
+                f"  {qa['question'][:60]}…  → Winner: {r.get('winner')}"
+                f"{'' if r.get('consistent', True) else '  (positions-inkonsistent → tie)'}"
+            )
         print(f"\n🏆 AutoE Ergebnis: A={wins['A']}  B={wins['B']}  Tie={wins['tie']}")
         if n_inconsistent:
-            print(f"   {n_inconsistent} Urteile waren positionsabhängig "
-                  f"und wurden als Tie gewertet")
+            print(
+                f"   {n_inconsistent} Urteile waren positionsabhängig und wurden als Tie gewertet"
+            )
     else:
         n = args.questions
         run_evaluation(
@@ -605,4 +663,9 @@ if __name__ == "__main__":
             questions_file=Path(args.load) if args.load else None,
             save_questions_path=Path(args.save_questions) if args.save_questions else None,
             autoq_model=args.autoq_model,
+            db_path=args.db,
         )
+
+
+if __name__ == "__main__":
+    main()

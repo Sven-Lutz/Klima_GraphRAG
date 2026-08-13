@@ -37,5 +37,6 @@ demo/graph.html
 # Generierte Auswertungen & Caches
 eval_runs/
 topic_out/
+snapshots/
 .pytest_cache/
 .ruff_cache/
