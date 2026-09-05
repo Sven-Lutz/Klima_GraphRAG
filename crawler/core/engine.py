@@ -1,6 +1,8 @@
 # crawler/core/engine.py
 from __future__ import annotations
 
+
+import html as _html
 import re
 import time
 from dataclasses import dataclass
@@ -127,6 +129,126 @@ _NEGATIVE_WORDS = [
     r"kontakt\b",
 ]
 NEGATIVE_REGEX = re.compile(r"\b(?:" + "|".join(_NEGATIVE_WORDS) + r")", re.IGNORECASE)
+
+# External official/authoritative source signals.
+#
+# Municipal climate-policy evidence is not always hosted on the municipality's
+# own domain. Relevant sources may live on municipal utilities, council
+# information systems, administrative associations, or district websites.
+#
+# This is discovery logic only. It deliberately contains no benchmark-specific
+# domains.
+_AUTHORITATIVE_SOURCE_REGEX = re.compile(
+    r"\b(?:"
+    r"stadtwerke?|"
+    r"gemeindewerke?|"
+    r"kommunalwerke?|"
+    r"energieversorgung|"
+    r"versorgungsbetriebe?|"
+    r"ratsinformationssystem|"
+    r"b(?:ü|ue)rgerinformationssystem|"
+    r"ratsinfo|"
+    r"allris|"
+    r"verwaltungsgemeinschaft|"
+    r"landkreis|"
+    r"kreisverwaltung|"
+    r"landratsamt|"
+    r"amtsblatt"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_NON_AUTHORITATIVE_EXTERNAL_DOMAINS = {
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+}
+
+
+def _is_authoritative_source_candidate(
+    url: str,
+    anchor: Optional[str] = None,
+) -> bool:
+    """Return True when an external link looks like an official related source.
+
+    The decision is based on generic structural signals in the URL/domain and
+    anchor text, never on benchmark-specific domains.
+    """
+    try:
+        parsed = urlsplit(url or "")
+    except Exception:
+        return False
+
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return False
+
+    domain = parsed.hostname.lower().strip(".")
+
+    if any(
+        domain == blocked or domain.endswith("." + blocked)
+        for blocked in _NON_AUTHORITATIVE_EXTERNAL_DOMAINS
+    ):
+        return False
+
+    candidate_text = f"{domain} {parsed.path} {anchor or ''}"
+    return bool(_AUTHORITATIVE_SOURCE_REGEX.search(candidate_text))
+
+
+_UTILITY_SERVICE_REGEX = re.compile(
+    r"\b(?:"
+    r"strom|"
+    r"(?:erd)?gas|"
+    r"fernw(?:ä|ae)rme|"
+    r"w(?:ä|ae)rme|"
+    r"trinkwasser|"
+    r"wasser|"
+    r"energie|"
+    r"(?:ö|oe)kostrom|"
+    r"grundversorgung|"
+    r"stromnetz|"
+    r"gasnetz|"
+    r"w(?:ä|ae)rmenetz"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_UTILITY_ORGANIZATION_REGEX = re.compile(
+    r"\b(?:"
+    r"stadtwerke?|"
+    r"gemeindewerke?|"
+    r"kommunalwerke?|"
+    r"energieversorger|"
+    r"energieversorgung|"
+    r"versorg(?:t|en|ung|er)|"
+    r"grundversorgung|"
+    r"privatkunden|"
+    r"gesch(?:ä|ae)ftskunden|"
+    r"netzbetreiber|"
+    r"stadtwerke\s*/\s*kommunen"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_utility_provider_text(text: str) -> bool:
+    """Return True when homepage text strongly resembles an energy utility.
+
+    The detector uses only generic service and organisation signals. It does
+    not contain municipality names, provider names, or benchmark-specific
+    domains.
+    """
+    text = text or ""
+
+    service_hits = {
+        match.group(0).lower()
+        for match in _UTILITY_SERVICE_REGEX.finditer(text)
+    }
+    has_organisation_signal = bool(_UTILITY_ORGANIZATION_REGEX.search(text))
+
+    return len(service_hits) >= 2 and has_organisation_signal
 
 
 def _segment_features(text: str) -> Tuple[int, int, int]:
@@ -314,10 +436,24 @@ class Engine:
         # Enqueue-Dedup: verhindert, dass dieselbe URL den Heap mehrfach füllt
         self._enqueued: Set[str] = set()
 
+        # Cache external-homepage probes used for related utility discovery.
+        # This prevents repeatedly fetching the same external domain when a
+        # municipality links to it from multiple pages.
+        self._external_homepage_text_cache: Dict[str, str] = {}
+
         self.allowed_domains_by_muni: Dict[str, Set[str]] = {
             str(k): {self._norm_domain(d) for d in v if d}
             for k, v in (allowed_domains_by_muni or {}).items()
         }
+
+        # Keep the original municipality domains separate from domains discovered
+        # during crawling. Only links from these original domains may expand scope,
+        # preventing recursive trust expansion.
+        self._seed_domains_by_muni: Dict[str, Set[str]] = {
+            muni_id: set(domains)
+            for muni_id, domains in self.allowed_domains_by_muni.items()
+        }
+
         self.seed_additional_paths: list[str] = list(seed_additional_paths or [])
 
     @staticmethod
@@ -358,6 +494,130 @@ class Engine:
         if not allowed:
             return False
         return domain in allowed
+
+    def _fetch_external_homepage_text(
+        self,
+        url: str,
+        max_chars: int = 12000,
+    ) -> str:
+        """Fetch a small text sample from an external domain homepage.
+
+        This is used only as a second-stage check for opaque utility brands
+        whose domain/anchor does not itself contain structural terms such as
+        ``Stadtwerke``. Results are cached per normalized domain.
+        """
+        scheme, domain = self._scheme_domain(url)
+        if scheme not in {"http", "https"} or not domain:
+            return ""
+
+        cache = getattr(self, "_external_homepage_text_cache", None)
+        if cache is None:
+            cache = {}
+            self._external_homepage_text_cache = cache
+        if domain in cache:
+            return cache[domain]
+
+        # Do not probe known social-platform domains.
+        if any(
+            domain == blocked or domain.endswith("." + blocked)
+            for blocked in _NON_AUTHORITATIVE_EXTERNAL_DOMAINS
+        ):
+            cache[domain] = ""
+            return ""
+
+        parsed = self._split(url)
+        if parsed is None or not parsed.netloc:
+            cache[domain] = ""
+            return ""
+
+        homepage = f"{parsed.scheme or 'https'}://{parsed.netloc}/"
+
+        try:
+            fr = self.fetch(homepage, max_attempts=2)
+        except Exception:
+            cache[domain] = ""
+            return ""
+
+        if int(fr.status_code) >= 400 or not fr.body:
+            cache[domain] = ""
+            return ""
+
+        # Do not transfer trust through a homepage redirect to another domain.
+        _, final_domain = self._scheme_domain(fr.url_final)
+        if final_domain != domain:
+            cache[domain] = ""
+            return ""
+
+        if not self._looks_like_html(fr.url_final, fr.content_type):
+            cache[domain] = ""
+            return ""
+
+        raw = fr.body.decode("utf-8", errors="ignore")
+        raw = re.sub(
+            r"(?is)<(?:script|style|noscript)\b[^>]*>.*?</(?:script|style|noscript)>",
+            " ",
+            raw,
+        )
+        raw = re.sub(r"(?s)<[^>]+>", " ", raw)
+        visible_text = re.sub(r"\s+", " ", _html.unescape(raw)).strip()
+        visible_text = visible_text[:max_chars]
+
+        cache[domain] = visible_text
+        return visible_text
+
+    def _maybe_expand_allowed_domain(
+        self,
+        muni_id: str,
+        source_url: str,
+        link_url: str,
+        anchor: Optional[str] = None,
+    ) -> bool:
+        """Add a related authoritative domain to crawl scope when safely discovered.
+
+        Scope expansion is deliberately one-hop: the candidate must be linked
+        directly from one of the municipality's original seed domains. A domain
+        discovered this way cannot itself authorize further external domains.
+
+        Detection happens in two stages:
+        1. structural URL/anchor signals (Stadtwerke, RIS, Landkreis, ...),
+        2. for opaque brands, a small homepage-text check for utility-provider
+           signals such as multiple energy services plus an organisation signal.
+        """
+        muni_id = str(muni_id)
+
+        _, source_domain = self._scheme_domain(source_url)
+        _, link_domain = self._scheme_domain(link_url)
+
+        if not source_domain or not link_domain:
+            return False
+
+        # Already in scope; no expansion required.
+        if link_domain in self.allowed_domains_by_muni.get(muni_id, set()):
+            return True
+
+        # Only an original municipality/seed domain can extend trust.
+        seed_domains = self._seed_domains_by_muni.get(muni_id, set())
+        if source_domain not in seed_domains:
+            return False
+
+        # Never probe/allow known social-platform domains.
+        if any(
+            link_domain == blocked or link_domain.endswith("." + blocked)
+            for blocked in _NON_AUTHORITATIVE_EXTERNAL_DOMAINS
+        ):
+            return False
+
+        authoritative = _is_authoritative_source_candidate(link_url, anchor)
+
+        if not authoritative:
+            homepage_text = self._fetch_external_homepage_text(link_url)
+            authoritative = _looks_like_utility_provider_text(homepage_text)
+
+        if not authoritative:
+            return False
+
+        self.allowed_domains_by_muni.setdefault(muni_id, set()).add(link_domain)
+        return True
 
     def score(self, url: str, anchor: Optional[str]) -> int:
         u = (url or "").lower()
@@ -593,6 +853,7 @@ class Engine:
                 _, d = self._scheme_domain(url)
                 if d:
                     self.allowed_domains_by_muni[muni_id] = {d}
+                    self._seed_domains_by_muni[muni_id] = {d}
 
             url_c_seed = canon(url) or url
             if not self._is_allowed(muni_id, url):
@@ -752,8 +1013,16 @@ class Engine:
                             for link_c, anchor in canonical_links:
                                 if link_c in self._enqueued:
                                     continue
+
                                 if not self._is_allowed(task.municipality_id, link_c):
-                                    continue
+                                    expanded = self._maybe_expand_allowed_domain(
+                                        task.municipality_id,
+                                        source_url=fr.url_final,
+                                        link_url=link_c,
+                                        anchor=anchor,
+                                    )
+                                    if not expanded:
+                                        continue
 
                                 prio = self.score(link_c, anchor)
                                 self.scheduler.enqueue(
