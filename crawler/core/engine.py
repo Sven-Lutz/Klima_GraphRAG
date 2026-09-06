@@ -1,7 +1,6 @@
 # crawler/core/engine.py
 from __future__ import annotations
 
-
 import html as _html
 import re
 import time
@@ -232,13 +231,27 @@ _UTILITY_ORGANIZATION_REGEX = re.compile(
     re.IGNORECASE,
 )
 
+_UTILITY_STRONG_PROVIDER_REGEX = re.compile(
+    r"\b(?:"
+    r"stadtwerke?|"
+    r"gemeindewerke?|"
+    r"kommunalwerke?|"
+    r"energieversorger|"
+    r"privatkunden|"
+    r"gesch(?:ä|ae)ftskunden|"
+    r"versorg(?:t|en|er)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _looks_like_utility_provider_text(text: str) -> bool:
     """Return True when homepage text strongly resembles an energy utility.
 
-    The detector uses only generic service and organisation signals. It does
-    not contain municipality names, provider names, or benchmark-specific
-    domains.
+    Require multiple utility-service signals and either multiple organisation
+    signals or one strong provider signal. This keeps opaque municipal utility
+    brands discoverable while reducing false positives from energy authorities
+    and regulators whose pages discuss energy/versorgung generically.
     """
     text = text or ""
 
@@ -246,10 +259,21 @@ def _looks_like_utility_provider_text(text: str) -> bool:
         match.group(0).lower()
         for match in _UTILITY_SERVICE_REGEX.finditer(text)
     }
-    has_organisation_signal = bool(_UTILITY_ORGANIZATION_REGEX.search(text))
+    organisation_hits = {
+        match.group(0).lower()
+        for match in _UTILITY_ORGANIZATION_REGEX.finditer(text)
+    }
+    has_strong_provider_signal = bool(
+        _UTILITY_STRONG_PROVIDER_REGEX.search(text)
+    )
 
-    return len(service_hits) >= 2 and has_organisation_signal
-
+    return (
+        len(service_hits) >= 2
+        and (
+            len(organisation_hits) >= 2
+            or has_strong_provider_signal
+        )
+    )
 
 def _segment_features(text: str) -> Tuple[int, int, int]:
     """

@@ -124,3 +124,19 @@ def test_expands_opaque_utility_domain_from_homepage_text():
 
     assert allowed
     assert "utility-example.de" in engine.allowed_domains_by_muni["test-muni"]
+def test_rejects_energy_authority_with_single_provider_signal():
+    text = (
+        "Informationen zu Energie, Gas, Trinkwasser und Wasser. "
+        "Themen der Energieversorgung und des Umweltschutzes."
+    )
+
+    assert not _looks_like_utility_provider_text(text)
+
+
+def test_rejects_network_regulator_with_single_provider_signal():
+    text = (
+        "Informationen zu Energie, Strom, Gas, Stromnetz "
+        "und Grundversorgung sowie regulatorischen Verfahren."
+    )
+
+    assert not _looks_like_utility_provider_text(text)
