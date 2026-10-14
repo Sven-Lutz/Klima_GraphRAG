@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import socket
 import threading
 import urllib.error
@@ -795,7 +796,8 @@ def test_cli_retrieval_only_and_answer_modes_share_canonical_retriever(
     assert answer_payload["retrieval_result"]["mode"] == "semantic"
     records = [json.loads(line) for line in run_log.read_text().splitlines()]
     assert [record["status"] for record in records] == ["pending", "running", "succeeded"]
-    assert run_log.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert run_log.stat().st_mode & 0o777 == 0o600
     terminal = records[-1]
     assert terminal["schema_version"] == 1
     assert terminal["retrieval_mode"] == "semantic"

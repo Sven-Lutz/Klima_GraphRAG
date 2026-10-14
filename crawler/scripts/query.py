@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> None:
         default=RetrievalMode.SEMANTIC.value,
     )
     parser.add_argument("--top-k", type=int, default=8)
+    parser.add_argument("--municipality-id", action="append", default=[], help="Restrict retrieval to one or more municipality IDs")
     parser.add_argument("--projection-id", default=None)
     parser.add_argument("--extraction-run-id", action="append", default=[])
     parser.add_argument("--output", choices=["markdown", "json"], default="markdown")
@@ -145,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
     answer_result = None
     result = None
     try:
-        if mode in {RetrievalMode.GRAPH, RetrievalMode.HYBRID}:
+        if mode in {RetrievalMode.GRAPH, RetrievalMode.MENTION, RetrievalMode.HYBRID}:
             if not args.neo4j_user:
                 parser.error("Graph retrieval requires an explicit --neo4j-user")
             backend = _graph_backend(args)
@@ -157,6 +158,7 @@ def main(argv: list[str] | None = None) -> None:
             top_k=args.top_k,
             projection_id=args.projection_id,
             extraction_run_ids=tuple(args.extraction_run_id),
+            municipality_ids=tuple(args.municipality_id),
         )
         if args.answer:
             provider = OllamaGenerationProvider(args.ollama_url)

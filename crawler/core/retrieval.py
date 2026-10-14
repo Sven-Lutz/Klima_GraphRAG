@@ -48,6 +48,7 @@ class ProjectionMismatchError(RetrievalError):
 class RetrievalMode(str, Enum):
     SEMANTIC = "semantic"
     GRAPH = "graph"
+    MENTION = "mention"
     HYBRID = "hybrid"
 
 
@@ -130,6 +131,7 @@ class RetrievalRequest:
     projection_id: str | None = None
     extraction_run_ids: tuple[str, ...] = ()
     graph_hops: int = 1
+    municipality_ids: tuple[str, ...] = ()
 
     def validate(self) -> None:
         if not isinstance(self.mode, RetrievalMode):
@@ -140,8 +142,10 @@ class RetrievalRequest:
             raise RetrievalError(f"top_k must be between 1 and {MAX_TOP_K}")
         if self.graph_hops != 1:
             raise RetrievalError("Canonical graph retrieval currently supports exactly one hop")
-        if self.mode in {RetrievalMode.GRAPH, RetrievalMode.HYBRID} and not self.projection_id:
-            raise RetrievalError("Graph and hybrid retrieval require an explicit projection_id")
+        if any(not str(value).strip() for value in self.municipality_ids):
+            raise RetrievalError("municipality_ids must contain non-empty identifiers")
+        if self.mode in {RetrievalMode.GRAPH, RetrievalMode.MENTION, RetrievalMode.HYBRID} and not self.projection_id:
+            raise RetrievalError("Graph, mention, and hybrid retrieval require an explicit projection_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,17 +454,27 @@ def _semantic_retrieve(
         query_vector = query_vector / norm
 
         content_hashes = {chunk_id: content_hash for chunk_id, content_hash, _ in corpus}
+        municipality_clause = ""
+        parameters: list[Any] = [artifact_id]
+        if request.municipality_ids:
+            placeholders = ",".join("?" for _ in request.municipality_ids)
+            municipality_clause = (
+                " AND EXISTS (SELECT 1 FROM municipality_documents md "
+                "WHERE md.document_id=c.document_id "
+                f"AND md.municipality_id IN ({placeholders}))"
+            )
+            parameters.extend(request.municipality_ids)
         rows = connection.execute(
-            """
+            f"""
             SELECT c.chunk_id, c.segment_id, c.document_id, c.text, c.heading_context,
                    d.url_canonical, ce.source_content_hash, ce.vector_dimension, ce.embedding
             FROM chunk_embeddings ce
             JOIN chunks c ON c.chunk_id=ce.chunk_id
             JOIN documents_raw d ON d.document_id=c.document_id
-            WHERE ce.artifact_id=?
+            WHERE ce.artifact_id=?{municipality_clause}
             ORDER BY c.chunk_id
             """,
-            (artifact_id,),
+            tuple(parameters),
         ).fetchall()
         scored: list[tuple[float, tuple[Any, ...]]] = []
         for row in rows:
@@ -541,6 +555,24 @@ RETURN DISTINCT assertion.assertion_id AS assertion_id,
        subject.entity_id AS subject_id, subject.name AS subject_name,
        object.entity_id AS object_id, object.name AS object_name
 ORDER BY assertion.assertion_id, evidence.evidence_id
+LIMIT $candidate_limit
+"""
+
+
+_MENTION_RETRIEVAL_QUERY = """
+MATCH (projection:Projection {projection_id: $projection_id})-[:INCLUDES_RUN]-      (run:ExtractionRun {projection_id: $projection_id})-[:PRODUCED]-      (artifact:GraphArtifact {projection_id: $projection_id})
+MATCH (artifact)-[:HAS_MENTION]->(mention:EntityMention {projection_id: $projection_id})-[:REFERS_TO]->(entity:Entity {projection_id: $projection_id})
+MATCH (mention)-[:SUPPORTED_BY]->(evidence:Evidence {projection_id: $projection_id})
+WHERE any(term IN $terms WHERE toLower(entity.name) CONTAINS term OR toLower(mention.observed_name) CONTAINS term)
+  AND mention.extraction_run_id = run.run_id
+  AND artifact.extraction_run_id = run.run_id
+RETURN DISTINCT mention.mention_id AS mention_id, run.run_id AS extraction_run_id,
+       artifact.artifact_id AS graph_artifact_id, evidence.evidence_id AS evidence_id,
+       evidence.source_type AS source_type, evidence.source_id AS source_id,
+       evidence.segment_id AS segment_id, evidence.chunk_id AS chunk_id,
+       evidence.document_id AS document_id, evidence.source_url AS source_url,
+       entity.entity_id AS entity_id, entity.name AS entity_name
+ORDER BY mention.mention_id, evidence.evidence_id
 LIMIT $candidate_limit
 """
 
@@ -637,6 +669,141 @@ def _source_heading(
     return str(row[0]) if row and row[0] is not None else None
 
 
+def _mention_retrieve(
+    binding: SnapshotBinding,
+    request: RetrievalRequest,
+    backend: GraphReadBackend,
+    timeout_seconds: float,
+) -> list[RetrievedEvidence]:
+    selected_runs = _validate_graph_scope(backend, binding, request, timeout_seconds)
+    terms = _query_terms(request.query)
+    if not terms:
+        return []
+
+    candidate_limit = min(MAX_GRAPH_CANDIDATES, max(request.top_k * 20, request.top_k))
+    rows = backend.read(
+        _MENTION_RETRIEVAL_QUERY,
+        {
+            "projection_id": request.projection_id,
+            "terms": terms,
+            "candidate_limit": candidate_limit,
+        },
+        timeout_seconds=timeout_seconds,
+    )
+    if len(rows) > candidate_limit:
+        raise RetrievalError("Neo4j backend exceeded the application-owned result cap")
+
+    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for row in rows:
+        evidence_id = str(row.get("evidence_id") or "")
+        if not evidence_id:
+            raise ProjectionMismatchError("Neo4j mention result omitted evidence identity")
+        grouped[evidence_id].append(row)
+
+    ranked: list[tuple[int, RetrievedEvidence]] = []
+    with connect_existing_read_only(binding.database) as connection:
+        for evidence_id in sorted(grouped):
+            source_type, source_id, segment_id, chunk_id, document_id, url, text, evidence_runs = (
+                _authoritative_evidence(connection, evidence_id, selected_runs)
+            )
+            municipalities = _evidence_municipalities(connection, evidence_id)
+            if request.municipality_ids and not set(request.municipality_ids).intersection(
+                municipalities
+            ):
+                continue
+
+            expected_identity = {
+                "source_type": str(source_type),
+                "source_id": str(source_id),
+                "segment_id": str(segment_id),
+                "chunk_id": str(chunk_id) if chunk_id is not None else None,
+                "document_id": str(document_id),
+                "source_url": str(url),
+            }
+            unique_mentions: dict[str, Mapping[str, Any]] = {}
+            artifact_ids: set[str] = set()
+            extraction_run_ids: set[str] = set()
+
+            for row in grouped[evidence_id]:
+                mention_id = str(row.get("mention_id") or "")
+                if not mention_id:
+                    raise ProjectionMismatchError("Neo4j mention omitted its stable identity")
+                if mention_id in unique_mentions and row != unique_mentions[mention_id]:
+                    raise ProjectionMismatchError(
+                        f"Neo4j mention {mention_id} has conflicting result records"
+                    )
+                unique_mentions[mention_id] = row
+
+                actual_identity = {key: row.get(key) for key in expected_identity}
+                if actual_identity != expected_identity:
+                    raise ProjectionMismatchError(
+                        f"Neo4j evidence {evidence_id} disagrees with authoritative SQLite"
+                    )
+
+                run_id = str(row.get("extraction_run_id") or "")
+                if run_id not in selected_runs or run_id not in evidence_runs:
+                    raise ProjectionMismatchError(
+                        "Neo4j mention falls outside verified projection scope"
+                    )
+
+                required_fields = (
+                    "graph_artifact_id",
+                    "entity_id",
+                    "entity_name",
+                )
+                if any(not str(row.get(field) or "").strip() for field in required_fields):
+                    raise ProjectionMismatchError(
+                        f"Neo4j mention {mention_id} has incomplete identities"
+                    )
+
+                expected_artifact_id = graph_artifact_id_for(
+                    run_id, str(source_type), str(source_id)
+                )
+                if row.get("graph_artifact_id") != expected_artifact_id:
+                    raise ProjectionMismatchError(
+                        "Neo4j graph artifact identity disagrees with authoritative SQLite scope"
+                    )
+
+                artifact_ids.add(expected_artifact_id)
+                extraction_run_ids.add(run_id)
+
+            item = RetrievedEvidence(
+                database_snapshot_id=str(binding.database.snapshot_id),
+                evidence_id=evidence_id,
+                source_type=str(source_type),
+                source_id=str(source_id),
+                segment_id=str(segment_id),
+                chunk_id=str(chunk_id) if chunk_id is not None else None,
+                document=DocumentSource(
+                    document_id=str(document_id),
+                    source_url=_validated_source_url(url, str(document_id)),
+                    heading_context=_source_heading(
+                        connection, str(source_type), str(source_id), str(segment_id)
+                    ),
+                    municipality_ids=municipalities,
+                ),
+                evidence_text=str(text),
+                extraction_run_ids=tuple(sorted(extraction_run_ids)),
+                graph_artifact_ids=tuple(sorted(artifact_ids)),
+                assertions=(),
+                retrieval_traces=(),
+                retrieval_score=0.0,
+                rank=0,
+            )
+            ranked.append((len(unique_mentions), item))
+
+    ranked.sort(key=lambda pair: (-pair[0], pair[1].evidence_id))
+    return [
+        replace(
+            item,
+            rank=rank,
+            retrieval_score=1.0 / rank,
+            retrieval_traces=(RetrievalTrace("mention", rank, 1.0 / rank),),
+        )
+        for rank, (_, item) in enumerate(ranked[: request.top_k], start=1)
+    ]
+
+
 def _graph_retrieve(
     binding: SnapshotBinding,
     request: RetrievalRequest,
@@ -673,6 +840,9 @@ def _graph_retrieve(
             source_type, source_id, segment_id, chunk_id, document_id, url, text, runs = (
                 _authoritative_evidence(connection, evidence_id, selected_runs)
             )
+            municipalities = _evidence_municipalities(connection, evidence_id)
+            if request.municipality_ids and not set(request.municipality_ids).intersection(municipalities):
+                continue
             unique_rows: dict[str, Mapping[str, Any]] = {}
             for row in grouped[evidence_id]:
                 assertion_id = str(row.get("assertion_id") or "")
@@ -761,7 +931,7 @@ def _graph_retrieve(
                         heading_context=_source_heading(
                             connection, str(source_type), str(source_id), str(segment_id)
                         ),
-                        municipality_ids=_evidence_municipalities(connection, evidence_id),
+                        municipality_ids=municipalities,
                     ),
                     evidence_text=str(text),
                     extraction_run_ids=tuple(
@@ -927,6 +1097,7 @@ class CanonicalRetriever:
         binding = validate_snapshot_manifest(request.manifest_path)
         semantic: list[RetrievedEvidence] = []
         graph: list[RetrievedEvidence] = []
+        mention: list[RetrievedEvidence] = []
         artifact_id = None
         if request.mode in {RetrievalMode.SEMANTIC, RetrievalMode.HYBRID}:
             if self.embedder is None:
@@ -938,10 +1109,16 @@ class CanonicalRetriever:
             graph = _graph_retrieve(
                 binding, request, self.graph_backend, self.graph_timeout_seconds
             )
+        if request.mode == RetrievalMode.MENTION:
+            if self.graph_backend is None:
+                raise RetrievalError("Mention retrieval requires an explicit read-only backend")
+            mention = _mention_retrieve(
+                binding, request, self.graph_backend, self.graph_timeout_seconds
+            )
         items = (
             reciprocal_rank_fusion(semantic, graph, top_k=request.top_k)
             if request.mode == RetrievalMode.HYBRID
-            else semantic or graph
+            else mention if request.mode == RetrievalMode.MENTION else semantic or graph
         )
         return RetrievalResult(
             query=request.query,

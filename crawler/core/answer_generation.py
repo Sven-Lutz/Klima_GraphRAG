@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import socket
+import threading
 import urllib.error
 import urllib.request
 import uuid
@@ -36,6 +37,7 @@ from crawler.core.retrieval import CanonicalRetriever, RetrievalRequest, Retriev
 
 INSUFFICIENT_EVIDENCE_MARKER = "INSUFFICIENT_EVIDENCE:"
 ANSWER_RUN_SCHEMA_VERSION = 1
+_ANSWER_RUN_WRITE_LOCK = threading.Lock()
 CANONICAL_INSUFFICIENT_EVIDENCE_TEXT = (
     "The supplied evidence is insufficient to answer the question."
 )
@@ -250,6 +252,7 @@ class JsonlAnswerRunRecorder:
 
     def record(self, record: AnswerRunRecord) -> None:
         payload = json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
+        _ANSWER_RUN_WRITE_LOCK.acquire()
         try:
             descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             try:
@@ -271,6 +274,8 @@ class JsonlAnswerRunRecorder:
                 os.close(descriptor)
         except OSError as exc:
             raise AnswerRunPersistenceError("Answer run metadata could not be persisted") from exc
+        finally:
+            _ANSWER_RUN_WRITE_LOCK.release()
 
 
 @dataclass(frozen=True, slots=True)

@@ -72,11 +72,12 @@ class FixtureEmbedder:
 
 
 class FixtureGraphBackend:
-    def __init__(self, plan, *, snapshot_id: str | None = None, graph_rows=None):
+    def __init__(self, plan, *, snapshot_id: str | None = None, graph_rows=None, mention_rows=None):
         self.plan = plan
         self.snapshot_id = snapshot_id or plan.snapshot_id
         self.calls = []
         self.graph_rows = graph_rows if graph_rows is not None else _graph_rows(plan)
+        self.mention_rows = mention_rows if mention_rows is not None else _mention_rows(plan)
 
     def read(self, cypher, parameters, *, timeout_seconds):
         self.calls.append((cypher, dict(parameters), timeout_seconds))
@@ -89,6 +90,8 @@ class FixtureGraphBackend:
                     "schema_version": self.plan.projection_schema_version,
                 }
             ]
+        if "HAS_MENTION" in cypher:
+            return list(self.mention_rows)
         return list(self.graph_rows)
 
     def close(self):
@@ -118,6 +121,29 @@ def _graph_rows(plan):
                     "object_id": assertion["object_id"],
                     "object_name": assertion["object_name"],
                     "matched_entity": assertion["subject_name"],
+                }
+            )
+    return rows
+
+
+def _mention_rows(plan):
+    rows = []
+    for artifact in plan.artifacts:
+        for mention in artifact["mentions"]:
+            rows.append(
+                {
+                    "mention_id": mention["mention_id"],
+                    "extraction_run_id": artifact["run_id"],
+                    "graph_artifact_id": artifact["artifact_id"],
+                    "evidence_id": artifact["evidence_id"],
+                    "source_type": artifact["source_type"],
+                    "source_id": artifact["source_id"],
+                    "segment_id": artifact["segment_id"],
+                    "chunk_id": artifact["chunk_id"],
+                    "document_id": artifact["document_id"],
+                    "source_url": artifact["source_url"],
+                    "entity_id": mention["entity_id"],
+                    "entity_name": mention["entity_name"],
                 }
             )
     return rows
@@ -443,6 +469,26 @@ def test_graph_retrieval_resolves_segment_chunk_and_assertion_provenance(tmp_pat
     assert backend.calls[1][2] == 15.0
     assert "Solar Stadtwerke" not in backend.calls[1][0]
     assert "rowid" not in json.dumps(result.to_dict()).lower()
+
+
+def test_mention_retrieval_preserves_evidence_without_assertions(tmp_path):
+    _source, binding, plan, _artifact_id = _fixture(tmp_path)
+    backend = FixtureGraphBackend(plan)
+
+    result = CanonicalRetriever(graph_backend=backend).retrieve(
+        _request(
+            binding,
+            RetrievalMode.MENTION,
+            projection_id=plan.projection_id,
+            extraction_run_ids=plan.extraction_run_ids,
+        )
+    )
+
+    assert result.items
+    assert all(item.assertions == () for item in result.items)
+    assert all(item.graph_artifact_ids for item in result.items)
+    assert all(item.retrieval_traces[0].method == "mention" for item in result.items)
+    assert all(item.document.municipality_ids == ("muni-1", "muni-2") for item in result.items)
 
 
 def test_projection_snapshot_and_run_mismatch_fail_closed(tmp_path):
