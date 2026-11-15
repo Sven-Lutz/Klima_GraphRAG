@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>Evaluation · Klima Research</title>
+<link rel="icon" href="/static/mark.svg"><link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/evaluation.css">
+<script defer src="/static/evaluation.js"></script></head>
+<body><a class="skip" href="#evaluation-main">Zum Inhalt</a>
+<header class="masthead"><a class="brand" href="/">KLIMA <b>Research</b></a>
+<nav aria-label="Forschungsnavigation"><a href="/">Recherche</a><a href="/review">Human Validation Studio</a>
+<a href="/evaluation" aria-current="page">Evaluation</a></nav></header>
+<main id="evaluation-main" class="evaluation-shell">
+<p class="eyebrow">Nachvollziehbare Qualitätsprüfung</p><h1>Fragen, Methoden, Evidenz.</h1>
+<p>Vergleichen Sie Rechercheläufe mit versionierten Referenzurteilen. Fehlende fachliche Bewertungen
+bleiben unbewertet. Generierte Fragen und technische Fixtures sind kein unabhängiges Human Gold.</p>
+<p id="evaluation-status" role="status" aria-live="polite">Katalog wird geladen.</p>
+<section class="evaluation-panel" aria-labelledby="catalog-title"><h2 id="catalog-title">Fragenkatalog und Aufteilung</h2>
+<div id="catalog-counts" class="evaluation-strata"></div><details><summary>Stratifizierung und Qualitätsgrenzen</summary>
+<div id="catalog-strata"></div></details></section>
+<section class="evaluation-panel" aria-labelledby="operator-title"><h2 id="operator-title">Geschützter Evaluationsbetrieb</h2>
+<p>Für Ausführung und Referenzimport ist ein persönlicher Admin- oder Adjudikationsaccount aus dem
+<a href="/review">Human Validation Studio</a> erforderlich. Holdout-Fragen bleiben hier gesperrt.</p>
+<details><summary>Mit bestehendem Review-Account anmelden</summary>
+<form id="evaluation-login" method="post" action="/api/review-protocol/session"><label>Benutzername<input name="username" autocomplete="username" required></label>
+<label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
+<button>Anmelden</button></form></details></section>
+<section class="evaluation-panel" aria-labelledby="questions-title"><h2 id="questions-title">Fragen untersuchen</h2>
+<form id="evaluation-filters" class="evaluation-filters">
+<label>Datensatz<select id="evaluation-split"><option value="regression">Regression</option>
+<option value="development">Entwicklung</option><option value="adversarial">Adversarial / Negativ</option>
+<option value="human_candidates">Kandidaten zur menschlichen Prüfung</option></select></label>
+<label>Frage, Thema oder Regierungsbezirk<input id="evaluation-search" type="search"></label>
+<button>Filtern</button></form>
+<p id="question-page" class="small"></p><div class="evaluation-table-wrap" tabindex="0" aria-label="Fragentabelle horizontal scrollen">
+<table><thead><tr><th>Auswahl</th><th>Forschungsfrage</th><th>Gemeinde / Region</th><th>Stratum</th><th>Evidenzstatus</th></tr></thead>
+<tbody id="evaluation-questions"></tbody></table></div>
+<div class="evaluation-actions"><button id="questions-previous" type="button">Vorherige Seite</button>
+<button id="questions-next" type="button">Nächste Seite</button>
+<button id="candidate-handoff" type="button" hidden>Diese Kandidatenseite im Studio vorbereiten</button></div>
+<form id="evaluation-run" class="evaluation-filters">
+<label>Rechercheweg<select id="evaluation-method"><option value="lexical_expanded">Lexikalische Expansion</option>
+<option value="lexical">BM25</option><option value="graph">Graph</option><option value="dense">Semantisch</option>
+<option value="hybrid">Hybrid</option></select></label>
+<p>Wählen Sie bis zu fünf Fragen für einen ressourcenschonenden Produktlauf. Der vollständige Runner
+unterstützt alle freigegebenen Fälle. Kandidaten zur unabhängigen Annotation werden hier nicht optimiert.</p>
+<label class="check"><input id="evaluation-answer" type="checkbox" checked>Antwortsynthese mitbewerten (lokalen Provider verwenden)</label>
+<button id="evaluation-run-button">Ausgewählte Fragen ausführen</button></form>
+</section>
+<section class="evaluation-panel" aria-labelledby="references-title"><h2 id="references-title">Versionierte Goldreferenzen übernehmen</h2>
+<p>Importieren Sie den konsolidierten Export aus dem Human Validation Studio. Snapshot, Frage-IDs,
+Datensatz, Quellenidentitäten und Herkunft werden geprüft. Unvollständige Qrels erlauben keine Recallbehauptung.</p>
+<p id="automatic-reference-status" role="status">Automatische Referenzen werden nach Anmeldung geprüft.</p><button id="automatic-reference-refresh" type="button">Automatische Referenzen aktualisieren</button>
+<form id="evaluation-reference"><label>Goldlabel-Export (JSON)<input id="evaluation-gold-file" type="file" accept="application/json,.json" required></label>
+<button>Referenzen prüfen und übernehmen</button></form><p id="reference-status" class="small">Keine Referenzen für den nächsten Lauf ausgewählt.</p>
+</section>
+<section class="evaluation-panel" aria-labelledby="results-title"><h2 id="results-title">Läufe und Fehleranalyse</h2>
+<button id="evaluation-refresh" type="button">Läufe aktualisieren</button><div id="evaluation-runs"></div>
+</section><section id="review-observations" class="evaluation-panel" hidden aria-labelledby="observation-title"><h2 id="observation-title">Geprüfte gespeicherte Forschungsantworten</h2><p>Getrennt vom Fragenkatalog: Metriken gelten nur für den tatsächlich geprüften Antwortstand. Es wird keine neue Modellantwort erzeugt. Nicht geprüfte Dimensionen bleiben leer.</p><p id="observation-status" role="status"></p><div id="observation-results"></div><button id="observation-prev" type="button">Vorherige Antworten</button><button id="observation-next" type="button">Weitere Antworten</button><button id="observation-export" type="button">Private Beobachtungs-Auswertung exportieren</button></section></main></body></html>

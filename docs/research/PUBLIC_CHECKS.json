@@ -1,0 +1,82 @@
+{
+  "commit": "c2cb2005e3b221b19161121c3b39dc7fa07a342a",
+  "checks": {
+    "ruff": {
+      "rc": 0,
+      "log": "clean-ruff.txt"
+    },
+    "compile": {
+      "rc": 0,
+      "log": "clean-compile.txt"
+    },
+    "science": {
+      "rc": 0,
+      "log": "clean-science.txt"
+    },
+    "owner_collection": {
+      "rc": 2,
+      "log": "clean-owner_collection.txt"
+    },
+    "public_suite": {
+      "rc": 0,
+      "log": "clean-public_suite.txt"
+    }
+  },
+  "synthetic_replay": "SAME_MATRIX_AND_SUMMARY",
+  "pip_check": "PASS",
+  "owner_collection": {
+    "collected": 417,
+    "collection_errors": 19,
+    "status": "FAIL_UNCLEARED_VENDOR_IMPORT"
+  },
+  "public_suite": {
+    "passed": 380,
+    "skipped": 6,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 5.79,
+    "warning": "StarletteDeprecationWarning: httpx test client"
+  },
+  "hosted_ci": "NOT_RUN_AT_REPORT_TIME",
+  "independent_validation": false,
+  "external_otp": "NOT_TESTED",
+  "paid_requests": 0,
+  "public_files_verified": 448,
+  "logs": [
+    {
+      "name": "clean-compile.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "clean-ds006.txt",
+      "sha256": "49d4aa434fb6ec6bc3fd2bbc0dfaf94ac9c9a7c9d1155bf50c7a61af141823e3",
+      "bytes": 1691
+    },
+    {
+      "name": "clean-install.txt",
+      "sha256": "56d8ba8ecbb2a05a6b9a09d3e816de7f4da69a1053ff6b94b231bbdc74918d79",
+      "bytes": 10052
+    },
+    {
+      "name": "clean-owner_collection.txt",
+      "sha256": "ad5d96661fca6c6191f01e52b0ba574f01ee7ad3ac1c343fce24015e9234b661",
+      "bytes": 61559
+    },
+    {
+      "name": "clean-public_suite.txt",
+      "sha256": "47981149416c77fc44d4769b6ecf865faba6124f9dfa6228f72835109dfe91e7",
+      "bytes": 1347
+    },
+    {
+      "name": "clean-ruff.txt",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19
+    },
+    {
+      "name": "clean-science.txt",
+      "sha256": "80cc4908d3fbb770a9f8630ab8f61e243a9d1dc3e975e5a00bfc4ce2706b0ead",
+      "bytes": 134
+    }
+  ]
+}

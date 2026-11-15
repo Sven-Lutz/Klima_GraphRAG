@@ -1,0 +1,21 @@
+.coverage main{max-width:1440px;margin:auto;padding:24px clamp(16px,4vw,56px) 64px}
+.coverage h1{font-size:clamp(1.8rem,3vw,3rem)}
+.coverage .filters{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end}
+.coverage label{display:flex;flex-direction:column;flex:1 1 180px;min-width:0;gap:6px}
+.coverage input,.coverage select{width:100%;min-width:0;padding:8px;border:1px solid var(--control-line)}
+.coverage .coverage-summary{display:flex;flex-wrap:wrap;gap:16px;margin:24px 0}
+.coverage .coverage-summary article{flex:1 1 170px;padding:16px;background:var(--soft);border-top:3px solid var(--accent)}
+.coverage .coverage-summary strong{display:block;font-size:1.7rem}
+.coverage .coverage-table-wrap{max-width:100%;overflow:auto;border:1px solid var(--line);margin-top:24px}
+.coverage table{border-collapse:collapse;width:100%;min-width:920px}
+.coverage td,.coverage th{padding:12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.coverage caption{text-align:left;font-weight:600;padding:12px}
+.coverage td button{text-align:left;min-height:44px}
+.coverage td small{display:block}
+.coverage details{padding:16px;border:1px solid var(--line);margin-block:16px}
+.coverage pre,.coverage .source-card{white-space:pre-wrap;overflow-wrap:anywhere}
+.coverage .source-card{padding:16px;margin:12px 0;border:1px solid var(--line)}
+.coverage .small,.coverage #coverage-binding{overflow-wrap:anywhere}
+.coverage dl{display:grid;grid-template-columns:minmax(100px,1fr) minmax(0,3fr);gap:8px 16px}
+.coverage dt{font-weight:600}.coverage dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:650px){.coverage .filters{display:block}.coverage label{margin-block:12px}.coverage dl{display:block}.coverage dd{margin-bottom:12px}.coverage .masthead{flex-wrap:wrap}}

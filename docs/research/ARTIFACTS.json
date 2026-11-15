@@ -1,0 +1,27 @@
+{
+  "schema": "public-study-artifacts-v1",
+  "studies": [
+    {
+      "public_path": "docs/research/artifacts/retrieval03-report.json",
+      "public_sha256": "3100e79b4a2b3ec4461cedaaa7898d4afbed7ff51947a99c7ec75bdde5916c79",
+      "source_path": "research/bavaria/completion/release/retrieval03/report.json",
+      "source_sha256": "3100e79b4a2b3ec4461cedaaa7898d4afbed7ff51947a99c7ec75bdde5916c79",
+      "import_snapshot": "213ece365633eef0201624614413c3932f206b68",
+      "historical_experiment_commit": "NOT_ESTABLISHED_BY_REPORT",
+      "raw_inputs_public": false,
+      "independent_human_validation": false,
+      "reproduction_status": "AGGREGATE_CHECK_ONLY"
+    },
+    {
+      "public_path": "docs/research/artifacts/ie-1.7b-summary.json",
+      "public_sha256": "c4b7e5b5d933bd9dd1c527ca66e59988d5c53f7e0f470ed7e769175f1fcda63b",
+      "source_path": "research/bavaria/completion/release/stronger-ie01/report.json",
+      "source_sha256": "d65a2924b6c9f36a711ddb04da0613c993c6837d72dfe6434478eefbbe8865b2",
+      "import_snapshot": "213ece365633eef0201624614413c3932f206b68",
+      "historical_experiment_commit": "NOT_ESTABLISHED_BY_REPORT",
+      "raw_inputs_public": false,
+      "independent_human_validation": false,
+      "reproduction_status": "AGGREGATE_CHECK_ONLY"
+    }
+  ]
+}

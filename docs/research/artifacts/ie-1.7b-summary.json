@@ -1,0 +1,59 @@
+{
+  "schema": "targeted-field-ie-comparison-v1",
+  "status": "EXPLORATORY_PROVISIONAL",
+  "cases": 8,
+  "components": 8,
+  "independent_human_judgments": 0,
+  "reference_limit": "source-exposed provisional annotations; no general architecture superiority",
+  "arms": {
+    "rules": {
+      "slots": 56,
+      "exact": 31,
+      "positive_slots": 27,
+      "tp": 2,
+      "fn": 25,
+      "unknown_slots": 29,
+      "correct_unknown": 29,
+      "predicted_positive": 3,
+      "fp": 1,
+      "precision": 0.6666666666666666,
+      "recall": 0.07407407407407407,
+      "f1": 0.13333333333333333
+    },
+    "model": {
+      "slots": 56,
+      "exact": 16,
+      "positive_slots": 27,
+      "tp": 16,
+      "fn": 11,
+      "predicted_positive": 56,
+      "fp": 40,
+      "unknown_slots": 29,
+      "correct_unknown": 0,
+      "precision": 0.2857142857142857,
+      "recall": 0.5925925925925926,
+      "f1": 0.3855421686746988
+    },
+    "hybrid": {
+      "slots": 56,
+      "exact": 30,
+      "positive_slots": 27,
+      "tp": 5,
+      "fn": 22,
+      "predicted_positive": 10,
+      "fp": 5,
+      "unknown_slots": 29,
+      "correct_unknown": 25,
+      "precision": 0.5,
+      "recall": 0.18518518518518517,
+      "f1": 0.2702702702702703
+    }
+  },
+  "source": {
+    "path": "research/bavaria/completion/release/stronger-ie01/report.json",
+    "sha256": "d65a2924b6c9f36a711ddb04da0613c993c6837d72dfe6434478eefbbe8865b2",
+    "code_snapshot": "213ece365633eef0201624614413c3932f206b68",
+    "raw_inputs_public": false,
+    "historical_experiment_code_commit": "NOT_ESTABLISHED_BY_AGGREGATE_REPORT"
+  }
+}

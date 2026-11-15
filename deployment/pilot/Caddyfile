@@ -1,0 +1,36 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+    servers {
+        max_header_size 16KB
+        timeouts {
+            read_header 10s
+            read_body 20s
+            write 40s
+            idle 60s
+        }
+    }
+}
+{$PILOT_DOMAIN} {
+    # Automatic HTTPS; individual accounts, no shared pilot password.
+    basic_auth {
+        import /etc/caddy/accounts
+    }
+    header {
+        Strict-Transport-Security "max-age=86400"
+        -Server
+        Referrer-Policy "no-referrer"
+    }
+    request_body {
+        max_size 24KB
+    }
+    reverse_proxy app:8080 {
+        header_up X-Pilot-User {http.auth.user.id}
+        header_up X-Pilot-Gateway {$PILOT_GATEWAY_TOKEN}
+        header_up -Authorization
+        header_up -Cookie
+        header_up -X-Forwarded-For
+        header_up -X-Real-IP
+    }
+    # No HTTP access log or third-party analytics.
+}

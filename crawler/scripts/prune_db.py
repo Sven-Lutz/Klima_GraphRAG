@@ -21,13 +21,14 @@ Usage:
     python -m crawler.scripts.prune_db --clear-chunked-segment-text
     python -m crawler.scripts.prune_db --vacuum-into slim.sqlite
 """
+
 from __future__ import annotations
 
 import argparse
 import sqlite3
 from pathlib import Path
 
-from crawler.core.config import DB_PATH
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 
 
 def _mb(n: int) -> str:
@@ -35,9 +36,10 @@ def _mb(n: int) -> str:
 
 
 def _table_exists(con: sqlite3.Connection, name: str) -> bool:
-    return con.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    return (
+        con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        is not None
+    )
 
 
 def _column_exists(con: sqlite3.Connection, table: str, column: str) -> bool:
@@ -89,8 +91,10 @@ def report(con: sqlite3.Connection, db_path: Path) -> None:
                 "WHERE s.text IS NOT NULL AND s.text != '' AND s.segment_id IN "
                 "(SELECT DISTINCT segment_id FROM chunks WHERE segment_id IS NOT NULL)"
             ).fetchone()
-            print(f"  → --clear-chunked-segment-text würde {chunked[0]:,} Segment-Texte "
-                  f"leeren (~{_mb(chunked[1])})")
+            print(
+                f"  → --clear-chunked-segment-text würde {chunked[0]:,} Segment-Texte "
+                f"leeren (~{_mb(chunked[1])})"
+            )
     print(f"{'═' * 62}\n")
 
 
@@ -125,8 +129,10 @@ def mark_boilerplate(con: sqlite3.Connection, min_docs: int) -> None:
         """,
         (min_docs,),
     )
-    print(f"  ✓ {cur.rowcount:,} Boilerplate-Segmente markiert "
-          f"(identischer Text in ≥{min_docs} Dokumenten einer Kommune)")
+    print(
+        f"  ✓ {cur.rowcount:,} Boilerplate-Segmente markiert "
+        f"(identischer Text in ≥{min_docs} Dokumenten einer Kommune)"
+    )
 
 
 def prune_negative(con: sqlite3.Connection) -> None:
@@ -175,32 +181,46 @@ def vacuum(con: sqlite3.Connection, into: str | None, db_path: Path) -> None:
         print(f"  ✓ VACUUM fertig ({_mb(db_path.stat().st_size)})")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Arbeits-DB verkleinern (Report ohne Flags)")
-    ap.add_argument("--db", default=str(DB_PATH))
-    ap.add_argument("--mark-boilerplate", action="store_true",
-                    help="Seitenübergreifend identische Segmente (Menüs/Footer) "
-                         "als is_negative markieren")
-    ap.add_argument("--boilerplate-min-docs", type=int, default=5,
-                    help="Ab wie vielen Dokumenten pro Kommune ein Segment "
-                         "als Boilerplate gilt (default: 5)")
-    ap.add_argument("--prune-negative", action="store_true",
-                    help="Segmente mit is_negative=1 löschen (nie gechunkt)")
-    ap.add_argument("--clear-chunked-segment-text", action="store_true",
-                    help="segments.text leeren, wo bereits Chunks existieren")
-    ap.add_argument("--vacuum", action="store_true",
-                    help="DB in place kompaktieren (braucht 2x Platz transient)")
-    ap.add_argument("--vacuum-into", metavar="PATH",
-                    help="Kompakte Kopie schreiben (braucht nur Platz für die Kopie)")
-    args = ap.parse_args()
+    ap.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    ap.add_argument(
+        "--mark-boilerplate",
+        action="store_true",
+        help="Seitenübergreifend identische Segmente (Menüs/Footer) als is_negative markieren",
+    )
+    ap.add_argument(
+        "--boilerplate-min-docs",
+        type=int,
+        default=5,
+        help="Ab wie vielen Dokumenten pro Kommune ein Segment als Boilerplate gilt (default: 5)",
+    )
+    ap.add_argument(
+        "--prune-negative",
+        action="store_true",
+        help="Segmente mit is_negative=1 löschen (nie gechunkt)",
+    )
+    ap.add_argument(
+        "--clear-chunked-segment-text",
+        action="store_true",
+        help="segments.text leeren, wo bereits Chunks existieren",
+    )
+    ap.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="DB in place kompaktieren (braucht 2x Platz transient)",
+    )
+    ap.add_argument(
+        "--vacuum-into",
+        metavar="PATH",
+        help="Kompakte Kopie schreiben (braucht nur Platz für die Kopie)",
+    )
+    args = ap.parse_args(argv)
 
-    db_path = Path(args.db)
-    if not db_path.exists():
-        print(f"[!] DB nicht gefunden: {db_path}")
-        return
-
-    con = sqlite3.connect(str(db_path), timeout=60.0, isolation_level=None)
-    con.execute("PRAGMA busy_timeout=60000")
+    database = resolve_runtime_database(args.db)
+    db_path = database.path
+    con = connect_existing_read_write(db_path)
+    print(f"database={database.path} database_id={database.database_id}")
 
     report(con, db_path)
 

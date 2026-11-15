@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sqlite3
 import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 
+from crawler.core.database import (
+    RuntimeDatabase,
+    connect_existing_read_write,
+    resolve_runtime_database,
+)
 from crawler.core.engine import Engine, EngineLimits
+from crawler.core.preflight import PreflightError, validate_worker_preflight
 from crawler.core.seed_jobs import (
-    DEFAULT_CRAWL_DB_PATH,
     claim_next_job,
     default_worker_id,
     heartbeat_job,
@@ -23,10 +28,7 @@ from crawler.core.seeds import load_seeds_from_sqlite
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("worker.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler("worker.log", encoding="utf-8"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -34,52 +36,107 @@ HEARTBEAT_EVERY_SECONDS = 30.0
 
 KLIMA_KEYWORDS = {
     "positive": [
-        "klima", "klimaschutz", "energie", "waermeplanung", "wärmeplanung",
-        "co2", "thg", "solar", "photovoltaik", "pv", "wind",
-        "förder", "foerder", "zuschuss", "mittel", "haushalt", "finanz",
-        "investition", "nki", "kfw", "eu-mittel", "efre", "beschluss", "vorlage"
+        "klima",
+        "klimaschutz",
+        "energie",
+        "waermeplanung",
+        "wärmeplanung",
+        "co2",
+        "thg",
+        "solar",
+        "photovoltaik",
+        "pv",
+        "wind",
+        "förder",
+        "foerder",
+        "zuschuss",
+        "mittel",
+        "haushalt",
+        "finanz",
+        "investition",
+        "nki",
+        "kfw",
+        "eu-mittel",
+        "efre",
+        "beschluss",
+        "vorlage",
     ],
     "negative": [
-        "impressum", "datenschutz", "barrierefreiheit", "leichte-sprache",
-        "login", "karriere", "stellenangebot", "jubiläum", "veranstaltung",
-        "tourismus", "museum", "sport"
-    ]
+        "impressum",
+        "datenschutz",
+        "barrierefreiheit",
+        "leichte-sprache",
+        "login",
+        "karriere",
+        "stellenangebot",
+        "jubiläum",
+        "veranstaltung",
+        "tourismus",
+        "museum",
+        "sport",
+    ],
 }
 
 KLIMA_LIMITS = EngineLimits(
     max_depth=12,
     max_pages_per_muni=25000,
-    max_file_size_mb=200  # Auf 200 MB angehoben für große Pläne
+    max_file_size_mb=200,  # Auf 200 MB angehoben für große Pläne
 )
 
 # Additional seed paths — enqueued alongside each homepage to discover
 # relevant climate/energy pages that may not be well-linked
 SEED_ADDITIONAL_PATHS = [
-    "/klima", "/klimaschutz", "/energie", "/waermeplanung",
-    "/umwelt", "/mobilitaet", "/verkehr", "/bauen",
-    "/foerderung", "/foerderprogramme", "/haushalt",
-    "/ratsinfo", "/bekanntmachungen",
+    "/klima",
+    "/klimaschutz",
+    "/energie",
+    "/waermeplanung",
+    "/umwelt",
+    "/mobilitaet",
+    "/verkehr",
+    "/bauen",
+    "/foerderung",
+    "/foerderprogramme",
+    "/haushalt",
+    "/ratsinfo",
+    "/bekanntmachungen",
 ]
 
+
+def resolve_worker_db_path(value: str | Path | None) -> Path:
+    """Resolve and validate the one database used by a worker invocation."""
+    return resolve_worker_database(value).path
+
+
+def resolve_worker_database(value: str | Path | None) -> RuntimeDatabase:
+    """Resolve and validate the immutable worker database binding."""
+    database = resolve_runtime_database(value)
+    db_path = database.path
+    if not db_path.is_file():
+        source = "--db" if value is not None else "KLIMA_DB_PATH/default"
+        raise FileNotFoundError(
+            f"Selected crawl database ({source}) does not exist: {db_path}. "
+            "Initialize seed jobs first with python -m crawler.scripts.init_seed_jobs "
+            "--db <path>."
+        )
+    return database
+
+
 def _heartbeat_loop(
-    db_path: str, municipality_id: str, worker_id: str, stop: threading.Event
+    db_path: Path, municipality_id: str, worker_id: str, stop: threading.Event
 ) -> None:
-    con = sqlite3.connect(db_path, timeout=60.0, isolation_level=None)
+    con = connect_existing_read_write(db_path)
     try:
-        con.execute("PRAGMA busy_timeout=60000;")
-        con.execute("PRAGMA journal_mode=WAL;")
         while not stop.wait(HEARTBEAT_EVERY_SECONDS):
             try:
                 heartbeat_job(con, municipality_id, worker_id)
-            except sqlite3.OperationalError:
-                pass
             except Exception:
                 pass
     finally:
         con.close()
 
+
 def _worker_loop(
-    db_path: str,
+    db_path: Path,
     worker_id: str,
     allowed: dict,
     stale_after: int,
@@ -93,9 +150,7 @@ def _worker_loop(
     eigener Scheduler). Parallelität entsteht ÜBER Kommunen hinweg — jede
     Kommune ist ein anderer Host, die Per-Host-Politeness bleibt gewahrt.
     """
-    con = sqlite3.connect(db_path, timeout=60.0, isolation_level=None)
-    con.execute("PRAGMA busy_timeout=60000;")
-    con.execute("PRAGMA journal_mode=WAL;")
+    con = connect_existing_read_write(db_path)
 
     engine = Engine(
         keywords=KLIMA_KEYWORDS,
@@ -103,14 +158,17 @@ def _worker_loop(
         allowed_domains_by_muni=allowed,
         worker_id=worker_id,
         seed_additional_paths=SEED_ADDITIONAL_PATHS,
+        db_path=db_path,
     )
 
     processed = 0
     try:
         while not shutdown.is_set():
             with limit_lock:
-                if (limit_counter["limit"] is not None
-                        and limit_counter["claimed"] >= limit_counter["limit"]):
+                if (
+                    limit_counter["limit"] is not None
+                    and limit_counter["claimed"] >= limit_counter["limit"]
+                ):
                     break
                 job = claim_next_job(con, worker_id=worker_id, stale_after_seconds=stale_after)
                 if job is not None:
@@ -155,14 +213,29 @@ def _worker_loop(
     return processed
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(DEFAULT_CRAWL_DB_PATH))
+    ap.add_argument(
+        "--db",
+        default=None,
+        help="Crawl SQLite database; overrides KLIMA_DB_PATH for this invocation",
+    )
     ap.add_argument("--stale-after", type=int, default=15 * 60)
     ap.add_argument("--limit", type=int, default=None, help="Anzahl der zu bearbeitenden Kommunen.")
-    ap.add_argument("--workers", type=int, default=1,
-                    help="Parallele Kommunen (je 1 Thread; Politeness pro Host bleibt erhalten)")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallele Kommunen (je 1 Thread; Politeness pro Host bleibt erhalten)",
+    )
+    args = ap.parse_args(argv)
+
+    database = resolve_worker_database(args.db)
+    db_path = database.path
+    try:
+        validate_worker_preflight(db_path)
+    except PreflightError as exc:
+        ap.error(str(exc))
 
     _, allowed = load_seeds_from_sqlite()
 
@@ -171,6 +244,8 @@ def main() -> None:
     limit_lock = threading.Lock()
     limit_counter = {"limit": args.limit, "claimed": 0}
 
+    logger.info("worker_database=%s", db_path)
+    logger.info("worker_database_id=%s", database.database_id)
     logger.info(f"🚀 Starte Industrial-Worker (High-Recall Mode, workers={args.workers})")
     if args.limit:
         logger.info(f"🎯 Ziel-Limit: {args.limit} Kommunen")
@@ -179,17 +254,28 @@ def main() -> None:
     try:
         if args.workers <= 1:
             jobs_processed = _worker_loop(
-                args.db, default_worker_id(), allowed,
-                args.stale_after, limit_counter, limit_lock, shutdown,
+                db_path,
+                default_worker_id(),
+                allowed,
+                args.stale_after,
+                limit_counter,
+                limit_lock,
+                shutdown,
             )
         else:
             from concurrent.futures import ThreadPoolExecutor
+
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
                 futures = [
                     pool.submit(
                         _worker_loop,
-                        args.db, f"{default_worker_id()}#{i}", allowed,
-                        args.stale_after, limit_counter, limit_lock, shutdown,
+                        db_path,
+                        f"{default_worker_id()}#{i}",
+                        allowed,
+                        args.stale_after,
+                        limit_counter,
+                        limit_lock,
+                        shutdown,
                     )
                     for i in range(args.workers)
                 ]
@@ -201,6 +287,7 @@ def main() -> None:
     finally:
         total_time = timedelta(seconds=int(time.time() - start_time))
         logger.info(f"🏁 Fertig: {jobs_processed} Kommunen in {total_time} verarbeitet.")
+
 
 if __name__ == "__main__":
     try:

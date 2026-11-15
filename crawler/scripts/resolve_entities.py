@@ -12,6 +12,7 @@ Usage:
     python -m crawler.scripts.resolve_entities
     python -m crawler.scripts.resolve_entities --min-freq 2 --similarity 0.85
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from crawler.core.config import DB_PATH
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 
 # ---------------------------------------------------------------------------
 # Normalisation rules
@@ -113,6 +114,7 @@ def substring_merge_ok(shorter: str, longer: str) -> bool:
 # DB setup
 # ---------------------------------------------------------------------------
 
+
 def setup_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -141,6 +143,7 @@ def setup_db(conn: sqlite3.Connection) -> None:
 # Entity extraction from graph_triplets JSON
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RawEntity:
     name: str
@@ -160,17 +163,20 @@ def load_all_entities(conn: sqlite3.Connection) -> list[RawEntity]:
             name = (e.get("name") or "").strip()
             if not name or len(name) < 2:
                 continue
-            entities.append(RawEntity(
-                name=name,
-                entity_type=e.get("type", "Dokument"),
-                category=e.get("category", "Sonstiges"),
-            ))
+            entities.append(
+                RawEntity(
+                    name=name,
+                    entity_type=e.get("type", "Dokument"),
+                    category=e.get("category", "Sonstiges"),
+                )
+            )
     return entities
 
 
 # ---------------------------------------------------------------------------
 # Resolution logic
 # ---------------------------------------------------------------------------
+
 
 def resolve(
     entities: list[RawEntity],
@@ -194,6 +200,7 @@ def resolve(
     key_to_canonical: dict[str, str] = {}
     for key, names in groups.items():
         from collections import Counter
+
         freq = Counter(names)
         canonical = max(freq.keys(), key=lambda n: (freq[n], len(n)))
         key_to_canonical[key] = canonical
@@ -259,9 +266,16 @@ def resolve(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
-    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+
+def main(
+    sim_threshold: float = 0.85,
+    min_freq: int = 1,
+    db_path: str | None = None,
+) -> None:
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_write(database.path)
     setup_db(conn)
+    print(f"database={database.path} database_id={database.database_id}")
 
     print("📖 Lade Entitäten aus graph_triplets…")
     entities = load_all_entities(conn)
@@ -283,6 +297,7 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
 
     # Compute frequency per canonical
     from collections import Counter
+
     canonical_freq = Counter(mapping.values())
 
     # Store to DB
@@ -324,10 +339,16 @@ def main(sim_threshold: float = 0.85, min_freq: int = 1) -> None:
     print("\n🏁 Done.")
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Entity Resolution für den KlimaCrawler Knowledge Graph.")
+        description="Entity Resolution für den KlimaCrawler Knowledge Graph."
+    )
     parser.add_argument("--similarity", type=float, default=0.85, help="Fuzzy-Schwelle (0.0-1.0)")
     parser.add_argument("--min-freq", type=int, default=1, help="Min. Häufigkeit für Aufnahme")
-    args = parser.parse_args()
-    main(sim_threshold=args.similarity, min_freq=args.min_freq)
+    parser.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = parser.parse_args(argv)
+    main(sim_threshold=args.similarity, min_freq=args.min_freq, db_path=args.db)
+
+
+if __name__ == "__main__":
+    cli()

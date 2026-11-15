@@ -1,200 +1,34 @@
-# KIT KlimaCrawler 🌍
+# Klima_GraphRAG — wissenschaftlicher Entwicklungsstand
 
-**GraphRAG-System für kommunale Klimaschutzdaten.** Crawlt die Webseiten
-aller **2.056 bayerischen Kommunen**, extrahiert Klimaschutz-relevante
-Inhalte (Konzepte, Förderprogramme, Maßnahmen, CO₂-Ziele) und macht sie
-über einen Wissensgraphen in natürlicher Sprache durchsuchbar.
+Wie lassen sich kommunale Klimaschutzinformationen korrekt, vollständig, nachvollziehbar und ressourceneffizient erschließen? Dieses Forschungsprojekt vergleicht autoritative Quellenbeschaffung, Parsing, Information Extraction, strukturierte Evidenz und Retrieval. **GraphRAG ist eine prüfbare Alternative zu BM25, Dense, Hybrid und SQL, kein vorausgesetzter Gewinner.**
 
-```
-Crawl → Segmente → Chunks → Embeddings → Wissensgraph (Ollama-LLM)
-     → Neo4j → Community Detection → Query Agent → Evaluation
-```
+Dieser Branch ist ein selektierter Code-/Forschungs-Snapshot auf öffentlicher `main`-Basis. Private Entwicklungshistorie, Originalarchive, echte Reviewdaten und nicht geklärte Datenrechte werden nicht übernommen. **Keine unabhängige wissenschaftliche Validierung; keine extern abgenommene HTTPS-/OTP-Preview.**
 
-## ⚡ Schnellstart
+## Einstieg
 
-**Demo (3 Kommunen, lokal, ohne GPU/Neo4j/Ollama, ~20 Minuten):**
+Python 3.11 und Node.js für die JS-Vertragstests. Die tatsächlich geprüften Befehle und exakten Einschränkungen stehen in [REPRODUCING.md](REPRODUCING.md), Ergebnisse in [PUBLICATION_REPORT.md](PUBLICATION_REPORT.md).
 
 ```bash
-bash demo/run_poc.sh
-python demo/visualize_graph.py        # interaktiver Graph im Browser
-python demo/query_demo.py "Wärmepumpe Förderung"
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -r requirements-publication.lock
+TIKTOKEN_CACHE_DIR="$PWD/.venv/tokenizer-cache" .venv/bin/python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'
+.venv/bin/python -m pytest @tests/public-tests.txt -ra
 ```
 
-**Vollbetrieb:**
+Die Test-Fixtures sind erfundene technische Fälle, kein kommunaler Goldstandard. Für schreibende Workspace-/Exporttests gelten unveränderte Speicherreservegates; fehlender Platz ist kein Test-PASS. Kein API-Key und keine kostenpflichtige Inferenz nötig.
 
-```bash
-python3 -m venv wi2026 && source wi2026/bin/activate
-pip install -r crawler/requirements.txt
-python -m crawler.scripts.init_seed_jobs              # Jobs aus municipalities.sqlite
-caffeinate -i python -m crawler.scripts.run_worker --workers 4
-```
+## Architektur und Funktionsgrenzen
 
-**Infrastruktur (Neo4j + Ollama) per Docker:**
+Quellenfassungen und SHA256-Provenienz → HTML/PDF-Konversion → Segmente/Chunks → typisierte Evidenz und optionale Relationen → lexikalisches/semantisches/hybrides/strukturiertes Retrieval → belegte Antwort oder explizite Abstention. SQLite bildet den lokalen Evidenzkern; Neo4j-Projektion und read-only Text2Cypher sind optionale Grenzen. Browser- und technische Reviewkomponenten sind Forschungssoftware. Ein synthetischer Adjudikationslauf erzeugt kein unabhängiges Human Gold.
 
-```bash
-docker compose up -d
-docker compose exec ollama ollama pull llama3.1:8b
-```
+Die vollständige lokale Corpus-Preview wird durch diesen Quellcodeexport nicht als öffentlich lauffähige Demo zugesagt. Fehlende Quellen, Modellgewichte, Rights-Register und ungeklärte optionale Komponenten werden in [PUBLICATION_SCOPE.md](PUBLICATION_SCOPE.md) konkret benannt. Originaldokumente und aktuelle Realweltzustände können nicht aus leeren Beispieldaten abgeleitet werden.
 
-Die Defaults in `config.py` passen direkt auf diese Dienste — Neo4j-Browser
-unter `http://localhost:7474`, GDS- und APOC-Plugin sind vorinstalliert.
+## Forschung und Mitarbeit
 
----
+- [Verständlicher Forschungsüberblick](RESEARCH_OVERVIEW_DE.md)
+- [Methodik und bestehende RQ1–RQ8/H1–H6](RESEARCH_METHODOLOGY.md)
+- [Studiengetrennte Befunde und Grenzen](RESEARCH_FINDINGS_AND_LIMITATIONS.md)
+- [Reproduktion](REPRODUCING.md), [Beiträge](CONTRIBUTING.md), [Lizenz-/Datenpolitik](DATA_POLICY.md)
+- [Bestehender Contributor Hub #15](https://github.com/Sven-Lutz/Klima_GraphRAG/issues/15), [Release-Cutline #16](https://github.com/Sven-Lutz/Klima_GraphRAG/issues/16)
 
-## 📁 Repo-Struktur — was macht welche Datei?
-
-```
-crawler/core/            Crawler-Kern (von allen Stages importiert)
-  config.py              ★ Single Source of Truth: Pfade, Ollama, Neo4j, Seed/Temperatur
-                           — alles per KLIMA_*-Umgebungsvariablen überschreibbar
-  engine.py              Crawl-Loop: Frontier, Scoring, robots.txt/Sitemaps,
-                           Retry/Backoff, Autostop, Politeness pro Host
-  storage.py             SQLite-Layer: Upsert per url_canonical, atomare
-                           Transaktionen, seed_jobs-Claiming (verteiltes Arbeiten)
-  scheduler.py           Prioritäts-Queue für die Crawl-Frontier
-  canonical.py           URL-Kanonisierung (Dedup-Grundlage, LRU-gecacht)
-  traps.py               Crawl-Fallen-Erkennung (Kalender, Paginierung, Galerien)
-  models.py              Datenklassen (CrawlTask, FetchResult, Segment, …)
-  seeds.py / seed_jobs.py  Seed-Verwaltung: CSV → seed_jobs-Tabelle, atomares Claiming
-  parsers/html_parser.py Segmente + Meta + Outlinks aus HTML
-  parsers/pdf_parser.py  Segmente aus PDFs (pdftotext, seitenweise)
-  segmentation/chunker.py Tiktoken-Chunking 600/60 (cl100k_base, gecacht)
-
-crawler/scripts/         Pipeline-Stages (je ein Kommando, siehe PIPELINE.md)
-  run_worker.py          Stage 0 — Crawl-Worker (--workers N, --limit N)
-  init_seed_jobs.py      Stage 0 — befüllt seed_jobs aus municipalities.sqlite
-  chunk_documents.py     Stage 1 — Segmente → Chunks (600 Tok / 60 Overlap)
-  generate_embeddings.py Stage 2a — SentenceTransformers → chunks.embedding (+ Neo4j)
-  extract_graph_ollama.py Stage 2b — LLM-Extraktion Entitäten/Beziehungen (--parallel N)
-  resolve_entities.py    Stage 2c — Entity Resolution (kuratierte Aliase + Fuzzy)
-  export_graph_to_neo4j.py Stage 3 — Graph nach Neo4j (UNWIND-Batches, Dangling-Filter)
-  detect_communities.py  Stage 3b — Leiden-Communities + LLM-Reports (Global Search)
-  summarize_documents.py Stage 3c — Dokument-Zusammenfassungen (Community-Layer)
-  query_agent.py         Stage 4 — Router: Local Search / Global Search / Text2Cypher
-  evaluate.py            Stage 5 — Benchmarking: AutoQ/AutoE, Fixtures, eval_runs/
-  analyze_topics.py      Ergänzend — BERTopic-Themenanalyse (HPC Stage 5)
-  prune_db.py            Wartung — DB-Report, Boilerplate-Markierung, VACUUM
-  generate_municipalities_csv.py  Stammdaten-Provenienz: erzeugt municipalities-
-                           Datensatz aus Wikipedia/Wikidata (Reproduzierbarkeit)
-
-crawler/data/
-  db/municipalities.sqlite  Stammdaten aller 2.056 Kommunen (AGS, URL, Domains, …)
-  seeds/municipalities.csv  CSV-Quelle für seeds.py / init_seed_jobs
-
-demo/                    Lauffähiger PoC ohne GPU/Neo4j/Ollama
-  run_poc.sh             Ende-zu-Ende: Crawl (3 Kommunen) → Chunks → Embeddings
-                           → spaCy-Graph → Suche; nutzt die Produktions-Module
-  init_demo_db.py        Demo-DB mit 3 Kommunen-Seeds anlegen
-  extract_graph_spacy.py Offline-Graph-Extraktion (spaCy NER) — Fallback ohne LLM
-  inspect_graph.py       Graph-Statistiken im Terminal
-  visualize_graph.py     Interaktiver HTML-Graph (pyvis) — visuelles Validierungswerkzeug
-  query_demo.py          Cosine-Retrieval direkt auf SQLite (gleiches Embedding-Modell)
-
-docs/
-  PIPELINE.md            Stage-für-Stage-Referenz (Einstiegsdokument)
-  pipeline_diagrams.md   Mermaid-Diagramme der Architektur
-  *.pptx + create_onepagers.py  Projekt-OnePager (Vorarbeiten & Ausschreibung) + Generator
-
-hpc/                     SLURM-Pipeline für bwUniCluster (Stages 2–6)
-tests/                   47 Tests: Chunker, URL-Kanonisierung, Graph-Schema,
-                           Export-Integrität, Storage-Upsert, Entity Resolution
-.github/workflows/ci.yml Lint (ruff) + Tests bei jedem Push
-```
-
----
-
-## 🕷️ Crawl
-
-```bash
-python -m crawler.scripts.run_worker                  # alle pending Jobs
-python -m crawler.scripts.run_worker --limit 10       # 10 Kommunen
-python -m crawler.scripts.run_worker --workers 8      # 8 Kommunen parallel
-```
-
-- **Politeness:** `robots.txt` wird respektiert (Default), Mindestabstand pro
-  Host; Sitemap-Einträge aus robots.txt werden als priorisierte Seeds genutzt
-- **Robustheit:** Timeouts/429/5xx → 3 Versuche mit Backoff; Re-Fetches
-  aktualisieren bestehende Dokumente (kein Duplikat)
-- **Verteiltes Arbeiten:** `seed_jobs` nutzt atomares Claiming — mehrere
-  Maschinen/Worker nehmen sich keine Jobs weg
-- **Standby verhindern:** macOS `caffeinate -i …`, Windows PowerToys Awake
-
-**Fortschritt beobachten:**
-
-```bash
-watch -n 30 'sqlite3 crawler/data/db/crawl.sqlite \
-  "SELECT status, COUNT(*) FROM seed_jobs GROUP BY status; \
-   SELECT COUNT(*) FROM documents_raw;"'
-```
-
----
-
-## 🧠 GraphRAG-Pipeline
-
-Nach dem Crawl (Details: [docs/PIPELINE.md](docs/PIPELINE.md)):
-
-```bash
-python -m crawler.scripts.chunk_documents
-python -m crawler.scripts.generate_embeddings
-python -m crawler.scripts.extract_graph_ollama --chunk-mode --parallel 4
-python -m crawler.scripts.resolve_entities
-python -m crawler.scripts.export_graph_to_neo4j
-python -m crawler.scripts.detect_communities --parallel 4
-python -m crawler.scripts.query_agent "Welche Kommunen fördern Photovoltaik?"
-```
-
-**Evaluation** (reproduzierbar: fester Seed, Prompt-Version, Run-Historie):
-
-```bash
-python -m crawler.scripts.evaluate --questions 50 --save-questions questions.json
-python -m crawler.scripts.evaluate --load questions.json     # eingefrorenes Fixture
-```
-
-**DB verkleinern** (ohne Flags nur Report — gefahrlos):
-
-```bash
-python -m crawler.scripts.prune_db
-python -m crawler.scripts.prune_db --mark-boilerplate        # Menüs/Footer markieren
-```
-
----
-
-## ⚙️ Konfiguration
-
-Zentrale Konfiguration in `crawler/core/config.py`, überschreibbar per
-Umgebungsvariable — kein Skript hat hartkodierte Pfade:
-
-| Variable | Default | Zweck |
-|---|---|---|
-| `KLIMA_DB_PATH` | `crawler/data/db/crawl.sqlite` | Arbeits-Datenbank |
-| `KLIMA_OLLAMA_URL` / `KLIMA_OLLAMA_MODEL` | `localhost:11434` / `llama3.1:8b` | LLM |
-| `KLIMA_NEO4J_URI` / `_USER` / `_PASSWORD` | `bolt://localhost:7687` | Graph-DB |
-| `KLIMA_LLM_SEED` / `KLIMA_LLM_TEMPERATURE` | `42` / `0.0` | Reproduzierbarkeit |
-| `KLIMA_TLS_VERIFY` | `0` | TLS-Zertifikate beim Crawlen prüfen (Default aus: viele kommunale Server haben kaputte Zertifikatsketten) |
-
----
-
-## 🧪 Tests & CI
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest
-```
-
-GitHub Actions führt bei jedem Push ruff (kritische Fehler) und die
-Test-Suite aus.
-
----
-
-## 🛠 Voraussetzungen & Fehlerquellen
-
-- Python 3.10+, stabile Internetverbindung, `pdftotext` im Systempfad
-- Große Crawls: Standby des Rechners verhindern (sonst bricht der Lauf ab)
-- Datenbank liegt unter `crawler/data/db/` — oder per `KLIMA_DB_PATH` umbiegen
-- Ollama nötig für Graph-Extraktion/Query/Evaluation; die Demo läuft ohne
-
----
-
-## 📄 Lizenz
-
-[MIT](LICENSE)
+Bitte keine zweite Grundlagenphase und keine neuen parallelen Issues für bereits vorhandene Module. Unabhängige Originalannotation, methodenblind gepoolte Referenzen und faire Vergleichsbedingungen bleiben nächste wissenschaftliche Aufgaben. Technische Funktionsprüfungen und explorative Bestandszahlen ersetzen diese nicht.
