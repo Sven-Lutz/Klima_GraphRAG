@@ -317,7 +317,15 @@ def create_fixture_service(runtime_dir: Path) -> ResearchApplicationService:
     _create_source(source)
     _persist_graph_run(source)
     _install_embeddings(source)
-    binding = export_database_snapshot(source, snapshot)
+    export_database_snapshot(source, snapshot)
+    return load_fixture_service(runtime_dir)
+
+
+def load_fixture_service(runtime_dir: Path) -> ResearchApplicationService:
+    """Restore the same immutable synthetic snapshot without recreating its sources."""
+    from crawler.core.snapshots import validate_snapshot_manifest
+
+    binding = validate_snapshot_manifest(runtime_dir / "fixture-snapshot.sqlite.manifest.json")
     plan = build_projection_plan(
         binding,
         ("fixture-chunk-run", "fixture-segment-run"),
