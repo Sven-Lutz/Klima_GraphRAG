@@ -27,3 +27,7 @@ CONTRIBUTOR_READY = PARTIAL: der explizite synthetische Inputumfang funktioniert
 Der aktuelle Nutzerauftrag autorisiert die Veröffentlichung geprüfter Dateien nach sven-develop sowie einen Draft-PR; die alte operative Pushsperre gilt nicht als Widerruf dieses konkreten Auftrags. Ungeklärte Dateien bleiben ausgeschlossen. Vor Upload wird ausschließlich der exakte neue Snapshot ohne private Historie geprüft. main wird nicht verändert.
 
 Offen: Nachweis der Rechte am lokal gelieferten E1-Kit für sechs Vendor-Dateien und importierte Verträge; Freigabe weiterer Quellen-/Reviewartefakte nur für eine spätere Erweiterung. Unabhängige Annotation/Adjudikation und echte externe Zugangsabnahme bleiben separate wissenschaftliche bzw. operative Aufgaben, keine Voraussetzung für den hier begrenzten Code-/Aggregat-Snapshot. Keine kostenpflichtigen Requests, Crawls, Graph-Rebuilds, Merge oder Demo-Veröffentlichung.
+
+## Hosted-CI-Korrektur
+
+Erster PR-Lauf [43729293811](https://github.com/Sven-Lutz/Klima_GraphRAG/actions/runs/43729293811): **FAIL**, Exit 4 bei Testauswahl. Ein aus macOS übernommener parametrischer Node-ID enthielt EADDRINUSE=48 statt Linux=98. Nur der Selektor in tests/public-tests.txt wurde auf die gesamte vorhandene Testfunktion umgestellt; beide unveränderten Parameterfälle werden ausgeführt. Keine Assertion oder fachliche Prüfung entfernt. Neuer Hosted-Lauf nach diesem Commit wird separat ausgewiesen.
