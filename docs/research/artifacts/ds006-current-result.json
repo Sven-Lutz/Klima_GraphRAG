@@ -1,0 +1,1445 @@
+{
+  "synthetic": true,
+  "tokenizer": "cl100k_base",
+  "chunk_size": 600,
+  "overlap": 60,
+  "segment_budget": 100000,
+  "retrieval": "exact source-linked SQLite evidence lookup; no semantic retrieval",
+  "input_sha256": "73e68ce7ed35a96310cb7bd505db1761863717007207a40d2bc5133f3cf07dd8",
+  "matrix": [
+    {
+      "variant": "A",
+      "fixture": "navigation",
+      "split": "development",
+      "kind": "discovery",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": null,
+      "chunk_present": null,
+      "lineage_preserved": null,
+      "subject_correct": null,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "de4b1c1da4677d51b5a4a2ae6140e3dd58478348cf2173a877f0e6971c78a089",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/navigation",
+      "target_scoped_hit": false,
+      "segment_scores": [],
+      "segment_lengths": [],
+      "locators": [],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "target",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "92938118c3ecba9bd46b25353b10c455e843399b4ce8107369f15bb1ea7a6936",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/target",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        107
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Klimaziel",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "short_heat",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "93c7985a3953d27cd361f25cb33338929724a45bbb9b9b589a1d52398c6c91be",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/short_heat",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        49
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärme",
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "context",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "dc3a734f4e311e5df0ad3cc1fd5e2f2c635128296d77969ad5ea575f0ff73eab",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/context",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        120
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärmeplanung",
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "emissions",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "14e09892d438be95eba52667e592a9aba4148a1b9831c75461a5f544e8e65540",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/emissions",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        136
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "table",
+          "heading": "Bilanz",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "no_keyword_table",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d5f30dec35ff720370e00a12a23910679e5c6294cbe429b0c7c9cb31a089822a",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/no_keyword_table",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "table",
+          "heading": "Bestand",
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "ambiguous_actor",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": true,
+      "raw_sha256": "4f98efed1077ab34285be7018e25c5a1acc4c92dd4c7d8dbca604ff49058ef1f",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [],
+      "source_url": "https://synthetic.example.test/ambiguous_actor",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        50
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "subject_correct"
+    },
+    {
+      "variant": "A",
+      "fixture": "foreign_correct",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "b699ff55c1bc436c760407b4ce91cb7fd4a3ad872a7753a973eb447add1ec399",
+      "input_municipality": "SYN-B",
+      "oracle_subjects": [
+        "SYN-B"
+      ],
+      "source_url": "https://synthetic.example.test/foreign_correct",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "foreign_seed_inheritance",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": false,
+      "wrong_subject": true,
+      "subject_unresolved": false,
+      "raw_sha256": "69b2e6b707353713f410af3304b1835681eade7505d3dc8de394ef8384390e8c",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-C"
+      ],
+      "source_url": "https://synthetic.example.test/foreign_seed_inheritance",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        141
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "subject_correct"
+    },
+    {
+      "variant": "A",
+      "fixture": "sports",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": false,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "537908686befac29928d432fc46325e59fe755a2d6b6b299b014110800bc7680",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/sports",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        124
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "earlier",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "2548270ea7af8457b5664b87e456fa57fc2a56529f321932fde892778fba3519",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/earlier",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        126
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "later",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "1187c76cca1baad026c77a4a840b212ba1df596dc4761f35fcec2c231a21959e",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/later",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        50
+      ],
+      "segment_lengths": [
+        136
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "A",
+      "fixture": "held_compact",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "7a0108dc6fad64004a9b5a52645f5d6b99eded59343abc7cbc784f1e5d4c7cad",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_compact",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        33
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Radverkehr",
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "held_units",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d6f90080a7f638c53f239dd2dfccf490750b53874acdca450291062d046e5943",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_units",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        134
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "table",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "held_negative_keyword",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d2038079aedfd804ef4ea157a0b5a5239c8f0b7dae76e5b75a06d197f7e2d96d",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_negative_keyword",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        -80
+      ],
+      "segment_lengths": [
+        130
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "held_short_parser",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "09c1da65aff2b0c1f8e63809172bea49042415d1cfe3bc6125ccf6260c6ae949",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_short_parser",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        12
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärme",
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "A",
+      "fixture": "held_large_table",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d2d3c4ac705160e1f8745b7bceb2603f99054ee5205606a237f2f8fed4226073",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_large_table",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        33
+      ],
+      "segment_lengths": [
+        5884
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "table",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "chunk_present"
+    },
+    {
+      "variant": "A",
+      "fixture": "held_noise",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": false,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": false,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "c2894e0de1206d83bd3dd6e4dcd65f837a739480bbb6a127e13a192044ae7d0e",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_noise",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        120
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "admitted"
+    },
+    {
+      "variant": "B",
+      "fixture": "navigation",
+      "split": "development",
+      "kind": "discovery",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": null,
+      "chunk_present": null,
+      "lineage_preserved": null,
+      "subject_correct": null,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "de4b1c1da4677d51b5a4a2ae6140e3dd58478348cf2173a877f0e6971c78a089",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/navigation",
+      "target_scoped_hit": false,
+      "segment_scores": [],
+      "segment_lengths": [],
+      "locators": [],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "target",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "92938118c3ecba9bd46b25353b10c455e843399b4ce8107369f15bb1ea7a6936",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/target",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        107
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Klimaziel",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "short_heat",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "93c7985a3953d27cd361f25cb33338929724a45bbb9b9b589a1d52398c6c91be",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/short_heat",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        49
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärme",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "context",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "dc3a734f4e311e5df0ad3cc1fd5e2f2c635128296d77969ad5ea575f0ff73eab",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/context",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        120
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärmeplanung",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "emissions",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "14e09892d438be95eba52667e592a9aba4148a1b9831c75461a5f544e8e65540",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/emissions",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        136
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "table",
+          "heading": "Bilanz",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "no_keyword_table",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d5f30dec35ff720370e00a12a23910679e5c6294cbe429b0c7c9cb31a089822a",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/no_keyword_table",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "table",
+          "heading": "Bestand",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "ambiguous_actor",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": true,
+      "raw_sha256": "4f98efed1077ab34285be7018e25c5a1acc4c92dd4c7d8dbca604ff49058ef1f",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [],
+      "source_url": "https://synthetic.example.test/ambiguous_actor",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        50
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "subject_correct"
+    },
+    {
+      "variant": "B",
+      "fixture": "foreign_correct",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "b699ff55c1bc436c760407b4ce91cb7fd4a3ad872a7753a973eb447add1ec399",
+      "input_municipality": "SYN-B",
+      "oracle_subjects": [
+        "SYN-B"
+      ],
+      "source_url": "https://synthetic.example.test/foreign_correct",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        125
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "foreign_seed_inheritance",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": false,
+      "wrong_subject": true,
+      "subject_unresolved": false,
+      "raw_sha256": "69b2e6b707353713f410af3304b1835681eade7505d3dc8de394ef8384390e8c",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-C"
+      ],
+      "source_url": "https://synthetic.example.test/foreign_seed_inheritance",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        141
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "subject_correct"
+    },
+    {
+      "variant": "B",
+      "fixture": "sports",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": false,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "537908686befac29928d432fc46325e59fe755a2d6b6b299b014110800bc7680",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/sports",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        124
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "earlier",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "2548270ea7af8457b5664b87e456fa57fc2a56529f321932fde892778fba3519",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/earlier",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        25
+      ],
+      "segment_lengths": [
+        126
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "later",
+      "split": "development",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "1187c76cca1baad026c77a4a840b212ba1df596dc4761f35fcec2c231a21959e",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/later",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        50
+      ],
+      "segment_lengths": [
+        136
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "held_compact",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "7a0108dc6fad64004a9b5a52645f5d6b99eded59343abc7cbc784f1e5d4c7cad",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_compact",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        33
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Radverkehr",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "held_units",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d6f90080a7f638c53f239dd2dfccf490750b53874acdca450291062d046e5943",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_units",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        134
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "table",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "held_negative_keyword",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d2038079aedfd804ef4ea157a0b5a5239c8f0b7dae76e5b75a06d197f7e2d96d",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_negative_keyword",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        -80
+      ],
+      "segment_lengths": [
+        130
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "held_short_parser",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "09c1da65aff2b0c1f8e63809172bea49042415d1cfe3bc6125ccf6260c6ae949",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_short_parser",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        12
+      ],
+      "locators": [
+        {
+          "order": 1,
+          "type": "paragraph",
+          "heading": "Wärme",
+          "page": null
+        }
+      ],
+      "first_loss": null
+    },
+    {
+      "variant": "B",
+      "fixture": "held_large_table",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": true,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": false,
+      "lineage_preserved": false,
+      "subject_correct": false,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "d2d3c4ac705160e1f8745b7bceb2603f99054ee5205606a237f2f8fed4226073",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_large_table",
+      "target_scoped_hit": false,
+      "segment_scores": [
+        33
+      ],
+      "segment_lengths": [
+        5884
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "table",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": "chunk_present"
+    },
+    {
+      "variant": "B",
+      "fixture": "held_noise",
+      "split": "held_out",
+      "kind": "evidence",
+      "relevant": false,
+      "source_present": true,
+      "parsed": true,
+      "stored": true,
+      "admitted": true,
+      "chunk_present": true,
+      "lineage_preserved": true,
+      "subject_correct": true,
+      "wrong_subject": false,
+      "subject_unresolved": false,
+      "raw_sha256": "c2894e0de1206d83bd3dd6e4dcd65f837a739480bbb6a127e13a192044ae7d0e",
+      "input_municipality": "SYN-A",
+      "oracle_subjects": [
+        "SYN-A"
+      ],
+      "source_url": "https://synthetic.example.test/held_noise",
+      "target_scoped_hit": true,
+      "segment_scores": [
+        0
+      ],
+      "segment_lengths": [
+        120
+      ],
+      "locators": [
+        {
+          "order": 0,
+          "type": "paragraph",
+          "heading": null,
+          "page": null
+        }
+      ],
+      "first_loss": null
+    }
+  ],
+  "costs": {
+    "A": {
+      "samples": [
+        {
+          "wall_seconds": 0.06169258401496336,
+          "chunk_seconds": 0.017789792007533833,
+          "segments": 24,
+          "chunks": 13,
+          "tokens": 3532
+        },
+        {
+          "wall_seconds": 0.04205816698959097,
+          "chunk_seconds": 0.0015765829884912819,
+          "segments": 24,
+          "chunks": 13,
+          "tokens": 3532
+        },
+        {
+          "wall_seconds": 0.045115165994502604,
+          "chunk_seconds": 0.0015254169993568212,
+          "segments": 24,
+          "chunks": 13,
+          "tokens": 3532
+        }
+      ],
+      "median_wall_seconds": 0.045115165994502604
+    },
+    "B": {
+      "samples": [
+        {
+          "wall_seconds": 0.05427904101088643,
+          "chunk_seconds": 0.002738584007602185,
+          "segments": 24,
+          "chunks": 29,
+          "tokens": 3841
+        },
+        {
+          "wall_seconds": 0.05143979098647833,
+          "chunk_seconds": 0.002402708021691069,
+          "segments": 24,
+          "chunks": 29,
+          "tokens": 3841
+        },
+        {
+          "wall_seconds": 0.04699583302135579,
+          "chunk_seconds": 0.0024637920141685754,
+          "segments": 24,
+          "chunks": 29,
+          "tokens": 3841
+        }
+      ],
+      "median_wall_seconds": 0.05143979098647833
+    }
+  },
+  "summary": {
+    "A": {
+      "development": {
+        "expected": 10,
+        "chunk_present": 7,
+        "correctly_attributed": 5,
+        "wrong_subject": 1,
+        "unresolved_subject": 1,
+        "distractors_retained": 0
+      },
+      "held_out": {
+        "expected": 5,
+        "chunk_present": 0,
+        "correctly_attributed": 0,
+        "wrong_subject": 0,
+        "unresolved_subject": 0,
+        "distractors_retained": 0
+      }
+    },
+    "B": {
+      "development": {
+        "expected": 10,
+        "chunk_present": 10,
+        "correctly_attributed": 8,
+        "wrong_subject": 1,
+        "unresolved_subject": 1,
+        "distractors_retained": 1
+      },
+      "held_out": {
+        "expected": 5,
+        "chunk_present": 4,
+        "correctly_attributed": 4,
+        "wrong_subject": 0,
+        "unresolved_subject": 0,
+        "distractors_retained": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "python": "3.11.15",
+  "sources": {
+    "crawler/core/parsers/html_parser.py": "3840c758db1769bac7bfbdf8e7a99d0d86ab0bd83d35ba1411c880173edf9872",
+    "crawler/core/storage.py": "e4914757d4c9314f6fd540f5105e5d2a6dee2da2b196839ae715cc32b4772e00",
+    "crawler/core/engine.py": "cf47ca475cf17f76703c69867488e0d5384b53aeb490434fd111abdf3162e52b",
+    "crawler/scripts/chunk_documents.py": "92f720b3d248e15864330837463b2b7e852df46a037899586615d42db3fdcd8f",
+    "crawler/core/segmentation/chunker.py": "69a2ed4d507aa56c5fe035f89a0a1e431c23ee8337b09b9084d8a265002e08a4",
+    "research/experiments/ds006/fixtures.py": "a1994e746a1bbdec782b8937daec4fb1ead3d85d32ca45358258c0070f79dfce",
+    "research/experiments/ds006/continuity.py": "d6688c16af8d3f76b23c7ec32f021402ecbe1402ed859558d39420f4cc4e6516"
+  },
+  "packages": {
+    "beautifulsoup4": "4.15.0",
+    "lxml": "6.1.3",
+    "tiktoken": "0.14.0",
+    "requests": "2.34.2"
+  },
+  "tokenizer_files": {
+    "9b5ad71b2ce5302211f9c61530b329a4922fc6a4": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+  }
+}

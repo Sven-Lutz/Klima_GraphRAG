@@ -1,5 +1,6 @@
 """Tests für Storage.get_visited_status — der kombinierte Visited-Check
 ersetzt bis zu 4 Einzel-Queries pro bereits besuchter URL im Crawl-Loop."""
+
 import pytest
 
 from crawler.core.storage import Storage
@@ -7,7 +8,7 @@ from crawler.core.storage import Storage
 
 @pytest.fixture()
 def storage(tmp_path):
-    s = Storage(db_path=tmp_path / "t.sqlite", raw_dir=tmp_path / "raw")
+    s = Storage(db_path=tmp_path / "t.sqlite", raw_dir=tmp_path / "raw", create=True)
     yield s
     s.conn.close()
 

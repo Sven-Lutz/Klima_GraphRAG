@@ -1,0 +1,123 @@
+{
+  "schema": "bavaria-policy-relations-evaluation-v1",
+  "corpus_id": "a8e5ac8c83348e6481eb44469a40d0ae78f29d26694c19e97993a67373fb6280",
+  "tasks": 38,
+  "sources": 35,
+  "evidence_units": 1543,
+  "relations": 108,
+  "summary_evaluation_provisional_positive": {
+    "bm25_context": {
+      "tasks": 28,
+      "complete_known_bundles": 23,
+      "known_evidence": 46,
+      "captured_known_evidence": 39,
+      "known_relations": 66,
+      "represented_known_relations": 55
+    },
+    "bm25_same_relation_information": {
+      "tasks": 28,
+      "complete_known_bundles": 26,
+      "known_evidence": 46,
+      "captured_known_evidence": 43,
+      "known_relations": 66,
+      "represented_known_relations": 61
+    },
+    "graph_enhanced_text": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "graph_local_rag": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "graph_semantic_rrf": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "graph_traversal": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "hybrid_rrf": {
+      "tasks": 28,
+      "complete_known_bundles": 20,
+      "known_evidence": 46,
+      "captured_known_evidence": 35,
+      "known_relations": 66,
+      "represented_known_relations": 50
+    },
+    "hybrid_windows_rrf": {
+      "tasks": 28,
+      "complete_known_bundles": 19,
+      "known_evidence": 46,
+      "captured_known_evidence": 32,
+      "known_relations": 66,
+      "represented_known_relations": 47
+    },
+    "semantic": {
+      "tasks": 28,
+      "complete_known_bundles": 13,
+      "known_evidence": 46,
+      "captured_known_evidence": 24,
+      "known_relations": 66,
+      "represented_known_relations": 35
+    },
+    "semantic_windows": {
+      "tasks": 28,
+      "complete_known_bundles": 14,
+      "known_evidence": 46,
+      "captured_known_evidence": 27,
+      "known_relations": 66,
+      "represented_known_relations": 39
+    },
+    "sql_relations": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "sql_semantic_rrf": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    },
+    "tools_two_step": {
+      "tasks": 28,
+      "complete_known_bundles": 28,
+      "known_evidence": 46,
+      "captured_known_evidence": 46,
+      "known_relations": 66,
+      "represented_known_relations": 66
+    }
+  },
+  "graph_sql_all_tasks_same_relations": true,
+  "reference_status": "PROVISIONAL_AGENT_ORIGINAL_REVIEW_NOT_INDEPENDENT_HUMAN_GOLD",
+  "confidence_intervals": null,
+  "evaluation_dependency_components": 18,
+  "uncertainty_reason": "Source-exposed provisional labels, incomplete qrels and institution/project dependence; no independent human inference.",
+  "preprocessing_information": "Structured arms receive the same curated relation sidecar. Text arms receive original text plus headings/URLs and the same entity constants. Extraction quality is not this experiment.",
+  "generation_quality": null,
+  "timing_note": "Per-query retrieval component times; shared lexical work recorded once, not an end-to-end model benchmark.",
+  "scope": "Frozen 35-source research subset, not exhaustive municipal policy or real-world absence."
+}

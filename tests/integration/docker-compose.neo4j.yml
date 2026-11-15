@@ -1,0 +1,23 @@
+services:
+  neo4j-projection-test:
+    image: neo4j:5.26
+    environment:
+      NEO4J_AUTH: neo4j/projection-test-password
+    ports:
+      - "127.0.0.1:17474:7474"
+      - "127.0.0.1:17687:7687"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p projection-test-password 'RETURN 1' || exit 1",
+        ]
+      # cypher-shell starts a JVM per probe; a 2s timeout never completes on a
+      # loaded host and leaves `up --wait` reporting unhealthy while Bolt is up.
+      interval: 5s
+      timeout: 20s
+      retries: 30
+      start_period: 30s
+    tmpfs:
+      - /data
+      - /logs

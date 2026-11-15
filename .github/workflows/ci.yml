@@ -1,28 +1,32 @@
-name: CI
-
+name: Public snapshot CI
 on:
   push:
-    branches: ["**"]
+    branches: [sven-develop]
   pull_request:
-
+permissions:
+  contents: read
 jobs:
-  test:
+  public-fixtures:
     runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      # Voller PEP8-Gate (Regelsatz aus pyproject.toml: E, W, F, I, N @ 100 Zeichen)
-      - name: Lint (ruff)
-        run: ruff check crawler demo tests docs
-
-      - name: Tests
-        run: python -m pytest
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned public dependencies
+        run: python -m pip install -r requirements-publication.lock
+      - name: Prepare public tokenizer before offline tests
+        run: TIKTOKEN_CACHE_DIR="$PWD/.venv/tokenizer-cache" python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'
+      - name: Static checks
+        run: |
+          ruff check crawler demo tests docs
+          python -m compileall -q crawler research scripts deployment
+      - name: Public input boundary (not private owner suite)
+        run: python -m pytest @tests/public-tests.txt -ra -o tmp_path_retention_policy=failed -o tmp_path_retention_count=1
+      - name: Scientific aggregate checks
+        run: python scripts/qa/check_public_research.py

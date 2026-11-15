@@ -1,0 +1,75 @@
+# PREPARED, not deployed. Digest-pinned images and owner-approved bundle are mandatory.
+services:
+  app:
+    image: ${PILOT_APP_IMAGE:?Use the tested immutable application image digest}
+    user: "10001:10001"
+    read_only: true
+    init: true
+    command: ["python", "-B", "-m", "uvicorn", "crawler.web.pilot:create_pilot_app", "--factory", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-proxy-headers", "--no-access-log", "--log-level", "warning", "--loop", "asyncio", "--http", "h11", "--ws", "none"]
+    environment:
+      PILOT_ORIGIN: https://${PILOT_DOMAIN:?Explicit pilot DNS name required}
+      PILOT_SNAPSHOT_ROOT: /snapshot
+      PILOT_BUNDLE_SHA256: ${PILOT_BUNDLE_SHA256:?Trusted out-of-band release manifest hash required}
+      PILOT_GATEWAY_TOKEN_FILE: /run/secrets/gateway
+      PILOT_USERS_FILE: /run/secrets/users
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - type: bind
+        source: ${PILOT_BUNDLE:?Separate approved bundle, never mount repository or Gold}
+        target: /snapshot
+        read_only: true
+    secrets: [gateway, users]
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    networks: [research]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "python", "-B", "-m", "crawler.web.pilot_health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: local
+      options: {max-size: "2m", max-file: "2"}
+  gateway:
+    image: ${PILOT_CADDY_IMAGE:?Use a reviewed digest-pinned Caddy image}
+    read_only: true
+    entrypoint: ["/bin/sh", "-ec", "export PILOT_GATEWAY_TOKEN=$$(cat /run/secrets/gateway); exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    environment:
+      PILOT_DOMAIN: ${PILOT_DOMAIN:?Required}
+      ACME_EMAIL: ${ACME_EMAIL:?Owner certificate contact required}
+    ports: ["443:443", "80:80"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${PILOT_ACCOUNTS_FILE:?Private bcrypt user list}:/etc/caddy/accounts:ro
+      - tls-data:/data
+      - tls-config:/config
+    tmpfs: ["/tmp:size=16m"]
+    secrets: [gateway]
+    networks: [research, edge]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    restart: unless-stopped
+    logging:
+      driver: local
+      options: {max-size: "2m", max-file: "2"}
+networks:
+  research: {internal: true}
+  edge: {}
+volumes:
+  tls-data: {}
+  tls-config: {}
+secrets:
+  gateway:
+    file: ${PILOT_GATEWAY_FILE:?Private random 32-byte or longer secret}
+  users:
+    file: ${PILOT_USERS_FILE:?JSON list of approved pseudonyms}

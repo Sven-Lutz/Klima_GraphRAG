@@ -20,6 +20,10 @@ sentence-transformers>=3.0.0       # local embedding model (paraphrase-multiling
 torch>=2.0.0                       # backend for SentenceTransformers
 numpy>=1.26.0
 
+# ── Interactive research application ─────────────────────────────────────────
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+
 # ── Stage 2 – Graph DB ─────────────────────────────────────────────────────────
 neo4j>=5.0.0                       # Neo4j Python driver
 

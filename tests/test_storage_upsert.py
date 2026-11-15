@@ -1,4 +1,5 @@
 """Tests für Storage: Upsert bei Re-Fetch und echte Transaktions-Atomarität."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,7 @@ URL = "https://stadt.de/klima"
 
 @pytest.fixture()
 def storage(tmp_path):
-    s = Storage(db_path=tmp_path / "t.sqlite", raw_dir=tmp_path / "raw")
+    s = Storage(db_path=tmp_path / "t.sqlite", raw_dir=tmp_path / "raw", create=True)
     yield s
     s.conn.close()
 

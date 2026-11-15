@@ -22,7 +22,7 @@ WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 WIKI_PAGE = "Liste_der_Städte_und_Gemeinden_in_Bayern"
 TARGET_SECTION = "Alle politisch selbständigen Städte und Gemeinden"
 
-UA = "wi2026-registry/1.3 (academic research; mailto:bt716151@uni-bayreuth.de)"
+UA = "Klima_GraphRAG/registry (academic research; configure operator contact before crawling)"
 HTTP_HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",

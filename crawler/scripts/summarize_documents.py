@@ -13,6 +13,7 @@ Usage:
     python -m crawler.scripts.summarize_documents --limit 100
     python -m crawler.scripts.summarize_documents --min-score 15 --per-doc 8
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,12 +26,12 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from crawler.core.config import (
-    DB_PATH,
     LLM_SEED,
     LLM_TEMPERATURE,
     OLLAMA_MODEL,
     OLLAMA_URL,
 )
+from crawler.core.database import connect_existing_read_write, resolve_runtime_database
 
 OPENAI_MODEL = "gpt-4o-mini"
 
@@ -38,6 +39,7 @@ OPENAI_MODEL = "gpt-4o-mini"
 # ---------------------------------------------------------------------------
 # Pydantic schema for the structured summary
 # ---------------------------------------------------------------------------
+
 
 class DocumentSummary(BaseModel):
     summary: str = Field(
@@ -59,8 +61,9 @@ class DocumentSummary(BaseModel):
     ]
     key_topics: List[str] = Field(
         default_factory=list,
-        description=("Bis zu 5 Themenstichwörter, "
-                     "z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']"),
+        description=(
+            "Bis zu 5 Themenstichwörter, z.B. ['Photovoltaik', 'Wärmepumpe', 'KfW-Förderung']"
+        ),
     )
     key_entities: List[str] = Field(
         default_factory=list,
@@ -84,7 +87,9 @@ Sei präzise und faktenbasiert.
 """
 
 # Für Ollama (kein natives Structured-Output-Parsing): Schema in den Prompt
-SYSTEM_MSG_JSON = SYSTEM_MSG + """
+SYSTEM_MSG_JSON = (
+    SYSTEM_MSG
+    + """
 Antworte NUR mit einem JSON-Objekt in exakt diesem Format:
 {
   "summary": "3-5 Sätze Kernaussagen (bzw. 1 Satz Begründung wenn nicht klimarelevant)",
@@ -97,11 +102,13 @@ Antworte NUR mit einem JSON-Objekt in exakt diesem Format:
 }
 Kein Text außerhalb des JSON.
 """
+)
 
 
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
+
 
 def setup_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
@@ -183,11 +190,13 @@ def get_unsummarised_docs(
                 "url_canonical": url,
                 "segments": [],
             }
-        docs[doc_id]["segments"].append({
-            "text": text,
-            "heading_context": heading_ctx,
-            "score": score,
-        })
+        docs[doc_id]["segments"].append(
+            {
+                "text": text,
+                "heading_context": heading_ctx,
+                "score": score,
+            }
+        )
 
     result = list(docs.values())
     return result[:limit]
@@ -207,16 +216,19 @@ def build_user_prompt(doc: dict) -> str:
 
 def _summarise_ollama(user_prompt: str) -> DocumentSummary:
     import urllib.request
-    payload = json.dumps({
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_MSG_JSON},
-            {"role": "user", "content": user_prompt},
-        ],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
-    }).encode()
+
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_MSG_JSON},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": LLM_TEMPERATURE, "seed": LLM_SEED, "num_predict": 1024},
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=payload,
@@ -229,6 +241,7 @@ def _summarise_ollama(user_prompt: str) -> DocumentSummary:
 
 def _summarise_openai(user_prompt: str) -> DocumentSummary:
     from openai import OpenAI
+
     client = OpenAI()
     resp = client.beta.chat.completions.parse(
         model=OPENAI_MODEL,
@@ -281,16 +294,20 @@ def store_summary(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(
     limit: int = 200,
     min_score: int = 15,
     per_doc: int = 6,
     backend: str = "ollama",
+    db_path: str | None = None,
 ) -> None:
     model_name = OLLAMA_MODEL if backend == "ollama" else OPENAI_MODEL
 
-    conn = sqlite3.connect(str(DB_PATH), timeout=60.0, isolation_level=None)
+    database = resolve_runtime_database(db_path)
+    conn = connect_existing_read_write(database.path)
     setup_db(conn)
+    print(f"database={database.path} database_id={database.database_id}")
 
     docs = get_unsummarised_docs(conn, limit=limit, min_score=min_score, per_doc=per_doc)
     if not docs:
@@ -325,12 +342,27 @@ def main(
     print(f"\n🏁 Done. {ok}/{len(docs)} Dokumente zusammengefasst.")
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Erstelle LLM-Zusammenfassungen pro Dokument.")
     parser.add_argument("--limit", type=int, default=200, help="Max. Anzahl Dokumente")
     parser.add_argument("--min-score", type=int, default=15, help="Minimaler Impact-Score")
     parser.add_argument("--per-doc", type=int, default=6, help="Top-N Segmente pro Dokument")
-    parser.add_argument("--llm", choices=["ollama", "openai"], default="ollama",
-                        help="LLM-Backend (Default: ollama, lokal)")
-    args = parser.parse_args()
-    main(limit=args.limit, min_score=args.min_score, per_doc=args.per_doc, backend=args.llm)
+    parser.add_argument(
+        "--llm",
+        choices=["ollama", "openai"],
+        default="ollama",
+        help="LLM-Backend (Default: ollama, lokal)",
+    )
+    parser.add_argument("--db", default=None, help="SQLite database; overrides KLIMA_DB_PATH")
+    args = parser.parse_args(argv)
+    main(
+        limit=args.limit,
+        min_score=args.min_score,
+        per_doc=args.per_doc,
+        backend=args.llm,
+        db_path=args.db,
+    )
+
+
+if __name__ == "__main__":
+    cli()
