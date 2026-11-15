@@ -11,7 +11,10 @@
 - Ruff über crawler/demo/tests/docs PASS; AST-Compile aller publizierten Pythonmodule PASS. Paket-Scorer noch ausgeschlossen; kein erfolgreicher vollständiger Web-/Retrievalimport behauptet.
 - Gitleaks über den vorbereiteten Verzeichnisinhalt: **0 Findings**. Hashvergleich mit dem vorgeschlagenen Ausgangsmanifest geprüft; abweichend sind bewusst die neue README, Dependency-Ergänzungen, neutrales Registry-Kontaktfeld und Importformatierung.
 - Studienaggregate: Hash-/Nenner-/F1-/SQL-Graph-Äquivalenzprüfung PASS. DS-006 synthetisch tatsächlich ausgeführt: A 7/10 und 0/5; B 10/10 und 4/5; 13/29 Chunks, 3532/3841 Token. Historische abweichende Parserergebnisse nicht überschrieben.
-- Zweiter Clean Checkout des Commitkandidaten: **NOT_TESTED zum Zeitpunkt dieses Vorbereitungscommits**. Abschließender Nachweis folgt erst nach tatsächlicher Ausführung.
+- Zweiter unabhängiger Clean Checkout von `c2cb2005e3b221b19161121c3b39dc7fa07a342a`: **PASS** für frische Installation der fixierten öffentlichen Dependencies, `pip check`, 448 Nutzdateihashes, Ruff, Compile und wissenschaftliche Aggregatprüfung. Öffentliche Suite **380 PASS / 6 SKIP**, 5,79 s; eine Starlette/httpx-Deprecation-Warnung. DS-006 neu ausgeführt: identische semantische Matrix und Zähler, Timing darf abweichen.
+- Komplette Owner-Collection im Clean Checkout: **417 Tests gesammelt, 19 Collection-ERROR**, Exit 2; sämtliche aktuellen Collectionfehler sind die fehlende, ungeklärte E1-Vendor-Importabhängigkeit. Die komplette Suite wurde dadurch nicht ausgeführt und erhält keinen PASS. Private Eingabeabhängigkeiten bleiben darüber hinaus bestehen.
+- Die damalige Clean-Checkout-Messung hatte 16.547.840.000 Bytes frei (~15,41 GiB), ausreichend für den tatsächlich ausgeführten begrenzten Umfang, aber unter dem 16-GiB-Exportgate. Keine Stabilitäts-/Vollreleasebehauptung aus historischen 621 PASS. Tests und Mindestreserven unverändert.
+- Neue Abschlussmetadaten ändern den getesteten Source-/Fixture-/Dependency-Inhalt nicht. Nachfolgecommit ist am Report-Commit per Git prüfbar; dessen exakter Baum wird vor Push nochmals gegen dieses Nutzdateimanifest geprüft. Öffentliche Belege: docs/research/PUBLIC_CHECKS.json. Hosted GitHub Actions: zum Berichtzeitpunkt **NOT_RUN**; Status nach Push separat prüfen.
 
 ## Wissenschaft und Grenzen
 
