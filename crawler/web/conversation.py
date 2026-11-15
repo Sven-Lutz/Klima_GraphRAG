@@ -159,6 +159,8 @@ class ChatStore:
             secrets.token_urlsafe(32),
         )
         with self.conn() as c:
+            if c.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 256:
+                raise ValueError("Active local session budget reached")
             c.execute(
                 "INSERT INTO sessions VALUES(?,?,?,?)",
                 (digest(token), owner, csrf, time.time() + 86400),
@@ -189,6 +191,8 @@ class ChatStore:
     def save(self, owner, cid, result):
         self.budget()
         text = json.dumps(result, ensure_ascii=False)
+        if self.path.stat().st_size + len(text.encode()) > LIMIT:
+            raise ValueError("Chat persistence output budget reached")
         if len(text.encode()) > 1024**2:
             raise ValueError("Turn output budget exceeded")
         with self.conn() as c:
@@ -220,6 +224,7 @@ class ConversationEngine:
         self.lock = threading.Lock()
 
     def answer(self, owner, cid, data):
+        started = time.perf_counter()
         history = self.store.turns(owner, cid)
         parent = next((t for t in history if t["turn_id"] == data.parent_turn_id), None)
         if data.parent_turn_id and parent is None:
@@ -264,6 +269,8 @@ class ConversationEngine:
         # Bare deictic follow-ups need a real parent, never a guessed municipality.
         if not parent and re.match(r"^(und |dort|dazu|wie viel davon)", question, re.I):
             clarification = "Auf welche Frage und Gemeinde beziehen Sie sich?"
+        if not parent and words(question) <= {"leistung", "jahr", "wann", "umfang"}:
+            clarification = "Auf welche Quelle, Gemeinde und vorherige Frage beziehen Sie sich?"
         effective = question
         if parent and words(question) <= {"leistung", "jahr", "wann", "wieviel", "umfang"}:
             effective += " " + parent["question"]
@@ -382,7 +389,10 @@ class ConversationEngine:
                 result["graph"]["nodes"] = [
                     n for n in result["graph"]["nodes"] if n["id"] in node_ids
                 ][:32]
-                result["graph"]["cutoff"] = len(all_edges) > len(edges)
+                retained = {n["id"] for n in result["graph"]["nodes"]}
+                bounded_edges = [e for e in edges if {e["source"], e["target"]} <= retained]
+                result["graph"]["edges"] = bounded_edges
+                result["graph"]["cutoff"] = len(all_edges) > len(bounded_edges)
                 for edge in edges:
                     edge["validation_status"] = (
                         "TECHNICAL_PROVENANCE_LINK"
@@ -394,6 +404,11 @@ class ConversationEngine:
                 result["missing_aspects"] = [
                     "Keine zum gefragten Aspekt passende Quellenpassage qualifiziert."
                 ]
+        result["finished_at_utc"] = now()
+        result["elapsed_seconds"] = time.perf_counter() - started
+        result["implementation_file_sha256"] = hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest()
         self.store.save(owner, cid, result)
         return result
 
@@ -561,6 +576,11 @@ def create_conversation_app(service=None, directory=None):
     @app.post("/api/chat/conversations/{cid}/turns")
     async def ask(cid: str, data: TurnInput, request: Request):
         owner = actor(request)
+        for key in list(rate):
+            if not rate[key] or time.monotonic() - rate[key][-1] >= 60:
+                rate.pop(key)
+        if owner not in rate and len(rate) >= 256:
+            raise HTTPException(429, "Active query budget reached")
         recent = rate.setdefault(owner, [])
         recent[:] = [t for t in recent if time.monotonic() - t < 60]
         if len(recent) >= 12:

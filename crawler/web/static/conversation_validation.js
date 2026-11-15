@@ -165,6 +165,7 @@
     .then((r) => r.json())
     .then((d) => {
       csrf = d.csrf;
+      $("review-login-button").disabled = false;
     })
     .catch((e) => msg(e.message));
 })();
