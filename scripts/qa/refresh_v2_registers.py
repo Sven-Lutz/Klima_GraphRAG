@@ -31,13 +31,18 @@ def main():
         "crawler/web/conversation_workspaces.py",
         "crawler/web/conversation_demo.py",
         "crawler/web/conversation_review.py",
+        "crawler/web/review_protocol.py",
         "tests/test_conversation_v2.py",
         "scripts/qa/conversation_v2_browser.py",
         "scripts/qa/inventory_conversation_corpus.py",
+        "scripts/qa/conversation_layout_browser.py",
+        "scripts/qa/review_queue_load.py",
         "docs/product/CONVERSATIONAL_V2.md",
         "docs/product/V2_PROTOCOLS.md",
         "docs/product/V2_COVERAGE_REPORT.md",
         "docs/product/V2_QA_REPORT.md",
+        "docs/product/V2_CHECKS.json",
+        "docs/product/V2_QUEUE_LOAD.json",
     ]
     manifest = PAPER / "ARTIFACT_MANIFEST.tsv"
     with manifest.open() as stream:
