@@ -45,7 +45,7 @@ No private originals, vendor E1 files, model weights or real identities/labels a
 | CORPUS INTEGRATION | BLOCKED_FOR_PUBLIC_FULL_CORPUS by E1/original rights; private aggregate inventory only |
 | REVIEW WORKFLOW | SYNTHETIC_TECHNICAL_PASS; per-unit masks/pagination and 400-unit smoke; no human workload acceptance |
 | HUMAN GOLD | NOT_ESTABLISHED; zero recruited independent reviewers |
-| REPRODUCIBILITY | PARTIAL; pinned environment and synthetic checks; clean-checkout receipt below |
+| REPRODUCIBILITY | PUBLIC_SYNTHETIC_PASS; fresh pinned environment and 500 hashes; private study replay excluded |
 | EXTERNAL PREVIEW | NOT_DEPLOYED; no external acceptance |
 | PAPER READINESS | NOT_READY; original scientific/Human/rights gates remain |
 
@@ -91,3 +91,8 @@ Additional atomic deletion regression: an in-flight answer finishing after chat 
 ## Final source regression receipt
 
 Source 00847c160ed2c700f5f2e3bbf257d47e3c3e97ec: **431 PASS / 6 SKIP, 7.82 s**, zero failed/error. Five skipped Neo4j live-service cases and one undistributed D053 original. FastAPI/httpx deprecation warning remains. Final Chrome V2 run PASS (generated/v2-browser-final-source): 36 route/width combinations and 320×568, graph/original/export/review isolation. No native zoom or screenreader inference. New negative cases: missing runtime database is not recreated; feedback and answers finishing after deletion cannot resurrect records; spaced negative numbers cannot become positive chart observations or generated numeric claims; terminal Euro symbols retain their unit. All use isolated synthetic stores.
+
+
+## Clean reproduction
+
+Exact candidate 98e5cb4 was cloned with `git clone --no-local --single-branch` into an empty disposable directory. Fresh Python 3.11 venv installed only requirements-publication.lock using no pip cache. Public tokenizer cache copied with byte-hash equality; no private inputs or model weights. `pip check`, Ruff, scientific aggregate and paper checks PASS; all **500 publication hashes PASS**. Public suite **431 PASS / 6 SKIP, 10.19 s**, same documented skips and FastAPI warning. Source-only final package scan: 634,271 bytes, zero leaks; ten V2 commits scanned, zero leaks. Later documentation-only receipts do not change tested executable code. Full private-owner suite, live Neo4j and independent scientific evaluation remain excluded.

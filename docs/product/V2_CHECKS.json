@@ -896,5 +896,17 @@
       "check": "native_zoom_screenreader_human_UX",
       "status": "NOT_TESTED"
     }
-  ]
+  ],
+  "clean_reproduction": {
+    "commit": "98e5cb4",
+    "environment": "fresh Python3.11 venv, requirements-publication.lock, public tokenizer bytes hash-verified",
+    "passed": 431,
+    "skipped": 6,
+    "failed": 0,
+    "seconds": 10.19,
+    "pip_check": "PASS",
+    "ruff": "PASS",
+    "scientific_checks": "PASS",
+    "publication_hashes": 500
+  }
 }
