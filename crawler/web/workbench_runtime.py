@@ -38,6 +38,9 @@ def create_local_workbench_service(config_path):
     semantic = None
     unavailable = {}
     if all(importlib.util.find_spec(m) for m in ["onnxruntime", "tokenizers"]):
+        import onnxruntime
+
+        onnxruntime.disable_telemetry_events()
         semantic = SemanticIndex(
             service.workspace, paths["semantic_index"], paths["embedding_model"]
         )
