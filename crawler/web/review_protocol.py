@@ -581,13 +581,25 @@ class ReviewProtocol:
             raise ValueError("Unknown review kind")
         if not 1 <= limit <= 200 or not 0 <= offset <= 100000 or len(q) > 200:
             raise ValueError("Bounded queue window required")
+        # Reviewer queues expose only assignment membership and the actor's own submission.
+        # Read each event projection once; do not rebuild all object/history views per row.
+        assignments = {}
+        submitted = set()
+        if account["role"] == "reviewer":
+            assignments = {e["task"]: e["payload"] for e in self._events("protocol_assignment")}
+            submitted = {e["task"] for e in self._events("protocol_review") if e["role"] == actor}
         rows = []
         for oid, obj in self.objects().items():
-            try:
-                view = self.view(actor, oid)
-            except PermissionError:
-                continue
-            if (kind and obj["kind"] != kind) or (status and view["review_state"] != status):
+            if account["role"] == "reviewer":
+                if actor not in assignments.get(oid, {}).get("reviewers", []):
+                    continue
+                own_state = "SUBMITTED" if oid in submitted else "PENDING"
+            else:
+                try:
+                    own_state = self.view(actor, oid)["review_state"]
+                except PermissionError:
+                    continue
+            if (kind and obj["kind"] != kind) or (status and own_state != status):
                 continue
             if q and q.casefold() not in canonical(obj).casefold():
                 continue
@@ -599,7 +611,7 @@ class ReviewProtocol:
                     kind=obj["kind"],
                     key=obj["key"],
                     label=obj["payload"].get("label", obj["key"]),
-                    state=view["review_state"],
+                    state=own_state,
                     split=obj["split"],
                     priority=priority,
                     priority_basis=obj["signals"],

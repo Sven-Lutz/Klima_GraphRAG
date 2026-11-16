@@ -481,3 +481,8 @@ body.workbench .intro h1, body.workbench .intro .eyebrow { display: none; }
   .chat-page .intro h1 { display: none; }
   .chat-page .intro p { font-size: .75rem; line-height: 1.3; }
 }
+.review-page main { height: auto; display: block; overflow: visible; min-height: 0; }
+.review-page { min-height: 100dvh; }
+.review-page { overflow-wrap: anywhere; }
+.review-layout > * { min-width: 0; }
+#review-locator, #review-history { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -311,6 +311,14 @@ class ConversationEngine:
                 # Unknown original-body hashes stay unknown; passage hashes are a separate identity.
                 anchor = dict(
                     evidence_id=e["evidence_id"],
+                    document_id=e["document"]["document_id"],
+                    source_url=e["document"]["source_url"],
+                    source_id=e["source_id"],
+                    segment_id=e["segment_id"],
+                    chunk_id=e["chunk_id"],
+                    extraction_run_ids=e["extraction_run_ids"],
+                    graph_artifact_ids=e["graph_artifact_ids"],
+                    database_snapshot_id=e["database_snapshot_id"],
                     citation=e["citation"],
                     source_sha256=None,
                     source_sha256_status="NOT_AVAILABLE_IN_CONTRACT",

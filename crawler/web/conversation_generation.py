@@ -31,18 +31,22 @@ def synthesize(provider, model, question, claims):
         think=False,
     )
     modalities = {e["evidence_id"]: c["evidence_kind"] for c in claims for e in c["evidence"]}
-    context = json.dumps(
-        [
-            {
-                "evidence_id": eid,
-                "quote": anchor["quote"],
-                "municipality_ids": anchor["municipality_ids"],
-                "passage_sha256": anchor["passage_sha256"],
-                "modality": modalities[eid],
-            }
-            for eid, anchor in anchors.items()
-        ],
-        ensure_ascii=True,
+    context = (
+        json.dumps(
+            [
+                {
+                    "evidence_id": eid,
+                    "quote": anchor["quote"],
+                    "municipality_ids": anchor["municipality_ids"],
+                    "passage_sha256": anchor["passage_sha256"],
+                    "modality": modalities[eid],
+                }
+                for eid, anchor in anchors.items()
+            ],
+            ensure_ascii=True,
+        )
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
     )
     # Byte count is a conservative bound, not the model's measured tokenization.
     byte_bound = len(

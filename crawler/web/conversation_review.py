@@ -11,6 +11,27 @@ from fastapi.responses import JSONResponse
 
 from crawler.web.review_protocol import ReviewProtocol
 
+CORRECTNESS = ["correct", "incorrect", "missing", "unknown"]
+UNIT_SCHEMAS = {
+    "source": {
+        "relevance": ["relevant", "irrelevant", "unknown"],
+        "authority": ["official", "institutional", "unclear", "not_authoritative"],
+        "municipality_scope": ["local", "shared", "external", "unknown"],
+        "version_match": CORRECTNESS,
+    },
+    "extraction": {key: CORRECTNESS for key in ["value", "unit", "actor_role", "scope", "time"]},
+    "relation": {
+        key: CORRECTNESS for key in ["endpoints", "relation_type", "actor_roles", "scope", "time"]
+    },
+    "answer_evidence": {
+        "relevance": ["relevant", "irrelevant", "unknown"],
+        "completeness": ["complete", "partial", "none", "unknown"],
+        "scope": CORRECTNESS,
+        "time": CORRECTNESS,
+        "abstention": ["appropriate", "false_abstention", "not_applicable", "unknown"],
+    },
+}
+
 
 def attach_conversation_review(app, directory, snapshot, *, technical, sources):
     def resolve(source):
@@ -59,12 +80,34 @@ def attach_conversation_review(app, directory, snapshot, *, technical, sources):
         return response
 
     @app.get("/api/chat-review/queue")
-    def queue(request: Request, kind: str = "", status: str = "", q: str = ""):
-        return call(protocol.queue, actor(request), kind=kind, status=status, q=q)
+    def queue(
+        request: Request,
+        kind: str = "",
+        status: str = "",
+        q: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        who = actor(request)
+        value = call(
+            protocol.queue,
+            who,
+            kind=kind,
+            status=status,
+            q=q,
+            limit=limit,
+            offset=offset,
+        )
+        return dict(value, actor=who)
 
     @app.get("/api/chat-review/objects/{oid}")
     def view(oid: str, request: Request):
-        return call(protocol.view, actor(request), oid)
+        value = call(protocol.view, actor(request), oid)
+        return dict(
+            value,
+            unit_schema=UNIT_SCHEMAS.get(value["kind"], {}),
+            unit_schema_version="unit-review-v2.1",
+        )
 
     @app.get("/api/chat-review/objects/{oid}/original")
     def original(oid: str, request: Request):
@@ -76,7 +119,26 @@ def attach_conversation_review(app, directory, snapshot, *, technical, sources):
     @app.post("/api/chat-review/objects/{oid}/review")
     async def review(oid: str, request: Request):
         who, data = actor(request), await request.json()
-        call(protocol.view, who, oid)
+        if not isinstance(data, dict) or not isinstance(data.get("form"), dict):
+            raise HTTPException(422, "Structured review form required")
+        corrections = data["form"].get("corrections", {})
+        if not isinstance(corrections, dict):
+            raise HTTPException(422, "Structured corrections required")
+        if corrections.get("review_schema", "unit-review-v2.1") != "unit-review-v2.1":
+            raise HTTPException(422, "Unknown annotation schema version")
+        obj = call(protocol.view, who, oid)
+        judgments = corrections.get("unit_judgments", {})
+        schema = UNIT_SCHEMAS.get(obj["kind"], {})
+        if (
+            not isinstance(judgments, dict)
+            or set(judgments) - schema.keys()
+            or any(
+                value is not None and value not in schema[key] for key, value in judgments.items()
+            )
+        ):
+            raise HTTPException(422, "Unknown unit-specific judgment")
+        if "unit_judgments" in corrections:
+            corrections["review_schema"] = "unit-review-v2.1"
         if not data.get("draft") and not any(
             e["role"] == who for e in protocol._events("original_opened", oid)
         ):
@@ -85,10 +147,17 @@ def attach_conversation_review(app, directory, snapshot, *, technical, sources):
         if seconds is not None:
             if type(seconds) is not int or not 0 <= seconds <= 86400:
                 raise HTTPException(422, "Bounded interaction duration required")
-            call(protocol._event, who, oid, "interaction_timing", {
-                "seconds": seconds, "semantics": "SELF_REPORTED_UI_TIME_NOT_READING_PROOF",
-                "draft": bool(data.get("draft")),
-            })
+            call(
+                protocol._event,
+                who,
+                oid,
+                "interaction_timing",
+                {
+                    "seconds": seconds,
+                    "semantics": "SELF_REPORTED_UI_TIME_NOT_READING_PROOF",
+                    "draft": bool(data.get("draft")),
+                },
+            )
         account = protocol.account(who)
         method = protocol.adjudicate if account["role"] == "adjudicator" else protocol.save
         if account["role"] == "adjudicator" and data.get("draft"):

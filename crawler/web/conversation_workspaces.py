@@ -68,6 +68,8 @@ def visualization(turn):
                         "unit": match.group(2),
                         "evidence_id": anchor["evidence_id"],
                         "passage_sha256": anchor["passage_sha256"],
+                        "document_id": anchor.get("document_id"),
+                        "segment_id": anchor.get("segment_id"),
                         "municipality_ids": anchor["municipality_ids"],
                         "modality": claim["evidence_kind"],
                         "quote": anchor["quote"],
@@ -78,6 +80,9 @@ def visualization(turn):
     grouped = {}
     for row in rows:
         identity = (
+            (row["document_id"], row["segment_id"])
+            if row["document_id"] and row["segment_id"]
+            else row["evidence_id"],
             row["passage_sha256"],
             row["numeric_span_start"],
             row["numeric_span_end"],

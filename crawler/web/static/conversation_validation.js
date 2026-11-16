@@ -3,7 +3,7 @@
   const $ = (id) => document.getElementById(id);
   let csrf = "",
     selected = null,
-    queue = [], openedAt = 0, saveTimer = null, previous = [], reviewEpoch = 0;
+    queue = [], openedAt = 0, saveTimer = null, previous = [], reviewEpoch = 0, offset = 0, total = 0, queueRole = "reviewer", loadEpoch = 0;
   function msg(s) {
     $("review-status").textContent = s;
   }
@@ -14,7 +14,7 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const d = await r.json();
-    if (!r.ok) throw Error(d.detail || "Prüfvorgang nicht verfügbar");
+    if (!r.ok) { const error = Error(d.detail || "Prüfvorgang nicht verfügbar"); error.status = r.status; throw error; }
     return d;
   }
   function run(f) {
@@ -26,10 +26,15 @@
     };
   }
   async function load() {
+    const version = ++loadEpoch;
     const d = await api(
-      "queue?q=" + encodeURIComponent($("review-filter").value),
+      "queue?limit=50&offset=" + offset + "&kind=" + encodeURIComponent($("review-kind-filter").value) + "&q=" + encodeURIComponent($("review-filter").value),
     );
-    queue = d.items || [];
+    if (version !== loadEpoch) return;
+    queue = d.items || []; total = d.total; queueRole = d.role;
+    sessionStorage.setItem("klima-review-filters", JSON.stringify({q:$("review-filter").value, kind:$("review-kind-filter").value}));
+    $("review-page-prev").disabled = offset === 0;
+    $("review-page-next").disabled = offset + 50 >= total;
     $("review-queue").replaceChildren();
     for (const item of queue) {
       const li = document.createElement("li"),
@@ -43,7 +48,7 @@
       li.append(b);
       $("review-queue").append(li);
     }
-    msg(`${d.progress.submitted} / ${d.progress.total} abgegeben · ${queue.length} in dieser Queue. Priorisierung: Operatorheuristik, keine zufällige Evaluationsstichprobe.`);
+    msg(`Prüfkonto ${d.actor} · ${d.role} · ${d.progress.submitted} / ${d.progress.total} abgegeben · ${queue.length} auf Seite ${Math.floor(offset / 50) + 1}. Priorisierung: Operatorheuristik, keine zufällige Evaluationsstichprobe.`);
   }
   async function open(id) {
     clearTimeout(saveTimer);
@@ -75,19 +80,34 @@
     $("review-original").textContent = "Original noch nicht geöffnet.";
     $("review-locator").textContent = "";
     $("review-form").reset();
+    $("review-unit-fields").replaceChildren();
+    const dimensionLabels = {relevance:"Relevanz", authority:"Autorität", municipality_scope:"Gemeindegeltung", version_match:"Quellenfassung", value:"Wert", unit:"Einheit", actor_role:"Akteursrolle", scope:"Geltung", time:"Zeit", endpoints:"Beide Endpunkte", relation_type:"Relationstyp", actor_roles:"Akteursrollen", completeness:"Vollständigkeit", abstention:"Abstention"};
+    for (const [key, values] of Object.entries(selected.unit_schema || {})) {
+      const label = document.createElement("label"), select = document.createElement("select");
+      label.append(document.createTextNode(dimensionLabels[key] || key));
+      select.dataset.unitDimension = key;
+      for (const value of ["", ...values]) { const option = document.createElement("option"); option.value = value; option.textContent = value || "Nicht beurteilt"; select.append(option); }
+      label.append(select); $("review-unit-fields").append(label);
+    }
+    $("review-unit-dimensions").hidden = !Object.keys(selected.unit_schema || {}).length;
     $("review-history").textContent = JSON.stringify(selected.history, null, 2);
     const draft = selected.history
-      .filter((e) => e.kind === "protocol_draft")
+      .filter((e) => ["protocol_draft", "protocol_review", "protocol_adjudication_draft", "protocol_adjudication"].includes(e.kind))
       .at(-1)?.payload;
     if (draft) {
       $("review-decision").value = draft.decision || "";
       $("review-comment").value = draft.comment || "";
+      document.querySelectorAll("[data-unit-dimension]").forEach(s => s.value = draft.corrections?.unit_judgments?.[s.dataset.unitDimension] || "");
       document.querySelectorAll("[data-metric]").forEach(s => {
         const value = draft.metric_judgments?.[s.dataset.metric];
         s.value = typeof value === "boolean" ? String(value) : "";
       });
     }
-    $("review-submit").disabled = selected.review_state === "SUBMITTED";
+    const finalized = selected.review_state === "SUBMITTED" || selected.review_state === "ADJUDICATED" || selected.review_state === "CONSENSUS";
+    $("review-form").querySelectorAll("input, select, textarea, button").forEach(n => n.disabled = finalized);
+    $("review-submit").disabled = finalized || (queueRole === "adjudicator" && selected.review_state !== "CONFLICT");
+    $("review-independent").parentElement.lastChild.textContent = queueRole === "adjudicator" ? "Eigenständige Entscheidung nach Originalprüfung und Vergleich der Ersturteile." : "Ohne fremde Urteile unabhängig geprüft.";
+    $("review-comment").required = queueRole === "adjudicator" || ($("review-decision").value !== "SUPPORTED" && $("review-decision").value !== "");
     $("review-title").tabIndex = -1;
     $("review-title").focus();
   }
@@ -112,20 +132,26 @@
   $("review-logout").addEventListener(
     "click",
     run(async () => {
+      sessionStorage.removeItem("klima-review-filters");
       await api("session", "DELETE");
       location.reload();
     }),
   );
-  $("review-refresh").addEventListener("click", run(load));
+  $("review-refresh").addEventListener("click", run(() => {offset = 0; return load();}));
+  $("review-kind-filter").addEventListener("change", run(() => {offset = 0; return load();}));
+  $("review-page-prev").addEventListener("click", run(() => {offset = Math.max(0, offset - 50); return load();}));
+  $("review-page-next").addEventListener("click", run(() => {if (offset + 50 < total) offset += 50; return load();}));
   $("review-back").addEventListener("click", run(() => {
     const id = previous.pop(); if (id) return open(id);
   }));
   $("review-open-original").addEventListener(
     "click",
     run(async () => {
+      const version = reviewEpoch, objectId = selected.object_id;
       const d = await api(
-        "objects/" + encodeURIComponent(selected.object_id) + "/original",
+        "objects/" + encodeURIComponent(objectId) + "/original",
       );
+      if (version !== reviewEpoch || objectId !== selected?.object_id) return;
       $("review-original").textContent = d.sources
         .map((s) => s.quote)
         .join("\n\n");
@@ -142,6 +168,7 @@
   );
   async function submit(draft) {
     if (!selected) throw Error("Prüffall wählen");
+    const version = reviewEpoch;
     if (!draft && !confirm("Eigenes Urteil unveränderlich abgeben?")) return;
     const form = {
       decision: $("review-decision").value,
@@ -149,7 +176,10 @@
       evidence_inspected: $("review-inspected").checked,
       independence_confirmed: $("review-independent").checked,
       human_confirmed: $("review-human").checked,
-      corrections: {},
+      corrections: Object.keys(selected.unit_schema || {}).length ? {
+        review_schema: selected.unit_schema_version,
+        unit_judgments: Object.fromEntries([...document.querySelectorAll("[data-unit-dimension]")].map(s => [s.dataset.unitDimension, s.value || null]))
+      } : {},
       metric_judgments: selected.kind === "claim" ? Object.fromEntries(
         [...document.querySelectorAll("[data-metric]")].map(s => [s.dataset.metric, s.value === "" ? null : s.value === "true"])
       ) : {},
@@ -160,6 +190,7 @@
       "POST",
       { draft, form },
     );
+    if (version !== reviewEpoch) return;
     if (draft) msg("Entwurf gespeichert (Interaktionsdauer, kein Nachweis fachlichen Lesens).");
     else {
       msg("Eigenes Urteil gespeichert. Fremdurteile bleiben verborgen.");
@@ -169,7 +200,11 @@
           r.object_id !== selected.object_id && r.state !== "SUBMITTED",
       );
       if (next) await open(next.object_id);
-      else $("review-submit").disabled = true;
+      else if (offset + 50 < total) {
+        offset += 50; await load();
+        const pending = queue.find(r => r.state !== "SUBMITTED");
+        if (pending) await open(pending.object_id);
+      } else $("review-submit").disabled = true;
     }
   }
   $("review-save").addEventListener(
@@ -180,6 +215,9 @@
     "submit",
     run(() => submit(false)),
   );
+  $("review-decision").addEventListener("input", () => {
+    $("review-comment").required = queueRole === "adjudicator" || $("review-decision").value !== "SUPPORTED";
+  });
   $("review-form").addEventListener("input", () => {
     clearTimeout(saveTimer);
     const id = selected?.object_id;
@@ -198,20 +236,32 @@
     }
   });
   document.querySelectorAll("[data-demo]").forEach(b => b.addEventListener("click", run(async () => {
-    ++reviewEpoch; clearTimeout(saveTimer); previous = [];
+    document.querySelectorAll("[data-demo]").forEach(button => button.disabled = true);
+    try {
+    ++loadEpoch;
+    ++reviewEpoch; clearTimeout(saveTimer); previous = []; offset = 0;
+    sessionStorage.removeItem("klima-review-filters"); $("review-filter").value = ""; $("review-kind-filter").value = "";
     selected = null; queue = []; $("review-form").reset();
     $("review-case").hidden = true; $("review-queue").replaceChildren();
     await api("demo-session/" + b.dataset.demo, "POST");
     $("review-login").hidden = true; $("review-logout").hidden = false;
     $("review-case").hidden = true; selected = null;
     await load();
+    } finally { document.querySelectorAll("[data-demo]").forEach(button => button.disabled = false); }
   })));
+  try {
+    const filters = JSON.parse(sessionStorage.getItem("klima-review-filters") || "{}");
+    $("review-filter").value = String(filters.q || "").slice(0,200);
+    $("review-kind-filter").value = filters.kind || "";
+  } catch (_) { sessionStorage.removeItem("klima-review-filters"); }
   fetch("/api/chat/session")
     .then((r) => r.json())
-    .then((d) => {
+    .then(async (d) => {
       csrf = d.csrf;
       $("review-demo").hidden = !d.fixture;
       $("review-login-button").disabled = false;
+      try { await load(); $("review-login").hidden = true; $("review-logout").hidden = false; }
+      catch (error) { if (error.status !== 401) msg(error.message); }
     })
     .catch((e) => msg(e.message));
 })();

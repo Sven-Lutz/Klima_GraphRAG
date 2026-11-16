@@ -174,15 +174,21 @@ function render() {
   target.lastElementChild?.scrollIntoView({ block: "nearest" });
 }
 async function inspect(t, e) {
+  const activeChat = cid, version = epoch;
   const current = await api(
     `conversations/${cid}/evidence/${t.turn_id}/${encodeURIComponent(e.evidence_id)}`,
   );
+  if (cid !== activeChat || version !== epoch) return;
   $("quote").textContent = current.quote;
   $("evidence-notice").textContent =
     "Extrahierte Passage, nicht unabhängig fachlich validiert. Original-Bodyhash/Seite nur anzeigen, wenn tatsächlich vorhanden.";
   $("provenance").replaceChildren();
   for (const [k, v] of Object.entries({
     Beleg: current.evidence_id,
+    Dokument: current.document_id || "NOT_KNOWN",
+    Unit: current.segment_id || "NOT_KNOWN",
+    Chunk: current.chunk_id || "NOT_AVAILABLE",
+    Extraktionsläufe: (current.extraction_run_ids || []).join(", ") || "NOT_KNOWN",
     Passagenhash: current.passage_sha256,
     Originalhash: current.source_sha256 || "NOT_KNOWN",
     Fundstelle: current.locator_kind,
@@ -393,7 +399,9 @@ function dataTable(headers, rows) {
   return table;
 }
 async function workspace() {
-  const path = location.pathname;
+  const path = location.pathname, workspaceVersion = epoch, workspaceChat = cid;
+  if (workspaceGraph) workspaceGraph.destroy(); workspaceGraph = null;
+  $("workspace-graph").replaceChildren();
   const content = $("workspace-content"), controls = $("workspace-controls");
   content.replaceChildren(); controls.replaceChildren();
   $("workspace-panel").hidden = false;
@@ -403,6 +411,7 @@ async function workspace() {
   if (path === "/settings") {
     $("workspace-title").textContent = "Aktive Methoden und Modelle";
     const config = await api("settings");
+    if (workspaceVersion !== epoch || workspaceChat !== cid) return;
     const names = {answer_generation:"Antwortmodell", information_extraction:"Information Extraction und aktiver Index", retrieval_ranking:"Retrieval und Ranking", verification_evaluation:"Verifikation und Evaluation"};
     content.append(el("p", "Snapshot: " + config.snapshot));
     for (const [key, title] of Object.entries(names)) {
@@ -417,6 +426,7 @@ async function workspace() {
   if (path === "/coverage") {
     $("workspace-title").textContent = "Datenabdeckung";
     const coverageConfig = await api("settings");
+    if (workspaceVersion !== epoch || workspaceChat !== cid) return;
     content.append(el("p", coverageConfig.fixture ? "Gemeinden mit Text sind nicht automatisch fachlich abgedeckt. Der aktive synthetische Bestand erlaubt keine Aussage über Bayern oder München-Hitzevorsorge." : "Gemeinden mit Text sind nicht automatisch fachlich abgedeckt. Für diesen Snapshot ist keine aktuelle qualifizierte Coverage-Auswertung eingebunden."));
     content.append(dataTable(["Dimension", "Aktiver Bestand"], [
       ["Gemeinderahmen", "NOT_AVAILABLE"], ["Beschaffung versucht", "NOT_AVAILABLE"],
@@ -430,6 +440,7 @@ async function workspace() {
   if (!t) { content.append(el("p", "Noch keine Antwort vorhanden. Stellen Sie im Chat eine Frage und öffnen Sie deren Graph oder Daten.")); return; }
   if (path === "/visualizations") {
     const spec = await api(`conversations/${cid}/visualization/${t.turn_id}`);
+    if (workspaceVersion !== epoch || workspaceChat !== cid) return;
     content.append(el("h3", spec.title), el("p", `${spec.status} · Snapshot ${spec.snapshot} · Zeitraum ${spec.period} · Aggregation ${spec.aggregation}`));
     controls.append(action("Datensatz exportieren", () => download("visualization.json", spec)));
     if (spec.chart_allowed) {
@@ -458,7 +469,7 @@ async function workspace() {
     const edges = g.edges.filter(e => (matching.has(e.source) || matching.has(e.target)) && (relation.selectedIndex === 0 || (e.label || e.kind) === relation.value));
     const ids = new Set(edges.flatMap(e => [e.source, e.target]));
     const nodes = g.nodes.filter(n => ids.has(n.id));
-    if (workspaceGraph) workspaceGraph.destroy();
+    if (workspaceGraph) workspaceGraph.destroy(); workspaceGraph = null;
     if (window.cytoscape && nodes.length) workspaceGraph = cytoscape({container: $("workspace-graph"),
       elements: [...nodes.map(n => ({data:n})), ...edges.map(e => ({data:e}))],
       layout: {name:layout.value}, style:[{selector:"node",style:{label:"data(label)","background-color":"#165941","font-size":12}},{selector:"edge",style:{"target-arrow-shape":"triangle","curve-style":"bezier","line-color":"#879b8b"}}]});

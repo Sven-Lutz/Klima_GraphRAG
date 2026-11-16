@@ -38,6 +38,7 @@ def main():
             receipts.append({"check": "markdown_headings_tables_xss_protocols", "status": "PASS"})
             page.get_by_role("button", name="Graph öffnen", exact=True).click()
             page.locator("#workspace-content table tbody tr").first.wait_for()
+            graph_url = page.url
             assert "EXTRACTED_UNVERIFIED" in page.locator("#workspace-content").inner_text()
             page.get_by_label("Knoten suchen").fill("no-such-node")
             assert "0 Knoten" in page.locator("#workspace-content").inner_text()
@@ -106,6 +107,36 @@ def main():
             page.goto(args.base + "/validation")
             page.get_by_role("button", name="Demo-Prüfkonto A", exact=True).click()
             page.locator("#review-queue button").first.click()
+            page.evaluate("""() => {
+              window.originalLayoutFetch = window.fetch;
+              window.fetch = (...args) => String(args[0]).endsWith('/original') ?
+                new Promise(resolve => { window.releaseOldOriginal = async () => {
+                  const response = await window.originalLayoutFetch(...args);
+                  await response.clone().text(); resolve(response);
+                  await new Promise(requestAnimationFrame);
+                }; }) : window.originalLayoutFetch(...args);
+            }""")
+            page.locator("#review-open-original").click()
+            page.wait_for_function("typeof window.releaseOldOriginal === 'function'")
+            first_title = page.locator("#review-title").inner_text()
+            page.locator("#review-queue button").nth(1).click()
+            page.wait_for_function(
+                "old => document.querySelector('#review-title').textContent !== old",
+                arg=first_title,
+            )
+            page.evaluate("() => window.releaseOldOriginal()")
+            assert "noch nicht geöffnet" in page.locator("#review-original").inner_text()
+            page.evaluate("window.fetch = window.originalLayoutFetch")
+            page.locator("#review-queue button").first.click()
+            page.locator("#review-open-original").click()
+            page.locator("#review-original").filter(has_text="20 kWp").wait_for()
+            page.locator("#review-history").evaluate("e => e.parentElement.open = true")
+            page.set_viewport_size({"width": 320, "height": 1000})
+            page.screenshot(path=str(args.output / "review-original-320.png"), full_page=True)
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+            page.set_viewport_size({"width": 1440, "height": 1000})
+            page.screenshot(path=str(args.output / "review-case-1440.png"), full_page=True)
+            receipts.append({"check": "stale_original_response_is_ignored", "status": "PASS"})
             page.locator("#review-comment").fill(
                 "Synthetic browser draft; no independent judgment."
             )
@@ -113,6 +144,13 @@ def main():
             page.get_by_role("button", name="Demo-Prüfkonto B", exact=True).click()
             page.locator("#review-queue button").first.click()
             assert page.locator("#review-comment").input_value() == ""
+            page.goto(graph_url)
+            page.locator("#workspace-content table tbody tr").first.wait_for()
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.get_by_role("button", name="Aktuellen Chat löschen").click()
+            page.get_by_text("Noch keine Antwort vorhanden.", exact=False).wait_for()
+            assert page.locator("#workspace-graph canvas").count() == 0
+            receipts.append({"check": "deleted_chat_clears_graph", "status": "PASS"})
             assert errors == [], errors
             receipts.append({"check": "chart_export_review_autosave_blinding", "status": "PASS"})
             receipts.append({"check": "native_zoom_screenreader_human_UX", "status": "NOT_TESTED"})
