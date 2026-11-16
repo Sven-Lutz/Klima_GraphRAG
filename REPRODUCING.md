@@ -27,3 +27,10 @@ Die veröffentlichten historischen IE-/Retrievalaggregate erlauben Arithmetik-/N
 
 
 V2: `scripts/qa/conversation_v2_browser.py --output generated/ci-v2-browser` prüft synthetische Arbeitsräume mit der vorhandenen CI-Version Playwright 1.65.2 und Chrome. Native Zoom-/Screenreader-/Humanabnahme wird nicht ausgeführt. V1-Dossierbindungen benötigen den expliziten Commit 0483eef9d8bb9c37559d8dcee0e0b06449d9a394 in der lokalen Git-Historie (CI fetch-depth 20); V2-Bindungen werden separat über `scripts/qa/refresh_v2_registers.py --code-commit <V2-code-SHA>` aktualisiert. Der alte Builder überschreibt eingefrorene V1-Zeilen nicht. Aktuelle Ressourcengrenzen, Fehlversuche und Startstatus: docs/product/V2_QA_REPORT.md.
+
+
+## Local real research workbench
+
+Public clean checks still use requirements-publication.lock and synthetic inputs. Optional local CPU-encoder dependencies: `python -m pip install -r requirements-workbench-local.lock`. This installs runtime packages, not weights. For the owner-provided already existing artifacts, run `python -m crawler.web --local-config /absolute/local-config.json --directory generated/real-workbench --port 8825`. No login/API key. Configuration schema: `local-research-workbench-v1`, `use=LOCAL_RESEARCH_ONLY_NO_REDISTRIBUTION`, explicit existing `workspace`, `terms_index`, `semantic_index`, `embedding_model`, and nonempty `original_roots` array. Missing paths, model/index/snapshot mismatches or partial dense index fail; no rebuild/fallback creation.
+
+Owner-local browser check: `python scripts/qa/real_workbench_browser.py --output generated/real-check-new`. It produces private evidence/screenshots, so NEVER run/upload this step in public CI. Public CI instead runs research_workbench_browser.py on a synthetic server. Existing protocol browser checks now visit `/validation/protocol`; normal `/validation` is account-free. See WORKBENCH_REORIENTATION.md for provenance, retention, negative cases and evaluation limits.

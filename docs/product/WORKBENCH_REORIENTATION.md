@@ -49,3 +49,26 @@ Observed failures preserved: string-form browser wait under strict CSP (test har
 Nine bound source/manifest/index hashes matched before and after real calls and browser use. One exposed Nennslingen native-pipeline observation returned lexical 5 / dense 2 / hybrid 4 / graph 1 qualified excerpt claims; observed wall times 0.502/0.888/0.204/0.055 seconds in that order, on the same snapshot. This is one warmed/sequential engineering observation, not an answer-quality metric, stable latency estimate or GraphRAG advantage. Earlier Regensburg portal admission is a negative diagnostic, not retained as a successful measures answer. All real extractive answers now remain PARTIAL/UNVALIDATED.
 
 Final CI and clean-checkout results are reported on PR19 at the actual release head; source code and QA artifacts are hash-bound by the canonical publication registers.
+
+
+Fresh checkout of source 9898fa2 with the public pinned environment: **439 PASS / 6 SKIP, 12.66 s**, one existing FastAPI/httpx deprecation warning. Ruff, compile and pip checks PASS. Original archival browser readback subsequently PASS (generated/real-workbench-browser-release-02), including exact original SHA header and sandbox CSP. Its initial test helper used a relative URL unsupported by APIRequestContext; changing only the helper to the explicit loopback base fixed the test. Source rendering/security gates were unchanged.
+
+
+Fresh optional pinned CPU environment also composed the same real private snapshot and completed all four native methods (9898fa2), without model downloads, rebuilds or human labels. ONNX emitted an import-time platform telemetry-ID persistence warning. Follow-up f109f11 explicitly calls `onnxruntime.disable_telemetry_events()` before creating model sessions; actual composition PASS and 42 focused contracts PASS (3.47 s). Import initialization may still emit the ID-persistence warning before this API can be called. No corpus disclosure is inferred from that warning and no telemetry-free import is claimed.
+
+
+### Public boundary re-audit after code-origin clarification
+
+The old E1 collection exclusion is no longer valid. A 19-module re-audit first failed collection in eight modules because Protego was absent. Installing the existing project's exact Protego 0.7.0 and rerunning yielded **197 PASS / 12 FAIL (10.90 s)**. All twelve failures are concrete missing docs/pilot/minimal_external_preview/CANDIDATE_FACTS.json inputs, not relabeled successes. Those exact node IDs remain excluded with the actual missing-input reason. The other 197 technical cases were genuinely re-executed and reinstated without any assertion changes or overlap with the former selection. Expanded suite at 916eab0: **636 PASS / 6 SKIP (23.59 s)**. Previous 439 receipts remain historical narrower selections, not changed study results. Optional source/fixture artifacts beyond the six hash-bound algorithms are still not blanket-published.
+
+Final app source 6d0f832 embeds the actual encoder manifest, runtime/parameters and index binding in each answer and controlled comparison receipt. Synthetic full journey PASS and real archived-original/full journey PASS again at that source. Nine private input hashes unchanged. Local notes use the archived original link where available; synthetic missing originals are never simulated. SQL/full GraphRAG inactive; no independent answer-quality metric.
+
+
+### Clean-checkout correction of the expanded boundary
+
+A truly public-only fresh environment at 916eab0 found **631 PASS / 5 FAIL / 6 SKIP (21.80 s)**. The five failures were the unchanged exact BM25-equivalence test's `git show b84db20:research/bavaria/workspace/core.py`: that historical object exists only in the owner's shared private repository. It was not fetched, reconstructed, replaced with current code or pushed. These five exact node IDs are now explicitly excluded from public replay with MISSING_NONPUBLIC_HISTORICAL_GIT_OBJECT_B84DB20. Their successful local run remains an owner-history-dependent engineering receipt, not public reproducibility. Thus **192** of the 197 locally re-enabled cases are self-contained for public inclusion. The 636-local receipt remains an intermediate result; current public denominator is corrected below. Original assertions and historical code unchanged.
+
+
+### Current self-contained release result
+
+At 5bd258e98d9899d812ccbe44138ab0f1b5ae9c63, owner-environment public selection **631 PASS / 6 SKIP (23.14 s)**; completely fresh public-only environment **631 PASS / 6 SKIP (20.47 s)** with existing FastAPI/httpx warning. The latter installed only requirements-publication.lock, no optional ONNX/tokenizers, Playwright, private input or private Git object. Static/compile/pip checks PASS. The 12 missing-CANDIDATE_FACTS and 5 private-history cases remain explicit exclusions, not skipped assertions or successes. Native Graph, IE and Answer quality remain unvalidated; no synthetic test count implies scientific accuracy.

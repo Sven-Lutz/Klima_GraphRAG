@@ -43,6 +43,17 @@ def main():
         "docs/product/V2_QA_REPORT.md",
         "docs/product/V2_CHECKS.json",
         "docs/product/V2_QUEUE_LOAD.json",
+        "crawler/web/local_annotations.py",
+        "crawler/web/research_workbench.py",
+        "crawler/web/workbench_runtime.py",
+        "scripts/qa/research_workbench_browser.py",
+        "scripts/qa/real_workbench_browser.py",
+        "docs/product/WORKBENCH_REORIENTATION.md",
+        "docs/product/E1_CODE_ORIGIN.json",
+        "requirements-workbench-local.lock",
+        "requirements-publication.lock",
+        "tests/public-tests.txt",
+        "docs/research/PUBLIC_TEST_EXCLUSIONS.tsv",
     ]
     manifest = PAPER / "ARTIFACT_MANIFEST.tsv"
     with manifest.open() as stream:

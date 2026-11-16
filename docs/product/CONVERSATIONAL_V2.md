@@ -43,3 +43,8 @@ MacBook Air M3 / 8 GB laut Owner. Am Beginn rund 16 GiB freier Datenträger, vm_
 Die Fixture ist synthetisch. Testfragen: „Welche Solarprojekte planen die Stadtwerke?“, „Wie viel Leistung?“, „Wer plant die Solaranlage?“, „Welche wurden bereits umgesetzt?“. Eine fehlende Passage ist kein Beweis fehlender Maßnahmen. Keine echten kommunalen Antworten aus diesen Daten ableiten.
 
 Engineering, Answer Quality, UX, Corpus Integration, Review Workflow, Human Gold, Reproducibility, External Preview und Paper Readiness werden im QA-Bericht separat geführt. Automatische Tests liefern keine unabhängigen fachlichen Labels. Historische Befunde und Register bleiben unverändert; neue Interventionen heißen V2 und bleiben development-exposed.
+
+
+## Current workbench reorientation
+
+The original architecture above is retained as the V2 baseline. Current product routing and implementation delta are canonical in WORKBENCH_REORIENTATION.md: anonymous session recovery, visible native method choice, controlled comparison receipts, optional local notes and explicit read-only real-corpus composition. Existing FastAPI/SQLite/Cytoscape/retrieval stacks are reused. No stack migration, corpus re-embedding or graph rebuild. The formerly unclear E1 code origin has been addressed by the owner's own-AI-conversation declaration and unchanged hash-bound source restoration; original-document redistribution is still separate. No new RQ/H/T or independent quality finding is introduced.

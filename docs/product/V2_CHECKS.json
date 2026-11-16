@@ -1,6 +1,6 @@
 {
   "schema": "V2_TECHNICAL_RECEIPTS_V1",
-  "implementation_commit": "e7088ca2ba477b377fb2c437cb587b5fcd6caaf2",
+  "implementation_commit": "5bd258e98d9899d812ccbe44138ab0f1b5ae9c63",
   "human_gold": false,
   "prior_full_snapshot": {
     "passed": 414,
@@ -12,7 +12,7 @@
     "deselected_store_cases": 3,
     "seconds": 0.4
   },
-  "runtime": "RUNNING_LOCAL_LOOPBACK_AFTER_RESOURCE_RECOVERY",
+  "runtime": "RUNNING_REAL_LOCAL_RESEARCH_LOOPBACK_8825",
   "LLM_inference_executed": false,
   "native_zoom": "NOT_TESTED_CUA_HOST_UNAVAILABLE",
   "screenreader": "NOT_TESTED",
@@ -644,12 +644,12 @@
     "cause": "UNCHANGED_STORAGE_RESERVE"
   },
   "last_local_full_attempt": {
-    "passed": 431,
+    "passed": 631,
     "failed": 0,
     "errors": 0,
     "skipped": 6,
-    "seconds": 7.82,
-    "artifact": "generated/v2-public-tests-final-source.txt"
+    "seconds": 23.14,
+    "artifact": "generated/workbench-public-self-contained-tests.txt"
   },
   "final_source_browser": [
     {
@@ -928,5 +928,189 @@
     "method": "actual rendered graph bounds after resize, full V2 Chrome workflow",
     "artifact": "generated/v2-browser-graph-resize",
     "screenshot_inspected": true
+  },
+  "embedding_inference_executed": true,
+  "Answer_LLM_inference_executed": false,
+  "workbench_release": {
+    "baseline": "e22750107a97ac81ab8572d61c6197d595a4d6b9",
+    "source_commit": "9898fa2e4a5e3f087c8e7a58ab85663047beef51",
+    "public_tests": {
+      "passed": 439,
+      "skipped": 6,
+      "failed": 0,
+      "seconds": 10.43,
+      "artifact": "generated/workbench-public-tests-source-final.txt"
+    },
+    "synthetic_browser": [
+      {
+        "journey": "anonymous_question_followup_methods_compare_graph_chart_note_export_expiry_reload",
+        "status": "PASS",
+        "corpus": "SYNTHETIC",
+        "human_gold": false,
+        "widths": [
+          320,
+          360,
+          375,
+          768,
+          1024,
+          1440
+        ],
+        "human_acceptance": "NOT_EVALUATED",
+        "native_zoom": "NOT_TESTED"
+      }
+    ],
+    "real_browser": {
+      "status": "PASS",
+      "corpus": "REAL_LOCAL_RESEARCH",
+      "snapshot": "bavaria-workspace-sha256:64710fca1414d8c6ba9ad0f5046fa45224f61768a14843af6da36e56b75040ed",
+      "methods": [
+        "lexical",
+        "semantic",
+        "hybrid",
+        "graph"
+      ],
+      "widths": [
+        320,
+        768,
+        1440
+      ],
+      "question_exposure": "DEVELOPMENT_EXPOSED",
+      "quality": "UNVALIDATED",
+      "human_labels_created": 0,
+      "chart_rows": 0,
+      "chart_allowed": false,
+      "rights": "PRIVATE_LOCAL_OUTPUT_NOT_FOR_UPLOAD"
+    },
+    "source_index_files_unchanged": 9,
+    "source_origin": "OWNER_DECLARED_AI_GENERATED_PROJECT_CODE; E1_CODE_ORIGIN.json",
+    "independent_quality": "UNVALIDATED",
+    "public_corpus_included": false,
+    "native_graph_pipeline_not_isolated_graph_format": true,
+    "clean_public_reproduction": {
+      "commit": "9898fa2e4a5e3f087c8e7a58ab85663047beef51",
+      "passed": 439,
+      "skipped": 6,
+      "failed": 0,
+      "seconds": 12.66,
+      "warning": "FastAPI/httpx deprecation without optional httpx2",
+      "environment": "clean checkout; requirements-publication.lock only"
+    },
+    "telemetry_followup": {
+      "source_commit": "f109f11",
+      "action": "onnxruntime.disable_telemetry_events before model sessions",
+      "focused_tests_passed": 42,
+      "seconds": 3.47,
+      "real_composition": "PASS",
+      "warning": "Import-time platform ID persistence warning may precede explicit disabling; not treated as corpus disclosure evidence"
+    },
+    "clean_real_reproduction": {
+      "source_commit": "9898fa2",
+      "environment": "fresh optional pinned CPU runtime",
+      "corpus": "REAL_LOCAL_RESEARCH",
+      "methods": [
+        "lexical",
+        "semantic",
+        "hybrid",
+        "graph"
+      ],
+      "snapshot": "bavaria-workspace-sha256:64710fca1414d8c6ba9ad0f5046fa45224f61768a14843af6da36e56b75040ed",
+      "quality": "UNVALIDATED",
+      "status": "PASS",
+      "human_labels_created": 0
+    },
+    "expanded_public_suite": {
+      "source_commit": "916eab0c19b70d1f7d961e7dc831a00d3f731b6f",
+      "passed": 636,
+      "skipped": 6,
+      "seconds": 23.59,
+      "added_reexecuted_cases": 197,
+      "earlier_reaudit_failed": 12,
+      "failure_reason": "All 12 missing undistributed CANDIDATE_FACTS.json; no assertions changed",
+      "dependency": "protego==0.7.0",
+      "public_reproducibility": "SUPERSEDED_BOUNDARY_PRIVATE_HISTORY_DEPENDENCY"
+    },
+    "final_synthetic_browser": [
+      {
+        "journey": "anonymous_question_followup_methods_compare_graph_chart_note_export_expiry_reload",
+        "status": "PASS",
+        "corpus": "SYNTHETIC",
+        "human_gold": false,
+        "widths": [
+          320,
+          360,
+          375,
+          768,
+          1024,
+          1440
+        ],
+        "human_acceptance": "NOT_EVALUATED",
+        "native_zoom": "NOT_TESTED"
+      }
+    ],
+    "final_real_browser": {
+      "status": "PASS",
+      "corpus": "REAL_LOCAL_RESEARCH",
+      "snapshot": "bavaria-workspace-sha256:64710fca1414d8c6ba9ad0f5046fa45224f61768a14843af6da36e56b75040ed",
+      "methods": [
+        "lexical",
+        "semantic",
+        "hybrid",
+        "graph"
+      ],
+      "widths": [
+        320,
+        768,
+        1440
+      ],
+      "question_exposure": "DEVELOPMENT_EXPOSED",
+      "quality": "UNVALIDATED",
+      "human_labels_created": 0,
+      "chart_rows": 0,
+      "chart_allowed": false,
+      "rights": "PRIVATE_LOCAL_OUTPUT_NOT_FOR_UPLOAD"
+    },
+    "fresh_boundary_negative": {
+      "source_commit": "916eab0",
+      "passed": 631,
+      "failed": 5,
+      "skipped": 6,
+      "seconds": 21.8,
+      "cause": "Missing nonpublic historical git object b84db20; assertions unchanged",
+      "current_self_contained_reenabled_cases": 192
+    },
+    "current_public_boundary": {
+      "source_commit": "5bd258e98d9899d812ccbe44138ab0f1b5ae9c63",
+      "reinstated_self_contained_cases": 192,
+      "missing_candidate_fact_cases": 12,
+      "missing_private_git_object_cases": 5,
+      "assertions_weakened": false
+    },
+    "final_clean_public_reproduction": {
+      "source_commit": "5bd258e98d9899d812ccbe44138ab0f1b5ae9c63",
+      "environment": "brand-new Python3.11 venv, public pinned dependencies only, no ONNX/tokenizers/Playwright/private inputs",
+      "passed": 631,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 6,
+      "seconds": 20.47,
+      "warning": "Existing FastAPI/httpx deprecation",
+      "static_compile_pip": "PASS"
+    }
+  },
+  "historical_v2_full_attempt": {
+    "passed": 431,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 6,
+    "seconds": 7.82,
+    "artifact": "generated/v2-public-tests-final-source.txt"
+  },
+  "intermediate_owner_expanded_suite": {
+    "passed": 636,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 6,
+    "seconds": 23.59,
+    "artifact": "generated/workbench-expanded-public-tests.txt"
   }
 }

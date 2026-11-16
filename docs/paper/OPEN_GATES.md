@@ -2,7 +2,7 @@
 
 | Gate | Status | Exakt notwendige Aktion |
 |---|---|---|
-| E1-Vendorrechte | BLOCKED | Urheber-/Lizenznachweis am konkreten Kit und seinen sechs Pythondateien/importierten Verträgen; kein Umbenennen/Kopieren als Ersatz |
+| E1-Codeherkunft | OWNER_DECLARED_PROJECT_AI_ORIGIN_20261116 | Sechs unveränderte Projektquellen per Owner-Angabe und E1_CODE_ORIGIN.json gebunden; bei entgegenstehender Fremdherkunft neu prüfen. Keine pauschale Freigabe weiterer Kit-/Corpusartefakte |
 | Kommunale Originale/Corpus | LOCAL_ONLY | Quellen-/Feld-/Archiv-/Exportumfang rechtlich bestätigen, bevor eine öffentliche/live Komposition erfolgt |
 | Unabhängige Annotation | NOT_INDEPENDENTLY_VALIDATED | echte getrennte Personen, Einwilligung, Original-first-Review, Exposition, Adjudikation und Goldfreeze |
 | Prospektive Studie | OWNER_REVIEW_REQUIRED | Endpunkte, zulässige Komponenten/Strata, Budgets und Kontraste genehmigen und vor neuen Testoutputs einfrieren |
