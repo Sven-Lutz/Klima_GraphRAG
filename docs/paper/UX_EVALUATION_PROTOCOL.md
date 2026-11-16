@@ -1,0 +1,11 @@
+# Formative UX-Prüfung, keine nachträgliche Überlegenheitsstudie
+
+**FUTURE EXPERIMENT.** Automatisierte Browserinteraktion ist technische QA, kein Ergebnis einer Nutzerstudie. Vor echter Erhebung Aufgaben, Einwilligung, Rollen, Datenumfang, Abbruchregeln und Ereignisvertrag einfrieren. Produkt-Coaching und wissenschaftliche Goldannotation an getrennten Personen/Phasen durchführen.
+
+Aufgaben: natürliche Frage ohne Methodenwissen; passende Quelle öffnen und Aussage verifizieren; Anschlussfrage mit Scopewechsel; falsche Prämisse erkennen; Relation und Originalspanne prüfen; zugewiesenen Prüffall original-first abschließen. Gleiche Aufgaben/Quellen/Snapshots in Vergleichsbedingungen verwenden. Reihenfolge/Version nach Zuteilung vorab festlegen, Übungs-/Lerneffekte deklarieren. Keine beliebige Stichprobengröße zur scheinbaren Signifikanz erfinden.
+
+Erfassen: Zeit vom Submit bis erster tatsächlich als tragfähig beurteilter Antwort (Systemlatenz allein reicht nicht), erfolgreiche Beleginspektion, Fehlklicks, Scopekorrekturen, Verständnis von Prognose/Umsetzung, Graphnavigation zur richtigen Passage, Abschlussfehler im Review, unbeabsichtigte Sichtbarkeit anderer Urteile und subjektive Verständlichkeit. Ladezeit, Abbruch, fehlendes Original und Taskversagen als eigene Ereignisse, nicht aus Nenner entfernen. Bildschirm-/Inhaltsaufzeichnungen nur mit gesonderter Einwilligung; keine Token oder private Quellen in öffentliche Logs.
+
+Technische Vorprüfung: 360 px, Tablet, Desktop, Tastaturfokus, Enter/Shift+Enter, Dialog mit Escape/Rückfokus, Resize, native Browser-Vergrößerung getrennt vom 200%-Reflowäquivalent. Kontrast, semantische Namen und Fokus prüfen; keine WCAG-Zertifizierung oder umfassende Screenreader-Kompatibilität behaupten. Automatisierte Checks und visuelle Inspektion ergänzen, ersetzen aber keine assistive Nutzung.
+
+Auswertung zuerst formative Fehlerliste und Aufgabenverläufe, getrennt nach Gerät/Rolle. Gepaarte oder randomisierte Aussagen nur mit geplantem Design und hinreichend unabhängigen Personen/Tasks. Systematische Usability-Überlegenheit ist derzeit NOT_EVALUATED. Ein bestimmter Klickpfad zeigt Funktion, nicht Komfort oder wissenschaftliche Antwortkorrektheit.

@@ -29,7 +29,9 @@ jobs:
       - name: Public input boundary (not private owner suite)
         run: python -m pytest @tests/public-tests.txt -ra -o tmp_path_retention_policy=failed -o tmp_path_retention_count=1
       - name: Scientific aggregate checks
-        run: python scripts/qa/check_public_research.py
+        run: |
+          python scripts/qa/check_public_research.py
+          python scripts/qa/check_paper_dossier.py
       - name: Install bounded browser driver (no model download)
         run: python -m pip install playwright==1.65.2
       - name: Start loopback synthetic conversational application
