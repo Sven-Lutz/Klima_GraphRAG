@@ -384,6 +384,7 @@ class ConversationEngine:
             result["generation_provider"] = self.generation["metadata"]["provider"]
             result["prompt_version"] = GENERATION_PROMPT
             result["model_version"] = self.generation["metadata"]["model"]
+            result["generation_configuration"] = dict(self.generation["metadata"])
             if not self.lock.acquire(blocking=False):
                 raise HTTPException(429, "Research worker busy")
             try:

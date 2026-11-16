@@ -1,9 +1,11 @@
 """Optional generation on qualified evidence. Structural checks never prove entailment."""
 
+import hashlib
 import json
 import re
 import unicodedata
 from dataclasses import asdict
+from pathlib import Path
 
 from crawler.core.answer_generation import GenerationInput, GenerationParameters
 
@@ -108,6 +110,9 @@ def synthesize(provider, model, question, claims):
         )
     return generated, {
         "model": response.model,
+        "implementation_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "prompt_sha256": hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
+        "evidence_bundle_sha256": hashlib.sha256(context.encode()).hexdigest(),
         "prompt": PROMPT,
         "parameters": asdict(parameters),
         "input_byte_bound": byte_bound,
