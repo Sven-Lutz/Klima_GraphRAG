@@ -81,7 +81,11 @@ def synthesize(provider, model, question, claims):
 
         def numbers(s):
             return set(
-                re.findall(r"(?<!\w)[+−-]?\d+(?:[.,]\d+)*", unicodedata.normalize("NFKC", s))
+                re.sub(r"\s+", "", token)
+                for token in re.findall(
+                    r"(?<!\w)[+−-]?\s*\d+(?:[.,]\d+)*",
+                    unicodedata.normalize("NFKC", s).replace("−", "-"),
+                )
             )
 
         if not numbers(text) <= numbers(quote):

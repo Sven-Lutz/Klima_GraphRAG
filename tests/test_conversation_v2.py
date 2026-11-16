@@ -475,3 +475,76 @@ def test_deleted_chat_cannot_be_resurrected_by_an_inflight_answer(tmp_path):
         assert future.result(timeout=5).status_code == 410
     with app.state.chat_store.conn() as conn:
         assert conn.execute("SELECT count(*) FROM turns WHERE chat=?", (cid,)).fetchone()[0] == 0
+
+
+def test_missing_runtime_chat_database_is_not_implicitly_recreated(tmp_path):
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "missing-store")
+    path = app.state.chat_store.path
+    path.unlink()  # Only this isolated technical fixture, never a corpus database.
+    with pytest.raises(FileNotFoundError):
+        with app.state.chat_store.conn():
+            pass
+    assert not path.exists()
+
+
+def test_feedback_cannot_reappear_after_concurrent_chat_deletion(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "feedback-race")
+    c = TestClient(app)
+    c.headers["X-CSRF-Token"] = c.get("/api/chat/session").json()["csrf"]
+    cid = c.post("/api/chat/conversations").json()["id"]
+    turn = c.post(
+        f"/api/chat/conversations/{cid}/turns",
+        json={"question": "Welche Solarprojekte planen die Stadtwerke?"},
+    ).json()
+    entered, release = threading.Event(), threading.Event()
+    original_budget = app.state.chat_store.budget
+
+    def delayed_budget():
+        entered.set()
+        assert release.wait(3)
+        original_budget()
+
+    app.state.chat_store.budget = delayed_budget
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(
+            c.post, f"/api/chat/conversations/{cid}/feedback/{turn['turn_id']}", json="helpful"
+        )
+        try:
+            assert entered.wait(3)
+            assert c.delete("/api/chat/conversations/" + cid).status_code == 200
+        finally:
+            release.set()
+        assert future.result(timeout=5).status_code == 410
+    with app.state.chat_store.conn() as conn:
+        assert conn.execute("SELECT count(*) FROM feedback").fetchone()[0] == 0
+
+
+def test_currency_symbols_and_spaced_negative_values_are_not_misread():
+    turn = {"claims": evidence(), "dataset_snapshot": "fixture", "turn_id": "one"}
+    anchor = turn["claims"][0]["evidence"][0]
+    anchor["quote"] = "Geplantes Budget: 20,50 €."
+    assert visualization(turn)["rows"][0]["value"] == 20.5
+    anchor["quote"] = "Korrektur: - 20,50 €."
+    assert visualization(turn)["rows"] == []
+    body = json.dumps(
+        {
+            "claims": [
+                {
+                    "text": "Geplant sind - 20 kWp.",
+                    "evidence_id": "e1",
+                    "quote": "Die Stadtwerke planen 20 kWp.",
+                }
+            ]
+        }
+    )
+    with pytest.raises(ValueError, match="numeric"):
+        synthesize(Provider(body), "test", "Solar?", evidence())

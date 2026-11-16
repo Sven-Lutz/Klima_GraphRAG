@@ -110,6 +110,10 @@ class ChatStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / "conversations.sqlite"
         self.budget()
+        if self.path.is_symlink():
+            raise ValueError("Regular conversation database required")
+        if not self.path.exists():
+            self.path.touch(mode=0o600, exist_ok=False)
         with self.conn() as c:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, owner TEXT, csrf TEXT,
@@ -200,8 +204,9 @@ class ChatStore:
         with self.conn() as c:
             c.execute("BEGIN IMMEDIATE")
             if not c.execute(
-                "SELECT 1 FROM chats WHERE id=? AND owner=? AND snapshot=?",
-                (cid, owner, self.snapshot),
+                "SELECT 1 FROM chats WHERE id=? AND owner=? AND snapshot=? "
+                "AND EXISTS (SELECT 1 FROM sessions WHERE owner=? AND expires>?)",
+                (cid, owner, self.snapshot, owner, time.time()),
             ).fetchone():
                 raise HTTPException(410, "Conversation deleted or expired; result not saved")
             c.execute(
@@ -215,7 +220,10 @@ class ClosingConnection:
         self.path = path
 
     def __enter__(self):
-        self.c = sqlite3.connect(self.path, timeout=5)
+        path = Path(self.path)
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError("Existing regular conversation database required")
+        self.c = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)
         self.c.row_factory = sqlite3.Row
         return self.c
 
@@ -663,6 +671,14 @@ def create_conversation_app(service=None, directory=None, generation=None):
             raise HTTPException(422, "Known feedback required")
         store.budget()
         with store.conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not c.execute(
+                "SELECT 1 FROM turns t JOIN chats ch ON ch.id=t.chat AND ch.owner=t.owner "
+                "WHERE t.id=? AND t.owner=? AND ch.id=? AND ch.snapshot=? "
+                "AND EXISTS (SELECT 1 FROM sessions WHERE owner=? AND expires>?)",
+                (tid, owner, cid, store.snapshot, owner, time.time()),
+            ).fetchone():
+                raise HTTPException(410, "Conversation deleted or expired; feedback not saved")
             c.execute(
                 "INSERT INTO feedback VALUES(?,?,?,?,?)",
                 (secrets.token_hex(16), owner, tid, now(), value),

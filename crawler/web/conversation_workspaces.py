@@ -52,9 +52,11 @@ def visualization(turn):
                 continue
             seen.add(anchor["evidence_id"])
             for match in re.finditer(
-                r"(?<![\w.,+−-])(\d+(?:[.,]\d+)?)\s*(kWp|kWh|MWh|GWh|kW|MW|Euro|€)\b",
+                r"(?<![\w.,+−-])(\d+(?:[.,]\d+)?)\s*(kWp|kWh|MWh|GWh|kW|MW|Euro|€)(?!\w)",
                 anchor["quote"],
             ):
+                if re.search(r"[-−–+]\s*$", anchor["quote"][: match.start()]):
+                    continue  # Sign/bullet ambiguity must not become a positive observation.
                 raw = match.group(1)
                 # Grouping separators and decimal notation cannot be guessed.
                 if re.search(r"[.,]\d{3}$", raw):
