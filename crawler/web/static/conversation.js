@@ -493,3 +493,8 @@ async function workspace() {
   };
   search.addEventListener("input", redraw); relation.addEventListener("change", redraw); layout.addEventListener("change", redraw); redraw();
 }
+
+// Keep progressive answer graphs visible after responsive container changes.
+new ResizeObserver(() => {
+  if (workspaceGraph) { workspaceGraph.resize(); workspaceGraph.fit(undefined, 24); }
+}).observe($("workspace-graph"));

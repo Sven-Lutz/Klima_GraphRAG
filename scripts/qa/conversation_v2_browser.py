@@ -71,6 +71,14 @@ def main():
                         route,
                         width,
                     )
+                    if route == "/graph":
+                        page.wait_for_function("""() => {
+                          if (!workspaceGraph) return false;
+                          const box = workspaceGraph.elements().renderedBoundingBox();
+                          const canvas = document.querySelector('#workspace-graph');
+                          return box.x1 >= 0 && box.y1 >= 0 &&
+                            box.x2 <= canvas.clientWidth && box.y2 <= canvas.clientHeight;
+                        }""")
                     if route == "/":
                         page.locator("#question").focus()
                         box = page.locator("#question").bounding_box()
