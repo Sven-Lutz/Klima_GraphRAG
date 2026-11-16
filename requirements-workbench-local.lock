@@ -1,0 +1,14 @@
+# Optional local CPU encoder runtime; no model/data download or weights included.
+-r requirements-publication.lock
+onnxruntime==1.31.1
+tokenizers==0.23.3
+filelock==4.2.10
+flatbuffers==25.12.19
+fsspec==2026.9.0
+hf-xet==1.8.0
+httpcore2==2.16.2
+httpx2==2.16.2
+huggingface-hub==2.4.0
+protobuf==7.36.2
+tqdm==4.70.1
+truststore==0.10.5

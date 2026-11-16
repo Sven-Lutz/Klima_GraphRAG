@@ -12,12 +12,19 @@ def plan(question, requested, retriever):
         ("HISTORICAL_CHANGE", r"entwickl|verändert|seit|verlauf"),
         ("CORPUS_OVERVIEW", r"abdeckung|korpus|quellenbestand"),
         ("EVIDENCE_CONFLICT", r"widerspruch|widersprüch|konflikt"),
-        ("RELATION", r"\bwer\b.*(?:plant|erstellt|betreibt)|beziehung|mehrere schritte"),
+        (
+            "RELATION",
+            r"\bwer\b.*(?:plant|erstellt|betreibt|beauftragt|finanziert)"
+            r"|beziehung|mehrere schritte",
+        ),
     ]
     intent = next(
         (name for name, pattern in patterns if re.search(pattern, question, re.I)), "FACT_LOOKUP"
     )
-    supported = getattr(retriever, "supported_modes", ["semantic", "hybrid", "graph"])
+    default_modes = ["semantic"] + (
+        ["hybrid", "graph"] if getattr(retriever, "graph_backend", None) is not None else []
+    )
+    supported = getattr(retriever, "supported_modes", default_modes)
     supported = [getattr(mode, "value", mode) for mode in supported]
     desired = "graph" if intent == "RELATION" else "semantic"
     limits = ["Intent classification is a technical heuristic, not evaluated planning accuracy."]
@@ -28,7 +35,7 @@ def plan(question, requested, retriever):
         limits.append("Preferred method unavailable; selected available adapter.")
     chosen = requested or RetrievalMode(desired)
     return chosen, {
-        "version": "intent-router-v2.1",
+        "version": "intent-router-v2.2",
         "intent": intent,
         "method": chosen.value,
         "selection": "EXPLICIT" if requested else "CAPABILITY_BOUNDED_HEURISTIC",

@@ -52,11 +52,11 @@ def main():
                 "/visualizations",
                 "/settings",
                 "/coverage",
-                "/validation",
+                "/validation/protocol",
                 "/",
             ]:
                 page.goto(args.base + route)
-                if route == "/validation":
+                if route == "/validation/protocol":
                     page.locator("#review-demo").wait_for(state="visible")
                 elif route != "/":
                     page.locator("#workspace-content").wait_for()
@@ -85,7 +85,7 @@ def main():
                         assert box["y"] >= 0 and box["y"] + box["height"] <= 1000
                     if width in [320, 768, 1440]:
                         page.screenshot(
-                            path=str(args.output / (route.strip("/") or "chat")) + f"-{width}.png",
+                            path=str(args.output / (route.strip("/").replace("/", "-") or "chat")) + f"-{width}.png",
                             full_page=True,
                         )
                     receipts.append(
@@ -112,7 +112,7 @@ def main():
             download.value.save_as(args.output / "visualization.json")
             spec = json.loads((args.output / "visualization.json").read_text())
             assert spec["rows"][0]["value"] == 20 and spec["human_validated"] is False
-            page.goto(args.base + "/validation")
+            page.goto(args.base + "/validation/protocol")
             page.get_by_role("button", name="Demo-Prüfkonto A", exact=True).click()
             page.locator("#review-queue button").first.click()
             page.evaluate("""() => {

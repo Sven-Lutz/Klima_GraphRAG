@@ -1,0 +1,43 @@
+{
+  "schema": "owner-code-origin-v1",
+  "owner_statement_date": "2026-11-16",
+  "owner_statement": "In eigener KI-Unterhaltung erzeugt",
+  "scope": "E1_Source_Selector_v04.zip project algorithm source, not municipal documents or labels",
+  "original_zip_available": false,
+  "basis": "Owner declaration plus pre-existing import manifest and unchanged source hashes",
+  "third_party_notices_observed": false,
+  "historical_code_unchanged": true,
+  "not_a_scientific_validation": true,
+  "files": [
+    {
+      "path": "research/experiments/e1_selector/vendor/lexical.py",
+      "sha256": "0e1a66d8bb28739fc52e6e6d0f1fc48a2cc9af6d277e37d5c6e73b84323f6615",
+      "bytes": 7520
+    },
+    {
+      "path": "research/experiments/e1_selector/vendor/selector.py",
+      "sha256": "db7fa22d171d00e090d22a8d8e8a5d57d8dd6a16c38e5867efabdf40da8066e8",
+      "bytes": 13902
+    },
+    {
+      "path": "research/experiments/e1_selector/vendor/span_selector.py",
+      "sha256": "7e6085a2f2240e0f0c14f8f96fd0cf698fe40b3a33af0958a7428b04e7c7d753",
+      "bytes": 8769
+    },
+    {
+      "path": "research/experiments/e2_offline_20261024/kit/vendor/lexical.py",
+      "sha256": "0e1a66d8bb28739fc52e6e6d0f1fc48a2cc9af6d277e37d5c6e73b84323f6615",
+      "bytes": 7520
+    },
+    {
+      "path": "research/experiments/e2_offline_20261024/kit/vendor/selector.py",
+      "sha256": "95174253385566c1dfedabedb41efded165f5bb139dfdc1ea7cce7eb919817a9",
+      "bytes": 13901
+    },
+    {
+      "path": "research/experiments/e2_offline_20261024/kit/vendor/span_selector.py",
+      "sha256": "525daf1f0263e737f397deae0369d0d9ebd5de2359197e56180118ffe3b55381",
+      "bytes": 8768
+    }
+  ]
+}

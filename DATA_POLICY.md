@@ -14,3 +14,6 @@ Neue Daten benötigen vor Einchecken Herkunft, exakten Umfang, Lizenz-/Privacy-N
 
 
 V2 ergänzt markdown-it 14.1.0 aus dem öffentlichen npm-Paket als lokale Browserabhängigkeit. Originales MIT-Copyright und Lizenz liegen unverändert unter crawler/web/static/vendor/MARKDOWN-IT-LICENSE.txt; diese Datei ist keine eigene Implementierung. Kein E1-Code wurde ersetzt oder neu lizenziert. Neue Coverage-/Modellberichte enthalten ausschließlich eigene Bestandsmetadaten, keine kommunalen Textpassagen, Gewichte oder persönlichen Reviewdaten.
+
+
+Aktualisierung 16.11.2026 — E1-Codeherkunft: Der Owner hat den Ursprung des ZIPs als Erzeugnis seiner eigenen KI-Unterhaltung angegeben. Die sechs unveränderten Projektalgorithmus-Dateien werden mit exakten Hashes und dieser Nachweisart in docs/product/E1_CODE_ORIGIN.json gebunden. Die vorherige Zurückstellung wegen unbekannter Herkunft wird damit für diese konkreten Codebytes neu bewertet; keine Umbenennung oder Ersatzimplementierung. Projekt-MIT gilt im Umfang dieser owner-deklarierten Projektquellen. Neue entgegenstehende Fremdherkunft erfordert Neubewertung. Diese Einordnung erteilt keine Rechte an Corpus, Gewichten, Originalen oder Humanlabels. Private reale Forschung bleibt loopback-only; keine pauschale Weitergabelizenz wird behauptet.

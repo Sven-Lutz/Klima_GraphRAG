@@ -14,7 +14,7 @@ let csrf = "",
   epoch = 0,
   graph = null;
 const labels = {
-  ANSWERED: "Belegte Quellenantwort",
+  ANSWERED: "Quellenbaseline verfügbar",
   PARTIAL: "Teilantwort · offene Aspekte",
   INSUFFICIENT_EVIDENCE: "Evidenzlücke",
   CLARIFICATION_REQUIRED: "Rückfrage nötig",
@@ -30,6 +30,9 @@ async function renewSession() {
     csrf = session.csrf;
     if (session.recovered) {
       epoch++; cid = null; turns = []; render();
+      $("main").classList.remove("comparing"); $("comparison-panel").hidden = true;
+      $("comparison-results").replaceChildren();
+      $("workspace-content").replaceChildren(); $("workspace-controls").replaceChildren();
       if (workspaceGraph) workspaceGraph.destroy(); workspaceGraph = null;
       $("chats").replaceChildren();
       message("Neue lokale Sitzung gestartet. Der abgelaufene Verlauf wurde gemäß Aufbewahrungsregel gelöscht.");
@@ -103,7 +106,9 @@ async function open(id) {
   if (version !== epoch) return;
   turns = history;
   render();
-  if (location.pathname !== "/" && location.pathname !== "/research") await workspace();
+  if (!["/", "/research", "/compare"].includes(location.pathname)) await workspace();
+  if (location.pathname === "/compare") await restoreComparison();
+  else { $("main").classList.remove("comparing"); $("comparison-panel").hidden = true; }
   $("question").focus();
 }
 async function create() {
@@ -112,6 +117,7 @@ async function create() {
   const c = await api("conversations", "POST");
   cid = c.id;
   turns = [];
+  $("main").classList.remove("comparing"); $("comparison-panel").hidden = true;
   render();
   await list();
   if (document.body.classList.contains("workbench")) await workspace();
@@ -126,6 +132,7 @@ function render() {
       el("p", t.question),
       el("span", labels[t.answer_status] || t.answer_status),
     );
+    article.append(el("p", `${t.generation_label || "Extraktive Baseline"} · ${t.query_plan?.method || "unbekannt"} · UNVALIDATED · ${Number(t.elapsed_seconds || 0).toFixed(3)} s`));
     article.firstChild.className = "question";
     article.children[1].className = "badge";
     if (!t.claims.length) article.append(el("p", t.answer));
@@ -225,6 +232,12 @@ async function inspect(t, e) {
     Gemeinde: current.municipality_ids.join(", "),
   }))
     $("provenance").append(el("dt", k), el("dd", v));
+  if (current.source_sha256) {
+    const archive = el("a", "Archiviertes Original öffnen");
+    archive.href = `/api/chat/conversations/${cid}/original/${t.turn_id}/${encodeURIComponent(e.evidence_id)}`;
+    archive.target = "_blank"; archive.rel = "noreferrer noopener";
+    $("provenance").append(el("dt", "Originalfassung"), el("dd")); $("provenance").lastChild.append(archive);
+  }
   $("graph-accessible").replaceChildren();
   const g = t.graph || { nodes: [], edges: [] };
   $("graph-accessible").append(
@@ -282,6 +295,7 @@ async function inspect(t, e) {
 }
 async function send(question, parent, retried = false) {
   if (controller) return;
+  $("main").classList.remove("comparing"); $("comparison-panel").hidden = true;
   if (!cid) await create();
   const id = cid,
     version = ++epoch;
@@ -355,7 +369,7 @@ $("delete-chat").addEventListener("click", async () => {
   if (
     cid &&
     confirm(
-      "Diese lokale Unterhaltung und ihr Produktfeedback löschen? Unabhängige Review-Audits bleiben getrennt.",
+      "Diese lokale Unterhaltung und ihr Produktfeedback löschen? Lokale Notizen und Vergleichsbelege bleiben separat gespeichert.",
     )
   ) {
     const deletedChat = cid;
@@ -381,6 +395,12 @@ renewSession()
     $("dataset-notice").textContent = s.fixture
       ? "Synthetische Forschungsumgebung · keine echten kommunalen Quellen."
       : s.notice || "Gebundener lokaler Bestand";
+    if (!s.fixture) {
+      $("question").placeholder = "Wer wurde mit der Wärmeplanung in Nennslingen beauftragt?";
+      const starters = document.querySelectorAll("[data-question]");
+      if (starters[0]) { starters[0].dataset.question = $("question").placeholder; starters[0].textContent = "Reale Wärmeplanung untersuchen"; }
+      if (starters[1]) { starters[1].dataset.question = "Welche Hitzeinformationen sind in München dokumentiert?"; starters[1].textContent = "Hitzeinformationen München recherchieren"; }
+    }
     $("snapshot").textContent = s.snapshot;
     $("provider-notice").textContent = "Aktive Antwortmethode: " + s.provider + ". Qualifikation und Grenzen unter Settings. Keine Qualitätsrangfolge aus Trefferzahlen.";
     if (location.pathname === "/research") {
@@ -392,8 +412,13 @@ renewSession()
         .querySelector('nav a[href="/research"]')
         .setAttribute("aria-current", "page");
     }
+    await loadMethods();
     await list();
-    if (!["/", "/research"].includes(location.pathname)) {
+    if (["/", "/research", "/compare"].includes(location.pathname)) {
+      const chats = await api("conversations");
+      if (chats.length) await open(chats[0].id);
+    }
+    if (!["/", "/research", "/compare"].includes(location.pathname)) {
       document.body.classList.add("workbench");
       document.querySelector("nav [aria-current]")?.removeAttribute("aria-current");
       document.querySelector(`nav a[href="${location.pathname}"]`)?.setAttribute("aria-current", "page");
@@ -444,6 +469,21 @@ async function workspace() {
   const wanted = new URLSearchParams(location.search).get("turn");
   const t = turns.find(t => t.turn_id === wanted) || turns.at(-1);
   $("workspace-notice").textContent = "Gebundener Antwortstand; keine unabhängig geprüfte Vollständigkeit.";
+  if (path === "/experiments") {
+    $("workspace-title").textContent = "Experimente und Evaluationsgrenzen";
+    const overview = await api("experiments");
+    if (workspaceVersion !== epoch || workspaceChat !== cid) return;
+    content.append(el("p", "UNVALIDATED · gemessene Ausführung ist keine fachliche Validierung. Historische Studien werden hier nicht zusammengeführt."));
+    controls.append(action("Experimentübersicht exportieren", () => download("experiments.json", overview)));
+    content.append(dataTable(["Versuch", "Snapshot", "Methoden", "Laufzeit", "Fehler"], overview.experiments.map(r=>[
+      r.id, r.configuration.snapshot, r.order.join(", "),
+      r.results.map(a=>a.method+": "+a.elapsed_seconds.toFixed(3)+" s").join(" · "),
+      r.results.filter(a=>a.status==="ERROR").length
+    ])));
+    content.append(dataTable(["Metrik", "Wert", "Referenzstatus"],Object.entries(overview.quality_metrics).map(([name,m])=>[name,"Nicht ausgewertet",m.reason])));
+    content.append(el("p", overview.timing_limits),el("p", "GraphRAG-Überlegenheit: nicht nachgewiesen. Gleiche SQL-/Graphrelationen bleiben ein begrenzender historischer Befund."));
+    return;
+  }
   if (path === "/settings") {
     $("workspace-title").textContent = "Aktive Methoden und Modelle";
     const config = await api("settings");
@@ -493,28 +533,67 @@ async function workspace() {
     spec.caveats.forEach(c => content.append(el("p", c)));
     return;
   }
-  const g = t.graph || {nodes: [], edges: []};
+  const relationNames = {COMMISSIONED_FOR:"beauftragt für", FUNDS:"finanziert", AUTHORS:"erstellt", ADOPTED_ON:"beschlossen am", FUNDING_DURING:"Förderzeitraum", TARGETS:"Zielbezug", IMPLEMENTS:"setzt um"};
+  const originalGraph = t.graph || {nodes: [], edges: []};
+  const anchors = t.claims.flatMap(c => c.evidence);
+  const anchorFor = edge => anchors.find(a => (edge.evidence_ids || []).includes(a.evidence_id));
+  const g = { ...originalGraph,
+    nodes: originalGraph.nodes.map((n, i) => ({...n, label: n.kind === "evidence" ? "Quellenpassage " + (i + 1) : n.label || "Entität " + (i + 1)})),
+    edges: originalGraph.edges.filter(e => e.evidence_ids?.length && e.evidence_ids.every(id => anchors.some(a => a.evidence_id === id)))
+      .map(e => ({...e, label: relationNames[e.label || e.relation_type] || e.label || e.relation_type || (e.kind === "evidence_link" ? "Quellenherkunft" : e.kind)}))
+  };
   const search = el("input"); search.placeholder = "Knoten suchen"; search.setAttribute("aria-label", "Knoten suchen");
   const relation = el("select"); relation.setAttribute("aria-label", "Relationstyp");
   for (const name of ["Alle Relationen", ...new Set(g.edges.map(e => e.label || e.kind))]) relation.append(el("option", name));
   const layout = el("select"); layout.setAttribute("aria-label", "Graphlayout");
   for (const name of ["circle", "grid", "breadthfirst"]) layout.append(el("option", name));
-  controls.append(search, relation, layout, action("Graph exportieren", () => download("answer-graph.json", g)));
+  const focus = el("select"); focus.setAttribute("aria-label", "Nachbarschaft einer Entität"); focus.append(new Option("Gesamter Antwortgraph", ""));
+  g.nodes.forEach(n => focus.append(new Option(n.label, n.id)));
+  const depth = el("select"); depth.setAttribute("aria-label", "Nachbarschaftstiefe");
+  [1,2,3].forEach(d => depth.append(new Option(d + " Beziehungsschritte", String(d))));
+  const type = el("select"); type.setAttribute("aria-label", "Knotentyp"); type.append(new Option("Alle Knotentypen", ""));
+  [...new Set(g.nodes.map(n => n.kind))].filter(Boolean).forEach(k => type.append(new Option(k,k)));
+  const municipality = el("select"); municipality.setAttribute("aria-label", "Gemeindegrenze"); municipality.append(new Option("Alle belegten Gemeinden", ""));
+  [...new Set(anchors.flatMap(a=>a.municipality_ids))].forEach(k=>municipality.append(new Option(k,k)));
+  const year = el("select"); year.setAttribute("aria-label", "Jahresnennung im Beleg"); year.append(new Option("Alle Zeitbezüge", ""));
+  [...new Set(anchors.flatMap(a=>a.quote.match(/\b(?:19|20)\d{2}\b/g)||[]))].sort().forEach(y=>year.append(new Option(y,y)));
+  const filters = el("details"), filterTitle = el("summary", "Filter und Nachbarschaft");
+  filters.append(filterTitle, relation, type, municipality, year, focus, depth);
+  controls.append(search, layout, filters,
+    action("Graph exportieren", () => download("answer-graph.json", {...g, active_filters:{search:search.value,relation:relation.value,type:type.value,municipality:municipality.value,year:year.value,root:focus.value,depth:depth.value}})),
+    action("PNG exportieren", () => { if (!workspaceGraph) return; const u=URL.createObjectURL(workspaceGraph.png({output:"blob",bg:"#ffffff",full:true,maxWidth:2048,maxHeight:2048})); const a=el("a");a.href=u;a.download="answer-graph.png";a.click();setTimeout(()=>URL.revokeObjectURL(u),500); }));
+
   const redraw = () => {
     const matching = new Set(g.nodes.filter(n => String(n.label || n.id).toLocaleLowerCase().includes(search.value.toLocaleLowerCase())).map(n => n.id));
-    const edges = g.edges.filter(e => (matching.has(e.source) || matching.has(e.target)) && (relation.selectedIndex === 0 || (e.label || e.kind) === relation.value));
+    let edges = g.edges.filter(e => (matching.has(e.source) || matching.has(e.target)) && (relation.selectedIndex === 0 || (e.label || e.kind) === relation.value));
+    edges = edges.filter(e => {
+      const a = anchorFor(e);
+      return a && (!municipality.value || a.municipality_ids.includes(municipality.value)) &&
+        (!year.value || (a.quote.match(/\b(?:19|20)\d{2}\b/g)||[]).includes(year.value)) &&
+        (!type.value || [e.source,e.target].some(id=>g.nodes.find(n=>n.id===id)?.kind===type.value));
+    });
+    if (focus.value) {
+      const visited = new Set([focus.value]);
+      for (let step=0;step<Number(depth.value);step++) {
+        const next = new Set(visited);
+        edges.forEach(e=>{if(visited.has(e.source)||visited.has(e.target)){next.add(e.source);next.add(e.target);}});
+        next.forEach(n=>visited.add(n));
+      }
+      edges = edges.filter(e=>visited.has(e.source)&&visited.has(e.target));
+    }
     const ids = new Set(edges.flatMap(e => [e.source, e.target]));
     const nodes = g.nodes.filter(n => ids.has(n.id));
     if (workspaceGraph) workspaceGraph.destroy(); workspaceGraph = null;
     if (window.cytoscape && nodes.length) workspaceGraph = cytoscape({container: $("workspace-graph"),
       elements: [...nodes.map(n => ({data:n})), ...edges.map(e => ({data:e}))],
-      layout: {name:layout.value}, style:[{selector:"node",style:{label:"data(label)","background-color":"#165941","font-size":12}},{selector:"edge",style:{"target-arrow-shape":"triangle","curve-style":"bezier","line-color":"#879b8b"}}]});
+      layout: {name:layout.value}, style:[{selector:"node",style:{label:"data(label)","background-color":"#165941","font-size":12,"text-wrap":"wrap","text-max-width":100}},{selector:'node[kind="evidence"]',style:{"background-color":"#7150a0",shape:"roundrectangle"}},{selector:'node[kind="document"]',style:{"background-color":"#365e91",shape:"rectangle"}},{selector:"edge",style:{label:"data(label)","font-size":9,"target-arrow-shape":"triangle","curve-style":"bezier","line-color":"#879b8b"}}]});
     if (workspaceGraph && nodes.length) workspaceGraph.on("tap", "edge", event => {
       const edge = event.target.data();
       const anchor = t.claims.flatMap(c=>c.evidence).find(a => (edge.evidence_ids || []).includes(a.evidence_id));
       if (anchor) inspect(t, anchor).catch(e => message(e.message));
     });
     content.replaceChildren(el("p", `${nodes.length} Knoten · ${edges.length} Kanten · ${g.cutoff ? "Cutoff aktiv" : "nur dieser Antwortstand"}. Pan/Zoom im Graph. Keine Kausalitätsinferenz.`));
+    content.append(el("p", "Legende: Blau = Dokument · Violett = Quellenpassage · Grün = extrahierte Entität. Farben zeigen Typen, keine fachliche Validierung. Nachbarschaft nur innerhalb dieses Antwortstands; Jahresfilter = Textnennung, keine gemessene Ereigniszeit."));
     content.append(dataTable(["Von", "Relation", "Nach", "Status", "Beleg"], edges.map(e => [
       nodes.find(n=>n.id===e.source)?.label || e.source, e.label || e.kind,
       nodes.find(n=>n.id===e.target)?.label || e.target, e.validation_status,
@@ -524,10 +603,85 @@ async function workspace() {
       })
     ])));
   };
-  search.addEventListener("input", redraw); relation.addEventListener("change", redraw); layout.addEventListener("change", redraw); redraw();
+  search.addEventListener("input", redraw); [relation,layout,type,municipality,year,focus,depth].forEach(control=>control.addEventListener("change",redraw)); redraw();
 }
 
 // Keep progressive answer graphs visible after responsive container changes.
 new ResizeObserver(() => {
   if (workspaceGraph) { workspaceGraph.resize(); workspaceGraph.fit(undefined, 24); }
 }).observe($("workspace-graph"));
+
+let methodOptions = [];
+async function loadMethods() {
+  const config = await api("methods"); methodOptions = config.methods;
+  const picker = $("method"); picker.replaceChildren(new Option("Automatisch", ""));
+  const group = $("compare-methods"); group.replaceChildren();
+  for (const method of methodOptions) {
+    const option = new Option(method.label + (method.available ? "" : " · nicht verfügbar"), method.id);
+    option.disabled = !method.available; option.title = method.reason; picker.append(option);
+    const label = el("label"), check = el("input"); check.type = "checkbox"; check.value = method.id;
+    check.disabled = !method.available; check.checked = method.available; check.name = "compare-method";
+    label.append(check, document.createTextNode(method.label + " — " + method.reason)); group.append(label);
+  }
+  picker.addEventListener("change", () => {
+    $("method-reason").textContent = methodOptions.find(m => m.id === picker.value)?.reason || "Automatische Auswahl unter tatsächlich verfügbaren Adaptern. Keine Qualitätsrangliste.";
+  });
+  picker.dispatchEvent(new Event("change"));
+}
+function renderComparison(record) {
+  $("comparison-panel").hidden = false;
+  $("main").classList.add("comparing");
+  const target = $("comparison-results"); target.replaceChildren();
+  target.append(el("p", "UNVALIDATED · technische Messung, keine unabhängig geprüfte Antwortqualität. Snapshot: " + record.configuration.snapshot));
+  target.append(action("Zurück zum Gespräch", () => { $("main").classList.remove("comparing"); $("comparison-panel").hidden = true; }));
+  target.append(action("Vergleich exportieren", () => download("method-comparison.json", record)));
+  const grid = el("div"); grid.className = "comparison-grid";
+  for (const arm of record.results) {
+    const card = el("article"), t = arm.turn;
+    card.append(el("h3", methodOptions.find(m => m.id === arm.method)?.label || arm.method));
+    card.append(el("p", `${arm.status === "COMPLETED" ? "Ausgeführt" : "Fehler"} · ${t ? (labels[t.answer_status] || "Antwortstatus unbekannt") : "Keine Antwort"} · ${Number(arm.elapsed_seconds).toFixed(3)} s`));
+    if (t) {
+      card.append(el("p", t.answer), el("p", t.generation_label || t.generation_provider));
+      for (const claim of t.claims) for (const anchor of claim.evidence) card.append(action("Quelle: " + anchor.citation, () => inspect(t, anchor)));
+      card.append(el("p", `${t.claims.length} Quellenclaims · keine Qualitätswertung aus der Anzahl.`));
+      card.append(action("Graph untersuchen", () => location.assign(`/graph?chat=${cid}&turn=${t.turn_id}`)));
+      card.append(action("Daten prüfen", () => location.assign(`/visualizations?chat=${cid}&turn=${t.turn_id}`)));
+      card.append(el("p", `Modell: ${t.model_version} · Prompt: ${t.prompt_version}`));
+    } else card.append(el("p", "Diese Methode konnte nicht sicher ausgeführt werden. Andere Ergebnisse bleiben sichtbar."));
+    card.append(el("p", `CPU: ${arm.process_cpu_seconds == null ? "nicht gemessen" : arm.process_cpu_seconds.toFixed(3) + " s"} · RAM: je Arm nicht gemessen · Token: ${t?.generation_receipt?.total_tokens ?? "nicht gemessen / keine LLM-Generierung"} · Kosten: keine externen kostenpflichtigen Aufrufe`));
+    grid.append(card);
+  }
+  target.append(grid);
+  for (const caveat of record.limits) target.append(el("p", caveat));
+}
+async function restoreComparison() {
+  if (!cid) { $("comparison-panel").hidden = true; return; }
+  const current = cid, serial = epoch;
+  const records = await api(`conversations/${cid}/comparisons`);
+  if (current !== cid || serial !== epoch) return;
+  const latest = records.at(-1);
+  if (!latest) { $("comparison-panel").hidden = true; return; }
+  renderComparison(latest);
+}
+$("run-compare").addEventListener("click", async () => {
+  if (controller) return;
+  const question = $("question").value.trim() || turns.at(-1)?.question;
+  if (!question) { message("Bitte zuerst eine Forschungsfrage eingeben."); return; }
+  const methods = [...document.querySelectorAll('[name="compare-method"]:checked')].map(n => n.value);
+  if (methods.length < 2) { message("Bitte mindestens zwei verfügbare Suchmethoden auswählen."); return; }
+  $("run-compare").disabled = true;
+  try {
+    if (!cid) await create();
+    const comparisonChat = cid, comparisonEpoch = epoch;
+    const record = await api(`conversations/${comparisonChat}/compare`, "POST", {question, methods,
+      parent_turn_id: question === turns.at(-1)?.question ? turns.at(-1).parent_turn_id : turns.at(-1)?.turn_id || null,
+      municipality_ids: $("scope").value.split(",").map(x=>x.trim()).filter(Boolean), reference_year:Number($("year").value)||null});
+    if (cid !== comparisonChat || epoch !== comparisonEpoch) return;
+    const history = await api("conversations/" + comparisonChat);
+    if (cid !== comparisonChat || epoch !== comparisonEpoch) return;
+    turns = history; render(); renderComparison(record);
+    $("research-results").scrollTop = 0;
+    message("Methodenvergleich abgeschlossen. Qualität bleibt UNVALIDATED.");
+  } catch (e) { message(e.message); }
+  finally { $("run-compare").disabled = false; }
+});

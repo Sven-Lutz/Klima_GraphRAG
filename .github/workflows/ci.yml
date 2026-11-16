@@ -55,6 +55,8 @@ jobs:
         run: python scripts/qa/conversation_browser.py --output generated/ci-browser
       - name: V2 synthetic workspaces and reviewer isolation
         run: python scripts/qa/conversation_v2_browser.py --output generated/ci-v2-browser
+      - name: Research workbench anonymous user journey
+        run: python scripts/qa/research_workbench_browser.py --base http://127.0.0.1:8825 --output generated/ci-workbench-browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,3 +64,4 @@ jobs:
           path: |
             generated/ci-browser
             generated/ci-v2-browser
+            generated/ci-workbench-browser

@@ -49,3 +49,20 @@ python -m crawler.web --fixture --directory generated/chat-demo --port 8825
 ```
 
 Chat, eigener Antwortgraph, beleggebundene Einzelwerte/Datentabellen, Settings, Coverage-Status und direkt nutzbare synthetische Reviewqueues. **Erfundene technische Quellen, keine echte kommunale Recherche; kein qualifiziertes LLM aktiviert.** Start benötigt unverändert mindestens 15 GiB + 64 MiB freien Platz. Der lokale Server wurde nach zwischenzeitlichem Ressourcenmangel wieder erfolgreich gestartet; die früheren Fehlversuche bleiben dokumentiert. [Ist-Architektur und Planung](docs/product/CONVERSATIONAL_V2.md), [Protokolle](docs/product/V2_PROTOCOLS.md), [aktueller QA-/Abnahmebericht mit echten FAIL/ERROR](docs/product/V2_QA_REPORT.md). V2 ist noch kein abgeschlossener Vollrelease.
+
+
+## Research Workbench (lokaler realer Datenbestand)
+
+Hauptworkflow: Frage → Suchmethode → Quellenantwort → Vergleich → Graph/Daten → lokale Notiz → Export. Keine Anmeldung. Abgelaufene anonyme Sessions erneuern sich automatisch; abgelaufene Verläufe werden gemäß 24h-Regel nicht wiederhergestellt. Die bisherige synthetische V2-Demo bleibt ein technischer Testarm.
+
+Auf der eingerichteten Owner-Maschine:
+
+```bash
+.venv/bin/python -m crawler.web --local-config generated/local-workbench.json --directory generated/real-workbench --port 8825
+```
+
+`http://127.0.0.1:8825` bietet vorhandene reale kommunale Quellen, BM25, Dense (residenter 384-D-ONNX-Encoder), Hybrid und Graph Traversal. Bestehende komplette Indizes werden nur gelesen; keine automatische Neuerstellung. SQL und qualifiziertes GraphRAG sind mit Gründen deaktiviert. Answer-LLM ist weiterhin inaktiv: Antworten sind explizit extraktive, unvalidierte Teilantworten. Keine Qualitätsrangliste aus Trefferzahlen oder Laufzeiten.
+
+Lokale Konfiguration und private Daten werden **nicht** mitgeliefert. Ein frischer öffentlicher Checkout enthält weiterhin ausschließlich die reproduzierbare synthetische Komposition. Die konkrete Configstruktur, Rechteabgrenzung, Herkunftserklärung zum E1-Code und reale/technische QA stehen in [WORKBENCH_REORIENTATION.md](docs/product/WORKBENCH_REORIENTATION.md). Optionale Encoder-Abhängigkeiten: `pip install -r requirements-workbench-local.lock`; keine Modellgewichte werden heruntergeladen.
+
+Lokale Einzelprüfung unter `/validation`; der bestehende unabhängige ReviewProtocol-Adapter ist optional unter `/validation/protocol`. Lokale Urteile sind kein Human Gold. Vergleichsexporte und Notizen sind separate append-only Artefakte und bleiben lokal gespeichert, auch nach Löschen eines Chats; API-Zugriff bleibt an die anonyme Sitzung gebunden.

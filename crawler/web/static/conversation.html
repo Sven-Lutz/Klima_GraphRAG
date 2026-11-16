@@ -14,7 +14,7 @@
     <header>
       <a href="/" class="brand">KLIMA <span>Research</span></a>
       <nav aria-label="Arbeitsräume">
-        <a href="/" aria-current="page">Chat</a><a href="/research">Research</a
+        <a href="/" aria-current="page">Chat</a><a href="/compare">Vergleichen</a><a href="/experiments">Experimente</a><a href="/research">Research</a
         ><a href="/graph">Knowledge Graph</a><a href="/visualizations">Visualizations</a><a href="/validation">Validation</a><a href="/coverage">Data Coverage</a><a href="/settings">Settings</a>
       </nav>
     </header>
@@ -38,7 +38,8 @@
           <div id="workspace-controls"></div><div id="workspace-graph" aria-label="Antwortgraph"></div>
           <div id="workspace-content"></div>
         </section>
-        <div id="turns" aria-label="Gesprächsverlauf"></div>
+        <div id="research-results"><section id="comparison-panel" hidden aria-labelledby="comparison-title"><h2 id="comparison-title">Methodenvergleich</h2><div id="comparison-results"></div></section>
+        <div id="turns" aria-label="Gesprächsverlauf"></div></div>
         <div id="status" role="status" aria-live="polite"></div>
         <form id="composer">
           <label for="question">Ihre Forschungsfrage</label
@@ -54,21 +55,18 @@
             ><button id="cancel" type="button" hidden>Anzeige abbrechen</button
             ><button type="submit" id="send">Frage stellen ↑</button>
           </div>
+          <div class="method-picker">
+            <label for="method">Suchmethode</label><select id="method"><option value="">Automatisch</option></select>
+            <p id="method-reason" class="muted"></p>
+            <details id="compare-options"><summary>Methodenvergleich konfigurieren</summary><div id="compare-methods"></div>
+              <p>Gleiche Frage, gleicher Kontext, Snapshot, Generator und Prüfregeln. Native Suchpipelines werden verglichen; Graphrelationen können zusätzliche Information enthalten. Kein isolierter Graphformat-Effekt.</p>
+            </details>
+            <button id="run-compare" type="button">Methoden vergleichen</button>
+          </div>
           <details id="expert">
             <summary>Research · reproduzierbare Einstellungen</summary>
             <div class="settings">
               <label
-                >Retrievalverfahren<select id="method">
-                  <option value="">Automatisch: Frageintent</option>
-                  <option value="semantic">
-                    Semantisch (Fixture: kontrollierte Vektoren)
-                  </option>
-                  <option value="graph">
-                    Graph (Fixture: kontrollierter Backendvertrag)
-                  </option>
-                  <option value="hybrid">Hybrid</option>
-                </select></label
-              ><label
                 >Gemeinde-IDs (optional, kommagetrennt)<input
                   id="scope"
                   maxlength="100" /></label

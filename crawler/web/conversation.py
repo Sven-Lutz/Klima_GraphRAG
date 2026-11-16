@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -64,6 +64,13 @@ def qualify(question, text):
         r"\d[\d.,]*\s*(?:kWp|kW|MW|GWh|Euro|€|Ladepunkte|Ladesäulen)", text, re.I
     ):
         return False
+    if re.search(r"maßnahmen|massnahmen", question, re.I) and not re.search(
+        r"plant|planen|geplant|umsetz|erricht|installier|förder|sanier|ausbau|beschlossen|"
+        r"eingeführt|in betrieb|ma[ßs]nahmen(?:paket|katalog)",
+        text,
+        re.I,
+    ):
+        return False  # A thematic portal overview is not evidence for concrete measures.
     quantity_contracts = [
         (r"leistung", r"\d[\d.,]*\s*(?:kWp|kW|MW)(?!h)\b"),
         (r"ertrag|erzeugt|strommenge", r"\d[\d.,]*\s*(?:kWh|MWh|GWh)\b"),
@@ -240,7 +247,7 @@ class ConversationEngine:
         self.generation = generation
         self.lock = threading.Lock()
 
-    def answer(self, owner, cid, data):
+    def answer(self, owner, cid, data, experiment=None):
         started = time.perf_counter()
         history = self.store.turns(owner, cid)
         parent = next((t for t in history if t["turn_id"] == data.parent_turn_id), None)
@@ -249,13 +256,33 @@ class ConversationEngine:
         question = data.question.strip()
         if not question:
             raise HTTPException(422, "Nonempty question required")
-        state, clarification = resolve(question, parent, data.municipality_ids, data.reference_year)
+        explicit_ids = list(data.municipality_ids)
+        workspace = getattr(self.service, "workspace", None)
+        named_ids = workspace.resolve_ags([], question=question) if workspace else []
+        scope_conflict = bool(explicit_ids and named_ids and set(explicit_ids) != set(named_ids))
+        state, clarification = resolve(
+            question, parent, explicit_ids or named_ids, data.reference_year
+        )
+        if named_ids:
+            state["events"].append({"kind": "AUTHORITATIVE_FRAME_RESOLUTION", "ids": named_ids})
+        if scope_conflict:
+            clarification = (
+                "Frage und Gemeindefilter nennen unterschiedliche Gemeinden. Welche gilt?"
+            )
         scope = state["scope"]
-        inherited = bool(parent and not data.municipality_ids and scope["municipality_ids"])
+        inherited = bool(
+            parent and not explicit_ids and not named_ids and scope["municipality_ids"]
+        )
         effective = state["effective_question"]
         if parent and words(question) <= {"leistung", "jahr", "wann", "wieviel", "umfang"}:
             effective = question + " " + state["topic_question"]
             state["effective_question"] = effective
+        from crawler.web.research_workbench import capabilities
+
+        if data.mode and data.mode.value not in {
+            m["id"] for m in capabilities(self.service) if m["available"]
+        }:
+            raise HTTPException(422, "Method unavailable for active snapshot")
         selected_mode, query_plan = plan(effective, data.mode, self.service.retriever)
         result = dict(
             schema=SCHEMA,
@@ -334,8 +361,20 @@ class ConversationEngine:
                     graph_artifact_ids=e["graph_artifact_ids"],
                     database_snapshot_id=e["database_snapshot_id"],
                     citation=e["citation"],
-                    source_sha256=None,
-                    source_sha256_status="NOT_AVAILABLE_IN_CONTRACT",
+                    source_sha256=(
+                        e["document"]["document_id"].split(":", 1)[1]
+                        if re.fullmatch(
+                            r"source-version:[a-f0-9]{64}", e["document"]["document_id"]
+                        )
+                        else None
+                    ),
+                    source_sha256_status=(
+                        "DOCUMENT_VERSION_HASH"
+                        if re.fullmatch(
+                            r"source-version:[a-f0-9]{64}", e["document"]["document_id"]
+                        )
+                        else "NOT_AVAILABLE_IN_CONTRACT"
+                    ),
                     passage_sha256=digest(text),
                     quote=text,
                     offset_start=0,
@@ -365,7 +404,9 @@ class ConversationEngine:
                 partial = bool(
                     re.search(r"\bund\b|aktuell|heute|vergleich|warum|wirkung", question, re.I)
                 )
-                result["answer_status"] = "PARTIAL" if partial else "ANSWERED"
+                result["answer_status"] = (
+                    "PARTIAL" if partial or not self.service.demo_mode else "ANSWERED"
+                )
                 result["answer"] = "\n".join(c["text"] for c in result["claims"])
                 if partial:
                     result["missing_aspects"] = [
@@ -451,6 +492,14 @@ class ConversationEngine:
         result["implementation_file_sha256"] = hashlib.sha256(
             Path(__file__).read_bytes()
         ).hexdigest()
+        if experiment:
+            result["comparison"] = experiment
+        result["validation_status"] = "UNVALIDATED"
+        result["generation_label"] = (
+            "Extraktive Baseline · wörtliche Quellenbelege, keine LLM-Synthese"
+            if not self.generation
+            else "Optionale qualifizierte LLM-Synthese"
+        )
         self.store.save(owner, cid, result)
         return result
 
@@ -499,9 +548,7 @@ def create_conversation_app(service=None, directory=None, generation=None):
             session = store.session(request.cookies.get("klima_chat"))
             if not session:
                 return JSONResponse({"error": "session_expired"}, status_code=401)
-            if not hmac.compare_digest(
-                request.headers.get("x-csrf-token", ""), session["csrf"]
-            ):
+            if not hmac.compare_digest(request.headers.get("x-csrf-token", ""), session["csrf"]):
                 return JSONResponse({"error": "csrf_or_session_required"}, status_code=403)
             body = b""
             async for part in request.stream():
@@ -520,6 +567,14 @@ def create_conversation_app(service=None, directory=None, generation=None):
                 "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
             }
         )
+        if (
+            request.url.path.startswith("/api/chat/conversations/")
+            and "/original/" in request.url.path
+        ):
+            response.headers["Content-Security-Policy"] = (
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            )
         return response
 
     def actor(request):
@@ -559,6 +614,7 @@ def create_conversation_app(service=None, directory=None, generation=None):
                 "schema": SCHEMA,
                 "snapshot": store.snapshot,
                 "fixture": service.demo_mode,
+                "corpus_binding": getattr(service, "workbench_binding", None),
                 "notice": service.demo_notice,
                 "provider": (
                     generation["metadata"]["provider"] if generation else "deterministic_extractive"
@@ -642,16 +698,7 @@ def create_conversation_app(service=None, directory=None, generation=None):
     @app.post("/api/chat/conversations/{cid}/turns")
     async def ask(cid: str, data: TurnInput, request: Request):
         owner = actor(request)
-        for key in list(rate):
-            if not rate[key] or time.monotonic() - rate[key][-1] >= 60:
-                rate.pop(key)
-        if owner not in rate and len(rate) >= 256:
-            raise HTTPException(429, "Active query budget reached")
-        recent = rate.setdefault(owner, [])
-        recent[:] = [t for t in recent if time.monotonic() - t < 60]
-        if len(recent) >= 12:
-            raise HTTPException(429, "12 turns per minute; retry later")
-        recent.append(time.monotonic())
+        charge(owner)
         try:
             return await asyncio.wait_for(
                 run_in_threadpool(engine.answer, owner, cid, data), timeout=20
@@ -660,6 +707,22 @@ def create_conversation_app(service=None, directory=None, generation=None):
             raise HTTPException(
                 504, "Timeout; worker may still finish and preserve this turn"
             ) from exc
+
+    def charge(owner, count=1):
+        for key in list(rate):
+            if not rate[key] or time.monotonic() - rate[key][-1] >= 60:
+                rate.pop(key)
+        if owner not in rate and len(rate) >= 256:
+            raise HTTPException(429, "Active query budget reached")
+        recent = rate.setdefault(owner, [])
+        recent[:] = [t for t in recent if time.monotonic() - t < 60]
+        if len(recent) + count > 12:
+            raise HTTPException(429, "12 method executions per minute; retry later")
+        recent.extend([time.monotonic()] * count)
+
+    from crawler.web.research_workbench import attach_workbench
+
+    attach_workbench(app, store, engine, actor, charge)
 
     @app.get("/api/chat/conversations/{cid}/export")
     def export(cid: str, request: Request):
@@ -700,14 +763,37 @@ def create_conversation_app(service=None, directory=None, generation=None):
                         return anchor
         raise HTTPException(404, "Evidence unavailable")
 
+    @app.get("/api/chat/conversations/{cid}/original/{tid}/{eid}")
+    def original(cid: str, tid: str, eid: str, request: Request):
+        from crawler.web.workbench_runtime import original_for_anchor
+
+        anchor = evidence(cid, tid, eid, request)
+        if service.demo_mode or not getattr(service, "workbench_binding", None):
+            raise HTTPException(404, "No archived municipal original in synthetic composition")
+        body, media, filename = original_for_anchor(service, anchor)
+        return Response(
+            body,
+            media_type=media,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "X-Original-SHA256": anchor["source_sha256"],
+            },
+        )
+
     from crawler.web.conversation_workspaces import settings, visualization
 
     @app.get("/api/chat/settings")
     def active_settings(request: Request):
         actor(request)
-        return settings(
+        from crawler.web.research_workbench import capabilities
+
+        config = settings(
             store.snapshot, service.demo_mode, generation["metadata"] if generation else None
         )
+        config["retrieval_ranking"]["methods"] = capabilities(service)
+        config["corpus_binding"] = getattr(service, "workbench_binding", None)
+        config["corpus_class"] = "SYNTHETIC" if service.demo_mode else "REAL_LOCAL_RESEARCH"
+        return config
 
     @app.get("/api/chat/conversations/{cid}/visualization/{tid}")
     def chart_data(cid: str, tid: str, request: Request):
@@ -720,6 +806,8 @@ def create_conversation_app(service=None, directory=None, generation=None):
 
     @app.get("/")
     @app.get("/research")
+    @app.get("/compare")
+    @app.get("/experiments")
     @app.get("/graph")
     @app.get("/visualizations")
     @app.get("/settings")
@@ -729,7 +817,15 @@ def create_conversation_app(service=None, directory=None, generation=None):
 
     @app.get("/validation")
     def validation():
+        return FileResponse(ASSETS / "local_validation.html")
+
+    @app.get("/validation/protocol")
+    def independent_validation():
         return FileResponse(ASSETS / "conversation_validation.html")
+
+    from crawler.web.local_annotations import attach_local_notes
+
+    attach_local_notes(app, store, actor)
 
     from crawler.web.conversation_review import attach_conversation_review
 

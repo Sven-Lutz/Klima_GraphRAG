@@ -576,3 +576,175 @@ def test_expired_session_rotates_without_replaying_or_exposing_old_owner(tmp_pat
     assert client.post("/api/chat/conversations").status_code == 403
     client.headers["X-CSRF-Token"] = renewed.json()["csrf"]
     assert client.post("/api/chat/conversations").status_code == 200
+
+
+def test_controlled_comparison_freezes_factors_and_persists_errors(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "compare")
+    client = TestClient(app)
+    client.headers["X-CSRF-Token"] = client.get("/api/chat/session").json()["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    methods = client.get("/api/chat/methods").json()["methods"]
+    assert {m["id"] for m in methods if m["available"]} == {"semantic", "graph", "hybrid"}
+    assert all(m["reason"] for m in methods if not m["available"])
+    payload = {
+        "question": "Welche Solarprojekte planen die Stadtwerke?",
+        "methods": ["semantic", "graph", "hybrid"],
+    }
+    result = client.post(f"/api/chat/conversations/{cid}/compare", json=payload)
+    assert result.status_code == 200, result.text
+    record = result.json()
+    assert record["validation"] == "UNVALIDATED" and not record["human_gold"]
+    turns = [r["turn"] for r in record["results"]]
+    assert len(turns) == 3
+    for field in ["dataset_snapshot", "prompt_version", "model_version", "effective_question"]:
+        assert len({t[field] for t in turns}) == 1
+    assert {t["parent_turn_id"] for t in turns} == {None}
+    assert len({t["query_plan"]["method"] for t in turns}) == 3
+    assert all(r["process_cpu_seconds"] >= 0 for r in record["results"])
+    assert client.get(f"/api/chat/conversations/{cid}/comparisons").json() == [record]
+    payload["methods"] = ["semantic", "lexical"]
+    assert client.post(f"/api/chat/conversations/{cid}/compare", json=payload).status_code == 422
+    other = TestClient(app)
+    other.get("/api/chat/session")
+    assert other.get(f"/api/chat/conversations/{cid}/comparisons").status_code == 404
+
+
+def test_local_notes_are_versioned_separate_and_never_gold(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "notes")
+    client = TestClient(app)
+    client.headers["X-CSRF-Token"] = client.get("/api/chat/session").json()["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    turn = client.post(
+        f"/api/chat/conversations/{cid}/turns",
+        json={"question": "Welche Solarprojekte planen die Stadtwerke?"},
+    ).json()
+    data = {
+        "conversation_id": cid,
+        "turn_id": turn["turn_id"],
+        "claim_id": turn["claims"][0]["claim_id"],
+        "kind": "claim",
+        "label": "Supported",
+    }
+    first = client.post("/api/chat/local-review", json=data).json()
+    data.update(label="Partially supported", state="judgment")
+    second = client.post("/api/chat/local-review", json=data).json()
+    assert first["id"] != second["id"] and first["state"] == "draft"
+    export = client.get("/api/chat/local-review/export").json()
+    assert export["events"] == [first, second] and export["human_gold"] is False
+    data["kind"] = "source"  # Claim labels cannot silently become source-screening labels.
+    assert client.post("/api/chat/local-review", json=data).status_code == 422
+    other = TestClient(app)
+    other.get("/api/chat/session")
+    assert other.get("/api/chat/local-review/export").json()["events"] == []
+    assert "password" not in client.get("/validation").text
+
+
+def test_existing_authoritative_frame_resolver_is_called_with_its_actual_contract(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "frame")
+    calls = []
+
+    class Frame:
+        def resolve_ags(self, supplied, question=""):
+            calls.append((supplied, question))
+            return ["09162000"]
+
+    app.state.research_service.workspace = Frame()
+    client = TestClient(app)
+    client.headers["X-CSRF-Token"] = client.get("/api/chat/session").json()["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    response = client.post(
+        f"/api/chat/conversations/{cid}/turns",
+        json={"question": "Welche Solarprojekte sind in München geplant?"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls == [([], "Welche Solarprojekte sind in München geplant?")]
+    assert response.json()["context_scope"]["municipality_ids"] == ["09162000"]
+
+
+def test_topic_portal_is_not_a_concrete_municipal_measure_answer():
+    from crawler.web.conversation import qualify
+
+    assert not qualify(
+        "Welche Klimaschutzmaßnahmen sind in Beispielstadt dokumentiert?",
+        "Das Zukunftsportal Beispielstadt zeigt Daten zum Handlungsfeld Klimaschutz und Energie.",
+    )
+    assert qualify(
+        "Welche Klimaschutzmaßnahmen plant Beispielstadt?",
+        "Die Stadt Beispielstadt plant Klimaschutzmaßnahmen mit einer Solaranlage.",
+    )
+
+
+def test_local_workbench_cannot_implicitly_build_a_missing_term_index(tmp_path):
+    from crawler.web.local_index import LocalIndex
+
+    path = tmp_path / "must-not-be-created.sqlite"
+    with pytest.raises(FileNotFoundError):
+        LocalIndex(object(), path, build_if_missing=False)
+    assert not path.exists()
+
+
+def test_archived_original_route_is_owner_scoped_and_never_fakes_fixture_originals(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "archive")
+    client = TestClient(app)
+    client.headers["X-CSRF-Token"] = client.get("/api/chat/session").json()["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    turn = client.post(
+        f"/api/chat/conversations/{cid}/turns",
+        json={"question": "Welche Solarprojekte planen die Stadtwerke?"},
+    ).json()
+    eid = turn["claims"][0]["evidence"][0]["evidence_id"]
+    path = f"/api/chat/conversations/{cid}/original/{turn['turn_id']}/{eid}"
+    assert client.get(path).status_code == 404
+    stranger = TestClient(app)
+    stranger.get("/api/chat/session")
+    assert stranger.get(path).status_code == 404
+    assert client.get(path, headers={"Origin": "https://evil.test"}).status_code == 403
+
+
+def test_comparison_retains_method_failure_without_fabricated_answer(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.core.retrieval import RetrievalError, RetrievalMode
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "comparison-failure")
+    retrieve = app.state.research_service.retriever.retrieve
+
+    def fail_graph(request):
+        if request.mode is RetrievalMode.GRAPH:
+            raise RetrievalError("Controlled unavailable graph fixture")
+        return retrieve(request)
+
+    app.state.research_service.retriever.retrieve = fail_graph
+    client = TestClient(app)
+    client.headers["X-CSRF-Token"] = client.get("/api/chat/session").json()["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    response = client.post(
+        f"/api/chat/conversations/{cid}/compare",
+        json={
+            "question": "Welche Solarprojekte planen die Stadtwerke?",
+            "methods": ["semantic", "graph"],
+        },
+    )
+    assert response.status_code == 200
+    record = response.json()
+    assert record["results"][0]["status"] == "COMPLETED"
+    failed = record["results"][1]
+    assert failed["status"] == "ERROR" and "turn" not in failed
+    assert client.get(f"/api/chat/conversations/{cid}/comparisons").json() == [record]

@@ -69,7 +69,7 @@ def main():
             )
             page.goto(a.base + "/research")
             assert page.locator("#expert").get_attribute("open") is not None
-            page.goto(a.base + "/validation")
+            page.goto(a.base + "/validation/protocol")
             assert page.locator("#review-login").is_visible()
             assert errors == [], errors
             records.append(
