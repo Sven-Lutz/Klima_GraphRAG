@@ -325,7 +325,10 @@ $("delete-chat").addEventListener("click", async () => {
       "Diese lokale Unterhaltung und ihr Produktfeedback löschen? Unabhängige Review-Audits bleiben getrennt.",
     )
   ) {
-    await api("conversations/" + cid, "DELETE");
+    const deletedChat = cid;
+    epoch++; controller?.abort();
+    await api("conversations/" + deletedChat, "DELETE");
+    if (cid !== deletedChat) return;
     cid = null;
     turns = [];
     render();

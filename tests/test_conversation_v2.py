@@ -350,6 +350,24 @@ def test_review_queue_pagination_and_unit_labels_are_kind_bound(tmp_path):
         )
         assert response.status_code == status
     assert app.state.conversation_review.export_gold("owner")["label_count"] == 0
+    for account, authority in [("demo-a", "official"), ("demo-b", "institutional")]:
+        c.post("/api/chat-review/demo-session/" + account).raise_for_status()
+        c.get(path + "/original").raise_for_status()
+        c.post(
+            path + "/review",
+            json={
+                "form": {
+                    "decision": "SUPPORTED",
+                    "comment": "Synthetic conflict only; no human labels",
+                    "evidence_inspected": True,
+                    "independence_confirmed": True,
+                    "human_confirmed": True,
+                    "corrections": {"unit_judgments": {"authority": authority}},
+                }
+            },
+        ).raise_for_status()
+    assert app.state.conversation_review.state(source["object_id"]) == "CONFLICT"
+    assert app.state.conversation_review.export_gold("owner")["label_count"] == 0
 
 
 def test_fast_reviewer_queue_keeps_assignment_and_partner_judgments_private(tmp_path):
@@ -420,3 +438,40 @@ def test_source_text_cannot_close_provider_evidence_delimiters():
 
     generated, _ = synthesize(InspectOnly(), "test", "Solar?", claims)
     assert generated == []
+
+
+def test_deleted_chat_cannot_be_resurrected_by_an_inflight_answer(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "deletion-race")
+    c = TestClient(app)
+    c.headers["X-CSRF-Token"] = c.get("/api/chat/session").json()["csrf"]
+    cid = c.post("/api/chat/conversations").json()["id"]
+    entered, release = threading.Event(), threading.Event()
+    original = app.state.research_service.execute
+
+    def delayed(options):
+        entered.set()
+        assert release.wait(3)
+        return original(options)
+
+    app.state.research_service.execute = delayed
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(
+            c.post,
+            f"/api/chat/conversations/{cid}/turns",
+            json={"question": "Welche Solarprojekte planen die Stadtwerke?"},
+        )
+        try:
+            assert entered.wait(3)
+            assert c.delete("/api/chat/conversations/" + cid).status_code == 200
+        finally:
+            release.set()
+        assert future.result(timeout=5).status_code == 410
+    with app.state.chat_store.conn() as conn:
+        assert conn.execute("SELECT count(*) FROM turns WHERE chat=?", (cid,)).fetchone()[0] == 0

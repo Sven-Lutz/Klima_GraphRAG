@@ -198,6 +198,12 @@ class ChatStore:
         if len(text.encode()) > 1024**2:
             raise ValueError("Turn output budget exceeded")
         with self.conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not c.execute(
+                "SELECT 1 FROM chats WHERE id=? AND owner=? AND snapshot=?",
+                (cid, owner, self.snapshot),
+            ).fetchone():
+                raise HTTPException(410, "Conversation deleted or expired; result not saved")
             c.execute(
                 "INSERT INTO turns VALUES(?,?,?,?,?,?)",
                 (result["turn_id"], cid, owner, result["parent_turn_id"], now(), text),
