@@ -600,6 +600,9 @@ def test_controlled_comparison_freezes_factors_and_persists_errors(tmp_path):
     assert record["validation"] == "UNVALIDATED" and not record["human_gold"]
     turns = [r["turn"] for r in record["results"]]
     assert len(turns) == 3
+    assert all(
+        t["research_composition"] == record["configuration"]["retrieval_composition"] for t in turns
+    )
     for field in ["dataset_snapshot", "prompt_version", "model_version", "effective_question"]:
         assert len({t[field] for t in turns}) == 1
     assert {t["parent_turn_id"] for t in turns} == {None}

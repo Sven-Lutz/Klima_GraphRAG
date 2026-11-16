@@ -132,6 +132,14 @@ def attach_workbench(app, store, engine, actor, charge):
             "municipality_ids": data.municipality_ids,
             "reference_year": data.reference_year,
             "generation": engine.generation["metadata"] if engine.generation else "extractive-v1",
+            "retrieval_composition": getattr(
+                engine.service,
+                "workbench_binding",
+                {
+                    "corpus_class": "SYNTHETIC" if engine.service.demo_mode else "UNBOUND",
+                    "snapshot": store.snapshot,
+                },
+            ),
             "evidence_budget": {"top_k": 8, "items": 8, "characters": 24000},
             "verification": "verbatim-qualification-v1; no independent entailment",
             "factor": "NATIVE_RETRIEVAL_PIPELINE",

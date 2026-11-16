@@ -300,6 +300,14 @@ class ConversationEngine:
             inherited_scope=inherited,
             effective_question=effective,
             dataset_snapshot=self.store.snapshot,
+            research_composition=getattr(
+                self.service,
+                "workbench_binding",
+                {
+                    "corpus_class": "SYNTHETIC" if self.service.demo_mode else "UNBOUND",
+                    "snapshot": self.store.snapshot,
+                },
+            ),
             generation_provider="deterministic_extractive",
             model_version=PROMPT,
             prompt_version=PROMPT,

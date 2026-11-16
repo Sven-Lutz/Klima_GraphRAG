@@ -646,7 +646,9 @@ function renderComparison(record) {
       card.append(el("p", `${t.claims.length} Quellenclaims · keine Qualitätswertung aus der Anzahl.`));
       card.append(action("Graph untersuchen", () => location.assign(`/graph?chat=${cid}&turn=${t.turn_id}`)));
       card.append(action("Daten prüfen", () => location.assign(`/visualizations?chat=${cid}&turn=${t.turn_id}`)));
-      card.append(el("p", `Modell: ${t.model_version} · Prompt: ${t.prompt_version}`));
+      card.append(el("p", `Antwortmodell: ${t.model_version} · Prompt: ${t.prompt_version}`));
+      const embedding = t.research_composition?.embedding_model;
+      if (embedding) card.append(el("p", `Retrievalmodell: ${embedding.repository} · ${embedding.revision}`));
     } else card.append(el("p", "Diese Methode konnte nicht sicher ausgeführt werden. Andere Ergebnisse bleiben sichtbar."));
     card.append(el("p", `CPU: ${arm.process_cpu_seconds == null ? "nicht gemessen" : arm.process_cpu_seconds.toFixed(3) + " s"} · RAM: je Arm nicht gemessen · Token: ${t?.generation_receipt?.total_tokens ?? "nicht gemessen / keine LLM-Generierung"} · Kosten: keine externen kostenpflichtigen Aufrufe`));
     grid.append(card);

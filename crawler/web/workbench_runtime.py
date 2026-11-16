@@ -66,6 +66,14 @@ def create_local_workbench_service(config_path):
         "retriever": "evidence-retrieval-product-v4",
         "embedding_model": model_manifest,
         "dense_ready": semantic is not None,
+        "embedding_index_binding": semantic.binding if semantic else None,
+        "encoder_runtime": onnxruntime.__version__ if semantic else None,
+        "encoder_parameters": {
+            "max_sequence_length": 128,
+            "threads": 2,
+            "pooling": "masked-mean-l2",
+            "device": "CPU",
+        },
         "ie_status": "EXISTING_VERSIONED_PROVISIONAL_RELATIONS_NOT_REEXTRACTED",
         "human_gold": False,
     }

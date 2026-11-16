@@ -22,7 +22,10 @@ function show(){activeKind=$("kind").value;$("label").replaceChildren(new Option
  $("provenance").textContent=`Snapshot: ${item.snapshot} · ${item.claim.evidence_kind} · UNVALIDATED`;
  $("details").textContent=JSON.stringify(item.claim.evidence,null,2);
  const url=item.claim.evidence[0]?.source_url; $("source-link").hidden=true;
- try {const u=new URL(url);if(['https:','http:'].includes(u.protocol)){$("source-link").href=u.href;$("source-link").hidden=false;}}catch{}
+ try {const a=item.claim.evidence[0]; const u=new URL(url);
+  if(a.source_sha256){$("source-link").href=`/api/chat/conversations/${item.conversation_id}/original/${item.turn_id}/${encodeURIComponent(a.evidence_id)}`;$("source-link").textContent="Archiviertes Original öffnen";$("source-link").hidden=false;}
+  else if(['https:','http:'].includes(u.protocol)&&!u.hostname.endsWith('.test')){$("source-link").href=u.href;$("source-link").textContent="Onlinequelle öffnen (Fassung kann abweichen)";$("source-link").hidden=false;}
+ }catch{}
  $("task-guide").textContent=guides[$("kind").value];
  const last=events.findLast(e=>e.turn_id===item.turn_id&&e.claim_id===item.claim.claim_id&&e.kind===$("kind").value);
  $("label").value=last?.label||"";$("comment").value=last?.comment||"";
