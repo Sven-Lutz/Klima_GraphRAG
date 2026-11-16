@@ -474,3 +474,10 @@ body.workbench .intro h1, body.workbench .intro .eyebrow { display: none; }
   #chat-search { display: block; width: 150px; flex-shrink: 0; }
 }
 @media (max-height: 720px) { main { overflow-y: auto; } }
+/* Header and workspace share the actual viewport; avoid platform-dependent magic heights. */
+.chat-page { height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.chat-page .workspace { height: auto; min-height: 0; }
+@media (max-height: 720px) and (max-width: 760px) {
+  .chat-page .intro h1 { display: none; }
+  .chat-page .intro p { font-size: .75rem; line-height: 1.3; }
+}

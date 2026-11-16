@@ -304,3 +304,11 @@ def test_provider_configuration_rejects_unapproved_scope(tmp_path, change):
     path.write_text(json.dumps(config))
     with pytest.raises(ValueError):
         load_generation(path)
+
+
+def test_repeated_equal_values_at_different_spans_are_not_deduplicated():
+    turn = {"claims": evidence(), "dataset_snapshot": "fixture", "turn_id": "one"}
+    turn["claims"][0]["evidence"][0]["quote"] = "Geplant: Anlage A 20 kWp, Anlage B 20 kWp."
+    spec = visualization(turn)
+    assert len(spec["rows"]) == 2 and not spec["chart_allowed"]
+    assert spec["rows"][0]["numeric_span_start"] != spec["rows"][1]["numeric_span_start"]

@@ -63,6 +63,8 @@ def visualization(turn):
                     {
                         "value": float(raw.replace(",", ".")),
                         "original_value": match.group(0),
+                        "numeric_span_start": anchor.get("offset_start", 0) + match.start(),
+                        "numeric_span_end": anchor.get("offset_start", 0) + match.end(),
                         "unit": match.group(2),
                         "evidence_id": anchor["evidence_id"],
                         "passage_sha256": anchor["passage_sha256"],
@@ -77,7 +79,8 @@ def visualization(turn):
     for row in rows:
         identity = (
             row["passage_sha256"],
-            row["quote"],
+            row["numeric_span_start"],
+            row["numeric_span_end"],
             row["original_value"],
             tuple(row["municipality_ids"]),
             row["modality"],
