@@ -32,3 +32,11 @@ Die vollständige lokale Corpus-Preview wird durch diesen Quellcodeexport nicht 
 - [Bestehender Contributor Hub #15](https://github.com/Sven-Lutz/Klima_GraphRAG/issues/15), [Release-Cutline #16](https://github.com/Sven-Lutz/Klima_GraphRAG/issues/16)
 
 Bitte keine zweite Grundlagenphase und keine neuen parallelen Issues für bereits vorhandene Module. Unabhängige Originalannotation, methodenblind gepoolte Referenzen und faire Vergleichsbedingungen bleiben nächste wissenschaftliche Aufgaben. Technische Funktionsprüfungen und explorative Bestandszahlen ersetzen diese nicht.
+
+## Conversational Research v1 (Featurebranch)
+
+```bash
+python -m crawler.web --fixture --directory generated/chat-demo --port 8825
+```
+
+Öffnet die lokale synthetische Chatkomposition auf http://127.0.0.1:8825, sofern die unveränderte Speicherreserve erfüllt ist. Chat, Research und Validation bleiben getrennte Arbeitsräume. [Technische Übergabe und echte Grenzen](docs/product/CONVERSATIONAL_RESEARCH_HANDOFF.md), [Paper-Dossier](docs/paper/RESEARCH_DOSSIER.md). Keine neue fachliche Accuracy-/UX-Überlegenheit und kein externer Preview-Zugang behauptet. Vollcorpusintegration bleibt wegen E1-/Datenrechten eingeschränkt.

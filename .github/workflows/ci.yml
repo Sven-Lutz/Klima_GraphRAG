@@ -1,7 +1,7 @@
 name: Public snapshot CI
 on:
   push:
-    branches: [sven-develop]
+    branches: [sven-develop, feat/conversational-research-v1]
   pull_request:
 permissions:
   contents: read
@@ -29,4 +29,30 @@ jobs:
       - name: Public input boundary (not private owner suite)
         run: python -m pytest @tests/public-tests.txt -ra -o tmp_path_retention_policy=failed -o tmp_path_retention_count=1
       - name: Scientific aggregate checks
-        run: python scripts/qa/check_public_research.py
+        run: |
+          python scripts/qa/check_public_research.py
+          python scripts/qa/check_paper_dossier.py
+      - name: Install bounded browser driver (no model download)
+        run: python -m pip install playwright==1.65.2
+      - name: Start loopback synthetic conversational application
+        run: |
+          mkdir -p generated
+          python -m crawler.web.conversation --directory generated/ci-chat --port 8825 > generated/ci-server.log 2>&1 &
+          python - <<'PYREADY'
+          import time, urllib.request
+          for attempt in range(30):
+              try:
+                  urllib.request.urlopen('http://127.0.0.1:8825/', timeout=1).close()
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('Local synthetic server not ready')
+          PYREADY
+      - name: Synthetic Chrome conversation and viewport checks
+        run: python scripts/qa/conversation_browser.py --output generated/ci-browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-conversation-browser
+          path: generated/ci-browser

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Klima · Unabhängige Prüfung</title>
+    <link rel="stylesheet" href="/static/conversation.css" />
+    <script defer src="/static/conversation_validation.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#review-form">Zum Urteil</a>
+    <header>
+      <a class="brand" href="/">KLIMA Research</a>
+      <nav aria-label="Arbeitsräume">
+        <a href="/">Chat</a><a href="/research">Research</a
+        ><a href="/validation" aria-current="page">Validation</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Original zuerst. Dann ein Urteil.</h1>
+      <p class="notice">
+        Persönliche Erst-/Zweitprüfung bleiben getrennt. Öffnen allein beweist
+        kein Lesen. Technische Tests und Chatfeedback erzeugen kein Human Gold.
+      </p>
+      <form id="review-login">
+        <label
+          >Prüfkonto<input
+            id="review-user"
+            autocomplete="username"
+            required /></label
+        ><label
+          >Passwort<input
+            id="review-password"
+            type="password"
+            autocomplete="current-password"
+            required /></label
+        ><button id="review-login-button" disabled>Anmelden</button>
+      </form>
+      <button id="review-logout" hidden>Abmelden</button>
+      <p id="review-status" role="status" aria-live="polite"></p>
+      <div class="review-layout">
+        <aside>
+          <label
+            >Queue filtern<input
+              id="review-filter"
+              placeholder="Suchbegriff" /></label
+          ><button id="review-refresh">Queue laden</button>
+          <ul id="review-queue"></ul>
+        </aside>
+        <section id="review-case" hidden>
+          <h2 id="review-title"></h2>
+          <p id="review-kind"></p>
+          <p id="review-proposal"></p>
+          <button id="review-open-original">Gebundenes Original öffnen</button>
+          <blockquote id="review-original" tabindex="0"></blockquote>
+          <p id="review-locator"></p>
+          <form id="review-form">
+            <label
+              >Urteil<select id="review-decision" required>
+                <option value="">Bitte wählen</option>
+                <option>SUPPORTED</option>
+                <option>PARTIALLY_SUPPORTED</option>
+                <option>UNSUPPORTED</option>
+                <option>CONTRADICTED</option>
+                <option>INSUFFICIENT_EVIDENCE</option>
+                <option>AMBIGUOUS</option>
+                <option>NEEDS_FURTHER_REVIEW</option>
+              </select></label
+            ><label
+              >Begründung / fehlende Aspekte<textarea
+                id="review-comment"
+                required
+                minlength="10"
+              ></textarea></label
+            ><label
+              ><input id="review-inspected" type="checkbox" required />Ich habe
+              das Original selbst gelesen.</label
+            ><label
+              ><input id="review-independent" type="checkbox" required />Ohne
+              fremde Urteile unabhängig geprüft.</label
+            ><label
+              ><input id="review-human" type="checkbox" required />Mein eigenes
+              Urteil; im Test bleibt es technisch.</label
+            ><button id="review-save" type="button">Entwurf speichern</button
+            ><button id="review-submit">Abgeben und nächster Fall</button>
+          </form>
+          <details>
+            <summary>
+              Für meine Rolle sichtbarer Verlauf / Konfliktpanel
+            </summary>
+            <pre id="review-history"></pre>
+          </details>
+        </section>
+      </div>
+      <p>
+        Strg/⌘+S: Entwurf. Nach Abgabe unveränderlich; keine Sammelvalidierung.
+        Labels „Missing/Unknown“ bleiben unbewertet und sind keine negativen
+        Fakten.
+      </p>
+    </main>
+  </body>
+</html>
