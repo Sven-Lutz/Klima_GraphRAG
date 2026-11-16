@@ -39,8 +39,7 @@ def capabilities(service):
                 else "Aktiver Adapter; fachliche Qualität nicht unabhängig validiert."
                 if key in supported
                 else (
-                    "Kein lexikalischer Adapter am aktiven Snapshot; "
-                    "Bayern-Adapter hängt an ungeklärtem E1-Code."
+                    "Für diesen Snapshot ist kein lexikalischer Indexadapter konfiguriert."
                 )
                 if key == "lexical"
                 else "Kein freigegebener SQL-Queryadapter für diesen Snapshot."

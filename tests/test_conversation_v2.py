@@ -590,6 +590,7 @@ def test_controlled_comparison_freezes_factors_and_persists_errors(tmp_path):
     methods = client.get("/api/chat/methods").json()["methods"]
     assert {m["id"] for m in methods if m["available"]} == {"semantic", "graph", "hybrid"}
     assert all(m["reason"] for m in methods if not m["available"])
+    assert "E1" not in next(m["reason"] for m in methods if m["id"] == "lexical")
     payload = {
         "question": "Welche Solarprojekte planen die Stadtwerke?",
         "methods": ["semantic", "graph", "hybrid"],
