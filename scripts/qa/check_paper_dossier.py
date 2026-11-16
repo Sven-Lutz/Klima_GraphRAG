@@ -12,7 +12,7 @@ PAPER = ROOT / "docs/paper"
 
 def bound_bytes(row, path):
     ref = row.get("source_commit", "")
-    if ref:
+    if ref and ref != "CURRENT_TREE":
         assert re.fullmatch(r"[0-9a-f]{40}", ref)
         return subprocess.check_output(["git", "-C", str(ROOT), "show", ref + ":" + path])
     return (ROOT / path).read_bytes()

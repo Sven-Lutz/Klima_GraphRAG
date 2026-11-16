@@ -31,3 +31,8 @@ Offen: Nachweis der Rechte am lokal gelieferten E1-Kit für sechs Vendor-Dateien
 ## Hosted-CI-Korrektur
 
 Erster PR-Lauf [43729293811](https://github.com/Sven-Lutz/Klima_GraphRAG/actions/runs/43729293811): **FAIL**, Exit 4 bei Testauswahl. Ein aus macOS übernommener parametrischer Node-ID enthielt EADDRINUSE=48 statt Linux=98. Nur der Selektor in tests/public-tests.txt wurde auf die gesamte vorhandene Testfunktion umgestellt; beide unveränderten Parameterfälle werden ausgeführt. Keine Assertion oder fachliche Prüfung entfernt. Neuer Hosted-Lauf nach diesem Commit wird separat ausgewiesen.
+
+
+## Conversational V2 delta (16.11.2026)
+
+Public V1 base 0483eef9d8bb9c37559d8dcee0e0b06449d9a394. Architecture commit 729f55c; implementation d951d7e plus generation-audit binding 1e75042. Separate V2 own-code/MIT-library scope; no E1, original corpus, model weights, real accounts or Human labels. Canonical current limitations/results: docs/product/V2_QA_REPORT.md and V2_CHECKS.json. Prior local full snapshot 414 PASS / 6 SKIP; latest full attempt 400 PASS / 7 FAIL / 8 ERROR / 6 SKIP at unchanged disk reserve gates. Current pure V2 contracts 22 PASS / 3 store cases deselected. No current complete local PASS, running server, qualified LLM or full programme completion. Hosted CI is checked separately after the authorized feature push. Historical numbers above remain historical.

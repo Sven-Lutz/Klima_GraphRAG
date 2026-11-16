@@ -1,0 +1,274 @@
+{
+  "schema": "V2_TECHNICAL_RECEIPTS_V1",
+  "implementation_commit": "1e75042",
+  "human_gold": false,
+  "last_local_full_attempt": {
+    "passed": 400,
+    "failed": 7,
+    "errors": 8,
+    "skipped": 6,
+    "seconds": 6.26,
+    "cause": "UNCHANGED_STORAGE_RESERVE"
+  },
+  "prior_full_snapshot": {
+    "passed": 414,
+    "skipped": 6,
+    "seconds": 8.73
+  },
+  "current_pure_contracts": {
+    "passed": 22,
+    "deselected_store_cases": 3,
+    "seconds": 0.28
+  },
+  "runtime": "RESOURCE_BLOCKED_NO_CURRENT_SERVER",
+  "LLM_inference_executed": false,
+  "native_zoom": "NOT_TESTED_CUA_HOST_UNAVAILABLE",
+  "screenreader": "NOT_TESTED",
+  "browser_before_final_minor_changes": [
+    {
+      "check": "markdown_headings_tables_xss_protocols",
+      "status": "PASS"
+    },
+    {
+      "check": "graph_filter_table_evidence",
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/graph",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/visualizations",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/settings",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/coverage",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/validation",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 320,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 360,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 375,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 768,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 1024,
+      "status": "PASS"
+    },
+    {
+      "check": "viewport_overflow",
+      "route": "/",
+      "width": 1440,
+      "status": "PASS"
+    },
+    {
+      "check": "small_height_composer",
+      "status": "PASS"
+    },
+    {
+      "check": "chart_export_review_autosave_blinding",
+      "status": "PASS"
+    },
+    {
+      "check": "native_zoom_screenreader_human_UX",
+      "status": "NOT_TESTED"
+    }
+  ],
+  "secrets_source_only": {
+    "findings": 0,
+    "files": 38,
+    "bytes": 405947
+  },
+  "limits": [
+    "Browser receipt predates final minor source changes; latest rerun refused connection after reserve-gated restart.",
+    "Automated fixtures are not independent human labels or answer accuracy."
+  ]
+}

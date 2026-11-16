@@ -44,7 +44,7 @@ def main():
         reader = csv.DictReader(stream, delimiter="\t")
         fields, rows = list(reader.fieldnames), list(reader)
     # Frozen V1 records are never refreshed against current files.
-    rows = [r for r in rows if r.get("source_commit")]
+    rows = [r for r in rows if r.get("source_commit") not in {"", "CURRENT_TREE"}]
     for path in paths:
         raw = (ROOT / path).read_bytes()
         rows.append(
@@ -57,7 +57,7 @@ def main():
                 corpus_binding="V2_SYNTHETIC_OR_METADATA_INVENTORY_ONLY",
                 prompt_model="conversational-claims-v2.1_OPTIONAL_NO_LIVE_MODEL_QUALIFIED",
                 tokenizer="NO_MODEL_TOKENIZER_EXECUTED",
-                source_commit="",
+                source_commit="CURRENT_TREE",
                 restore="checkout release commit; current bytes bound by sha256",
             )
         )
@@ -66,7 +66,7 @@ def main():
     with claims.open() as stream:
         reader = csv.DictReader(stream)
         fields, rows = list(reader.fieldnames), list(reader)
-    rows = [r for r in rows if r.get("source_commit")]
+    rows = [r for r in rows if r.get("source_commit") not in {"", "CURRENT_TREE"}]
     for cid, sentence, path, span in [
         (
             "V2-P01",
@@ -100,7 +100,7 @@ def main():
                 status="VERIFIED",
                 rights="OWN_CODE",
                 independent_human_validation="false",
-                source_commit="",
+                source_commit="CURRENT_TREE",
             )
         )
     rewrite(claims, rows, fields, ",")
