@@ -96,3 +96,8 @@ Source 00847c160ed2c700f5f2e3bbf257d47e3c3e97ec: **431 PASS / 6 SKIP, 7.82 s**, 
 ## Clean reproduction
 
 Exact candidate 98e5cb4 was cloned with `git clone --no-local --single-branch` into an empty disposable directory. Fresh Python 3.11 venv installed only requirements-publication.lock using no pip cache. Public tokenizer cache copied with byte-hash equality; no private inputs or model weights. `pip check`, Ruff, scientific aggregate and paper checks PASS; all **500 publication hashes PASS**. Public suite **431 PASS / 6 SKIP, 10.19 s**, same documented skips and FastAPI warning. Source-only final package scan: 634,271 bytes, zero leaks; ten V2 commits scanned, zero leaks. Later documentation-only receipts do not change tested executable code. Full private-owner suite, live Neo4j and independent scientific evaluation remain excluded.
+
+
+## Hosted success and visual follow-up
+
+[Run 46](https://github.com/Sven-Lutz/Klima_GraphRAG/actions/runs/43852326748), afa74e72136cad74ca5da62b0ebb567bddcc231f, all public CI steps SUCCESS, including V1 and V2 Chrome. This supersedes Run44 failure; its negative receipt remains above. Actual final screenshot inspection then exposed a graph resize defect that overflow-only checks missed: nodes retained desktop placement at mobile width. Source e7088ca adds container ResizeObserver resize/fit; six-width rendered element-bound assertions and the full V2 Chrome workflow PASS again, artifact generated/v2-browser-graph-resize. The 320px screenshot was actually inspected and all graph nodes now fit. Desktop/full-page screenshots may include capture artifacts; human visual/accessibility acceptance is still pending. Final hosted head is linked in PR19 rather than circularly rewriting a commit to cite its own future CI.
