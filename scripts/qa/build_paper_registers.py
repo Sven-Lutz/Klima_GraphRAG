@@ -26,6 +26,12 @@ def write(name, fields, rows, delimiter=","):
 
 
 def main():
+    # V1 registers are now explicitly frozen. Do not silently rebind historical claims.
+    header = (PAPER / "CLAIM_EVIDENCE_REGISTER.csv").read_text().splitlines()[0]
+    if "source_commit" in header:
+        raise SystemExit(
+            "V1 registers frozen; use refresh_v2_registers.py for current V2 artifacts"
+        )
     code = subprocess.check_output(
         ["git", "-C", str(ROOT), "rev-parse", CODE_COMMIT], text=True
     ).strip()

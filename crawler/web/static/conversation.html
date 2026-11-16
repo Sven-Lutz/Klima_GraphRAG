@@ -6,21 +6,22 @@
     <title>Klima · Conversational Research</title>
     <link rel="stylesheet" href="/static/conversation.css" />
     <script defer src="/static/vendor/cytoscape-3.34.4.min.js"></script>
+    <script defer src="/static/vendor/markdown-it-14.1.0.min.js"></script>
     <script defer src="/static/conversation.js"></script>
   </head>
-  <body>
+  <body class="chat-page">
     <a class="skip" href="#question">Zur Frage</a>
     <header>
       <a href="/" class="brand">KLIMA <span>Research</span></a>
       <nav aria-label="Arbeitsräume">
-        <a href="/" aria-current="page">Chat</a><a href="/research">Research</a
-        ><a href="/validation">Validation</a>
+        <a href="/" aria-current="page">Chat</a><a href="/compare">Vergleichen</a><a href="/experiments">Experimente</a><a href="/research">Research</a
+        ><a href="/graph">Knowledge Graph</a><a href="/visualizations">Visualizations</a><a href="/validation">Validation</a><a href="/coverage">Data Coverage</a><a href="/settings">Settings</a>
       </nav>
     </header>
     <div class="workspace">
       <aside class="sessions" aria-label="Unterhaltungen">
         <button id="new-chat">＋ Neue Unterhaltung</button>
-        <ul id="chats"></ul>
+        <label for="chat-search">Unterhaltungen suchen</label><input id="chat-search" type="search" placeholder="Frage oder Datum"/><ul id="chats"></ul>
         <p class="muted">
           Nur diese Sitzung. Keine unabhängige Humanvalidierung.
         </p>
@@ -28,11 +29,17 @@
       </aside>
       <main id="main">
         <div class="intro">
-          <p class="eyebrow">Conversational Research · v1</p>
+          <p class="eyebrow">Conversational Research · v2</p>
           <h1>Eine Frage. Prüffähige Belege.</h1>
           <p id="dataset-notice">Gebundener Quellenbestand wird geprüft.</p>
         </div>
-        <div id="turns" aria-label="Gesprächsverlauf"></div>
+        <section id="workspace-panel" hidden aria-labelledby="workspace-title">
+          <h2 id="workspace-title"></h2><p id="workspace-notice" role="status"></p>
+          <div id="workspace-controls"></div><div id="workspace-graph" aria-label="Antwortgraph"></div>
+          <div id="workspace-content"></div>
+        </section>
+        <div id="research-results"><section id="comparison-panel" hidden aria-labelledby="comparison-title"><h2 id="comparison-title">Methodenvergleich</h2><div id="comparison-results"></div></section>
+        <div id="turns" aria-label="Gesprächsverlauf"></div></div>
         <div id="status" role="status" aria-live="polite"></div>
         <form id="composer">
           <label for="question">Ihre Forschungsfrage</label
@@ -48,21 +55,18 @@
             ><button id="cancel" type="button" hidden>Anzeige abbrechen</button
             ><button type="submit" id="send">Frage stellen ↑</button>
           </div>
+          <div class="method-picker">
+            <label for="method">Suchmethode</label><select id="method"><option value="">Automatisch</option></select>
+            <p id="method-reason" class="muted"></p>
+            <details id="compare-options"><summary>Methodenvergleich konfigurieren</summary><div id="compare-methods"></div>
+              <p>Gleiche Frage, gleicher Kontext, Snapshot, Generator und Prüfregeln. Native Suchpipelines werden verglichen; Graphrelationen können zusätzliche Information enthalten. Kein isolierter Graphformat-Effekt.</p>
+            </details>
+            <button id="run-compare" type="button">Methoden vergleichen</button>
+          </div>
           <details id="expert">
             <summary>Research · reproduzierbare Einstellungen</summary>
             <div class="settings">
               <label
-                >Retrievalverfahren<select id="method">
-                  <option value="">Automatisch: Frageintent</option>
-                  <option value="semantic">
-                    Semantisch (Fixture: kontrollierte Vektoren)
-                  </option>
-                  <option value="graph">
-                    Graph (Fixture: kontrollierter Backendvertrag)
-                  </option>
-                  <option value="hybrid">Hybrid</option>
-                </select></label
-              ><label
                 >Gemeinde-IDs (optional, kommagetrennt)<input
                   id="scope"
                   maxlength="100" /></label
@@ -75,7 +79,7 @@
               /></label>
             </div>
             <p id="snapshot" class="muted"></p>
-            <p>
+            <p id="provider-notice">
               Keine Qualitätsrangfolge aus Trefferzahlen. Modell:
               deterministisch extraktiv; kein Chat-LLM aktiviert.
             </p>

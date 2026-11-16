@@ -20,15 +20,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from crawler.core.retrieval import RetrievalMode
+from crawler.web.conversation_planning import plan
+from crawler.web.conversation_state import resolve
 from crawler.web.service import QueryOptions
 
-SCHEMA = "conversational-research-v1"
+SCHEMA = "conversational-research-v2"
 PROMPT = "verbatim-qualification-v1"
 RESERVE = 15 * 1024**3
 LIMIT = 64 * 1024**2
@@ -62,6 +64,13 @@ def qualify(question, text):
         r"\d[\d.,]*\s*(?:kWp|kW|MW|GWh|Euro|€|Ladepunkte|Ladesäulen)", text, re.I
     ):
         return False
+    if re.search(r"maßnahmen|massnahmen", question, re.I) and not re.search(
+        r"plant|planen|geplant|umsetz|erricht|installier|förder|sanier|ausbau|beschlossen|"
+        r"eingeführt|in betrieb|ma[ßs]nahmen(?:paket|katalog)",
+        text,
+        re.I,
+    ):
+        return False  # A thematic portal overview is not evidence for concrete measures.
     quantity_contracts = [
         (r"leistung", r"\d[\d.,]*\s*(?:kWp|kW|MW)(?!h)\b"),
         (r"ertrag|erzeugt|strommenge", r"\d[\d.,]*\s*(?:kWh|MWh|GWh)\b"),
@@ -108,6 +117,10 @@ class ChatStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / "conversations.sqlite"
         self.budget()
+        if self.path.is_symlink():
+            raise ValueError("Regular conversation database required")
+        if not self.path.exists():
+            self.path.touch(mode=0o600, exist_ok=False)
         with self.conn() as c:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, owner TEXT, csrf TEXT,
@@ -196,6 +209,13 @@ class ChatStore:
         if len(text.encode()) > 1024**2:
             raise ValueError("Turn output budget exceeded")
         with self.conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not c.execute(
+                "SELECT 1 FROM chats WHERE id=? AND owner=? AND snapshot=? "
+                "AND EXISTS (SELECT 1 FROM sessions WHERE owner=? AND expires>?)",
+                (cid, owner, self.snapshot, owner, time.time()),
+            ).fetchone():
+                raise HTTPException(410, "Conversation deleted or expired; result not saved")
             c.execute(
                 "INSERT INTO turns VALUES(?,?,?,?,?,?)",
                 (result["turn_id"], cid, owner, result["parent_turn_id"], now(), text),
@@ -207,7 +227,10 @@ class ClosingConnection:
         self.path = path
 
     def __enter__(self):
-        self.c = sqlite3.connect(self.path, timeout=5)
+        path = Path(self.path)
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError("Existing regular conversation database required")
+        self.c = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)
         self.c.row_factory = sqlite3.Row
         return self.c
 
@@ -219,11 +242,12 @@ class ClosingConnection:
 
 
 class ConversationEngine:
-    def __init__(self, service, store):
+    def __init__(self, service, store, generation=None):
         self.service, self.store = service, store
+        self.generation = generation
         self.lock = threading.Lock()
 
-    def answer(self, owner, cid, data):
+    def answer(self, owner, cid, data, experiment=None):
         started = time.perf_counter()
         history = self.store.turns(owner, cid)
         parent = next((t for t in history if t["turn_id"] == data.parent_turn_id), None)
@@ -232,50 +256,38 @@ class ConversationEngine:
         question = data.question.strip()
         if not question:
             raise HTTPException(422, "Nonempty question required")
-        scope = {
-            "municipality_ids": data.municipality_ids,
-            "reference_year": data.reference_year,
-            "source_ids": [],
-        }
-        inherited = False
-        clarification = None
-        if parent:
-            previous = parent["context_scope"]
-            if (
-                not data.municipality_ids
-                and previous["municipality_ids"]
-                and re.search(r"\b(?:in|für)\s+[A-ZÄÖÜ][a-zäöüß]+", question)
-            ):
-                clarification = (
-                    "Bitte den Ort der Anschlussfrage explizit bestätigen; "
-                    "keine stille Scope-Übernahme."
-                )
-            if (
-                not data.reference_year
-                and previous["reference_year"]
-                and any(
-                    y != str(previous["reference_year"])
-                    for y in re.findall(r"\b(?:19|20)\d{2}\b", question)
-                )
-            ):
-                clarification = "Neuer Zeitbezug: Welches Bezugsjahr soll gelten?"
-            scope["municipality_ids"] = data.municipality_ids or previous["municipality_ids"]
-            scope["reference_year"] = data.reference_year or previous["reference_year"]
-            inherited = not data.municipality_ids and bool(previous["municipality_ids"])
-            if re.search(r"ander\w* gemeinde|ander\w* ort|anderswo", question, re.I):
-                clarification = (
-                    "Welche andere Gemeinde meinen Sie? Bitte Ort oder Gemeinde-ID angeben."
-                )
-        # Bare deictic follow-ups need a real parent, never a guessed municipality.
-        if not parent and re.match(r"^(und |dort|dazu|wie viel davon)", question, re.I):
-            clarification = "Auf welche Frage und Gemeinde beziehen Sie sich?"
-        if not parent and words(question) <= {"leistung", "jahr", "wann", "umfang"}:
-            clarification = "Auf welche Quelle, Gemeinde und vorherige Frage beziehen Sie sich?"
-        effective = question
+        explicit_ids = list(data.municipality_ids)
+        workspace = getattr(self.service, "workspace", None)
+        named_ids = workspace.resolve_ags([], question=question) if workspace else []
+        scope_conflict = bool(explicit_ids and named_ids and set(explicit_ids) != set(named_ids))
+        state, clarification = resolve(
+            question, parent, explicit_ids or named_ids, data.reference_year
+        )
+        if named_ids:
+            state["events"].append({"kind": "AUTHORITATIVE_FRAME_RESOLUTION", "ids": named_ids})
+        if scope_conflict:
+            clarification = (
+                "Frage und Gemeindefilter nennen unterschiedliche Gemeinden. Welche gilt?"
+            )
+        scope = state["scope"]
+        inherited = bool(
+            parent and not explicit_ids and not named_ids and scope["municipality_ids"]
+        )
+        effective = state["effective_question"]
         if parent and words(question) <= {"leistung", "jahr", "wann", "wieviel", "umfang"}:
-            effective += " " + parent["question"]
+            effective = question + " " + state["topic_question"]
+            state["effective_question"] = effective
+        from crawler.web.research_workbench import capabilities
+
+        if data.mode and data.mode.value not in {
+            m["id"] for m in capabilities(self.service) if m["available"]
+        }:
+            raise HTTPException(422, "Method unavailable for active snapshot")
+        selected_mode, query_plan = plan(effective, data.mode, self.service.retriever)
         result = dict(
             schema=SCHEMA,
+            conversation_state=state,
+            query_plan=query_plan,
             turn_id=secrets.token_hex(16),
             conversation_id=cid,
             parent_turn_id=data.parent_turn_id,
@@ -288,6 +300,14 @@ class ConversationEngine:
             inherited_scope=inherited,
             effective_question=effective,
             dataset_snapshot=self.store.snapshot,
+            research_composition=getattr(
+                self.service,
+                "workbench_binding",
+                {
+                    "corpus_class": "SYNTHETIC" if self.service.demo_mode else "UNBOUND",
+                    "snapshot": self.store.snapshot,
+                },
+            ),
             generation_provider="deterministic_extractive",
             model_version=PROMPT,
             prompt_version=PROMPT,
@@ -300,22 +320,19 @@ class ConversationEngine:
             trace=None,
             graph={"nodes": [], "edges": []},
         )
-        if not clarification:
+        if not clarification and not state["unresolved_place"]:
             if not self.lock.acquire(blocking=False):
                 raise HTTPException(429, "Research worker busy; retry later")
             try:
                 payload = self.service.execute(
                     QueryOptions(
                         question=effective,
-                        mode=data.mode
-                        or (
-                            RetrievalMode.GRAPH
-                            if re.search(r"\bwer\b.*(?:plant|erstellt|betreibt)", question, re.I)
-                            else RetrievalMode.SEMANTIC
-                        ),
+                        mode=selected_mode,
                         generate_answer=False,
-                        municipality_ids=(),
-                        reference_year=None,
+                        municipality_ids=(
+                            () if self.service.demo_mode else tuple(scope["municipality_ids"])
+                        ),
+                        reference_year=None if self.service.demo_mode else scope["reference_year"],
                         top_k=8,
                         max_evidence_items=8,
                         max_evidence_characters=24000,
@@ -323,6 +340,11 @@ class ConversationEngine:
                 )
             finally:
                 self.lock.release()
+            state["retrieval_filter_policy"] = (
+                "FIXTURE_POSTFILTER_ONLY_TOPK_NOT_COMPLETE"
+                if self.service.demo_mode
+                else "SCOPE_BOUND_IN_RETRIEVAL_REQUEST"
+            )
             result["method_trace_id"] = payload["result_id"]
             result["trace"] = payload
             for e in payload["evidence"][:8]:
@@ -338,9 +360,29 @@ class ConversationEngine:
                 # Unknown original-body hashes stay unknown; passage hashes are a separate identity.
                 anchor = dict(
                     evidence_id=e["evidence_id"],
+                    document_id=e["document"]["document_id"],
+                    source_url=e["document"]["source_url"],
+                    source_id=e["source_id"],
+                    segment_id=e["segment_id"],
+                    chunk_id=e["chunk_id"],
+                    extraction_run_ids=e["extraction_run_ids"],
+                    graph_artifact_ids=e["graph_artifact_ids"],
+                    database_snapshot_id=e["database_snapshot_id"],
                     citation=e["citation"],
-                    source_sha256=None,
-                    source_sha256_status="NOT_AVAILABLE_IN_CONTRACT",
+                    source_sha256=(
+                        e["document"]["document_id"].split(":", 1)[1]
+                        if re.fullmatch(
+                            r"source-version:[a-f0-9]{64}", e["document"]["document_id"]
+                        )
+                        else None
+                    ),
+                    source_sha256_status=(
+                        "DOCUMENT_VERSION_HASH"
+                        if re.fullmatch(
+                            r"source-version:[a-f0-9]{64}", e["document"]["document_id"]
+                        )
+                        else "NOT_AVAILABLE_IN_CONTRACT"
+                    ),
                     passage_sha256=digest(text),
                     quote=text,
                     offset_start=0,
@@ -370,7 +412,9 @@ class ConversationEngine:
                 partial = bool(
                     re.search(r"\bund\b|aktuell|heute|vergleich|warum|wirkung", question, re.I)
                 )
-                result["answer_status"] = "PARTIAL" if partial else "ANSWERED"
+                result["answer_status"] = (
+                    "PARTIAL" if partial or not self.service.demo_mode else "ANSWERED"
+                )
                 result["answer"] = "\n".join(c["text"] for c in result["claims"])
                 if partial:
                     result["missing_aspects"] = [
@@ -404,16 +448,71 @@ class ConversationEngine:
                 result["missing_aspects"] = [
                     "Keine zum gefragten Aspekt passende Quellenpassage qualifiziert."
                 ]
+        if self.generation and result["claims"]:
+            from crawler.web.conversation_generation import PROMPT as GENERATION_PROMPT
+            from crawler.web.conversation_generation import synthesize
+
+            result["generation_provider"] = self.generation["metadata"]["provider"]
+            result["prompt_version"] = GENERATION_PROMPT
+            result["model_version"] = self.generation["metadata"]["model"]
+            result["generation_configuration"] = dict(self.generation["metadata"])
+            if not self.lock.acquire(blocking=False):
+                raise HTTPException(429, "Research worker busy")
+            try:
+                generated, receipt = synthesize(
+                    self.generation["provider"],
+                    self.generation["metadata"]["model"],
+                    effective,
+                    result["claims"],
+                )
+                result["generation_receipt"] = receipt
+                result["claims"] = generated
+                result["missing_aspects"] = [
+                    "Semantische Tragfähigkeit und vollständige Aspektabdeckung "
+                    "nicht unabhängig geprüft."
+                ]
+                generated_ids = {e["evidence_id"] for c in generated for e in c["evidence"]}
+                result["graph"]["edges"] = [
+                    e
+                    for e in result["graph"].get("edges", [])
+                    if set(e.get("evidence_ids", [])) <= generated_ids
+                ]
+                retained_ids = {
+                    n for e in result["graph"]["edges"] for n in (e["source"], e["target"])
+                }
+                result["graph"]["nodes"] = [
+                    n for n in result["graph"].get("nodes", []) if n["id"] in retained_ids
+                ]
+                result["answer"] = "\n".join(c["text"] for c in generated)
+                result["answer_status"] = "PARTIAL" if generated else "INSUFFICIENT_EVIDENCE"
+                if not generated:
+                    result["answer"] = "Das Modell konnte keine beleggebundene Antwort formulieren."
+            except Exception:
+                result["claims"] = []
+                result["graph"] = {"nodes": [], "edges": []}
+                result["answer_status"] = "ERROR"
+                result["answer"] = "Generierung fehlgeschlagen; keine Modellantwort freigegeben."
+                result["generation_receipt"] = {"status": "FAILED", "fallback": False}
+            finally:
+                self.lock.release()
         result["finished_at_utc"] = now()
         result["elapsed_seconds"] = time.perf_counter() - started
         result["implementation_file_sha256"] = hashlib.sha256(
             Path(__file__).read_bytes()
         ).hexdigest()
+        if experiment:
+            result["comparison"] = experiment
+        result["validation_status"] = "UNVALIDATED"
+        result["generation_label"] = (
+            "Extraktive Baseline · wörtliche Quellenbelege, keine LLM-Synthese"
+            if not self.generation
+            else "Optionale qualifizierte LLM-Synthese"
+        )
         self.store.save(owner, cid, result)
         return result
 
 
-def create_conversation_app(service=None, directory=None):
+def create_conversation_app(service=None, directory=None, generation=None):
     """Loopback-only composition. External deployment requires a separate reviewed gateway."""
     if directory is None:
         directory = Path("generated/conversational-local")
@@ -429,7 +528,16 @@ def create_conversation_app(service=None, directory=None):
             else create_fixture_service(fixture_dir)
         )
     store = ChatStore(directory, service.database_snapshot_id)
-    engine = ConversationEngine(service, store)
+    if generation:
+        metadata = generation["metadata"]
+        if (
+            metadata.get("qualification") != "EXPLICITLY_QUALIFIED"
+            or metadata.get("execution") != "local"
+            or not metadata.get("qualification_artifact")
+            or not metadata.get("digest")
+        ):
+            raise ValueError("Explicit local model qualification and digest required")
+    engine = ConversationEngine(service, store, generation)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_store, app.state.chat_engine = store, engine
     app.state.research_service = service
@@ -446,9 +554,9 @@ def create_conversation_app(service=None, directory=None):
             return JSONResponse({"error": "local_same_origin_only"}, status_code=403)
         if request.method in {"POST", "DELETE", "PUT", "PATCH"}:
             session = store.session(request.cookies.get("klima_chat"))
-            if not session or not hmac.compare_digest(
-                request.headers.get("x-csrf-token", ""), session["csrf"]
-            ):
+            if not session:
+                return JSONResponse({"error": "session_expired"}, status_code=401)
+            if not hmac.compare_digest(request.headers.get("x-csrf-token", ""), session["csrf"]):
                 return JSONResponse({"error": "csrf_or_session_required"}, status_code=403)
             body = b""
             async for part in request.stream():
@@ -467,6 +575,14 @@ def create_conversation_app(service=None, directory=None):
                 "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
             }
         )
+        if (
+            request.url.path.startswith("/api/chat/conversations/")
+            and "/original/" in request.url.path
+        ):
+            response.headers["Content-Security-Policy"] = (
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            )
         return response
 
     def actor(request):
@@ -494,18 +610,23 @@ def create_conversation_app(service=None, directory=None):
     def bootstrap(request: Request):
         token = request.cookies.get("klima_chat")
         s = store.session(token)
-        if token and not s:
-            raise HTTPException(401, "Expired session; clear local site data")
+        created = not s
+        recovered = bool(token and created)
         if not s:
             token, s = store.create_session()
         response = JSONResponse(
             {
                 "csrf": s["csrf"],
+                "recovered": recovered,
+                "created": created,
                 "schema": SCHEMA,
                 "snapshot": store.snapshot,
                 "fixture": service.demo_mode,
+                "corpus_binding": getattr(service, "workbench_binding", None),
                 "notice": service.demo_notice,
-                "provider": "deterministic_extractive",
+                "provider": (
+                    generation["metadata"]["provider"] if generation else "deterministic_extractive"
+                ),
                 "retention": (
                     "Session 24h; logical deletion on expiry/logout or explicit delete; "
                     "backups excluded"
@@ -533,14 +654,23 @@ def create_conversation_app(service=None, directory=None):
         return response
 
     @app.get("/api/chat/conversations")
-    def chats(request: Request):
+    def chats(request: Request, q: str = ""):
         owner = actor(request)
+        if len(q) > 200:
+            raise HTTPException(422, "Bounded search required")
         with store.conn() as c:
+            c.create_function("casefold", 1, lambda value: str(value or "").casefold())
             return [
                 dict(r)
                 for r in c.execute(
-                    "SELECT id,at FROM chats WHERE owner=? AND snapshot=? ORDER BY at DESC",
-                    (owner, store.snapshot),
+                    "SELECT id,at,(SELECT json_extract(payload,'$.question') FROM turns t "
+                    "WHERE t.chat=chats.id AND t.owner=chats.owner ORDER BY at,id LIMIT 1) title "
+                    "FROM chats WHERE owner=? AND snapshot=? AND (?='' OR EXISTS ("
+                    "SELECT 1 FROM turns t WHERE t.chat=chats.id AND t.owner=chats.owner AND "
+                    "(instr(casefold(json_extract(payload,'$.question')),casefold(?))>0 OR "
+                    "instr(casefold(json_extract(payload,'$.answer')),casefold(?))>0))) "
+                    "ORDER BY at DESC",
+                    (owner, store.snapshot, q, q, q),
                 )
             ]
 
@@ -576,16 +706,7 @@ def create_conversation_app(service=None, directory=None):
     @app.post("/api/chat/conversations/{cid}/turns")
     async def ask(cid: str, data: TurnInput, request: Request):
         owner = actor(request)
-        for key in list(rate):
-            if not rate[key] or time.monotonic() - rate[key][-1] >= 60:
-                rate.pop(key)
-        if owner not in rate and len(rate) >= 256:
-            raise HTTPException(429, "Active query budget reached")
-        recent = rate.setdefault(owner, [])
-        recent[:] = [t for t in recent if time.monotonic() - t < 60]
-        if len(recent) >= 12:
-            raise HTTPException(429, "12 turns per minute; retry later")
-        recent.append(time.monotonic())
+        charge(owner)
         try:
             return await asyncio.wait_for(
                 run_in_threadpool(engine.answer, owner, cid, data), timeout=20
@@ -594,6 +715,22 @@ def create_conversation_app(service=None, directory=None):
             raise HTTPException(
                 504, "Timeout; worker may still finish and preserve this turn"
             ) from exc
+
+    def charge(owner, count=1):
+        for key in list(rate):
+            if not rate[key] or time.monotonic() - rate[key][-1] >= 60:
+                rate.pop(key)
+        if owner not in rate and len(rate) >= 256:
+            raise HTTPException(429, "Active query budget reached")
+        recent = rate.setdefault(owner, [])
+        recent[:] = [t for t in recent if time.monotonic() - t < 60]
+        if len(recent) + count > 12:
+            raise HTTPException(429, "12 method executions per minute; retry later")
+        recent.extend([time.monotonic()] * count)
+
+    from crawler.web.research_workbench import attach_workbench
+
+    attach_workbench(app, store, engine, actor, charge)
 
     @app.get("/api/chat/conversations/{cid}/export")
     def export(cid: str, request: Request):
@@ -609,6 +746,14 @@ def create_conversation_app(service=None, directory=None):
             raise HTTPException(422, "Known feedback required")
         store.budget()
         with store.conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if not c.execute(
+                "SELECT 1 FROM turns t JOIN chats ch ON ch.id=t.chat AND ch.owner=t.owner "
+                "WHERE t.id=? AND t.owner=? AND ch.id=? AND ch.snapshot=? "
+                "AND EXISTS (SELECT 1 FROM sessions WHERE owner=? AND expires>?)",
+                (tid, owner, cid, store.snapshot, owner, time.time()),
+            ).fetchone():
+                raise HTTPException(410, "Conversation deleted or expired; feedback not saved")
             c.execute(
                 "INSERT INTO feedback VALUES(?,?,?,?,?)",
                 (secrets.token_hex(16), owner, tid, now(), value),
@@ -626,16 +771,69 @@ def create_conversation_app(service=None, directory=None):
                         return anchor
         raise HTTPException(404, "Evidence unavailable")
 
+    @app.get("/api/chat/conversations/{cid}/original/{tid}/{eid}")
+    def original(cid: str, tid: str, eid: str, request: Request):
+        from crawler.web.workbench_runtime import original_for_anchor
+
+        anchor = evidence(cid, tid, eid, request)
+        if service.demo_mode or not getattr(service, "workbench_binding", None):
+            raise HTTPException(404, "No archived municipal original in synthetic composition")
+        body, media, filename = original_for_anchor(service, anchor)
+        return Response(
+            body,
+            media_type=media,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "X-Original-SHA256": anchor["source_sha256"],
+            },
+        )
+
+    from crawler.web.conversation_workspaces import settings, visualization
+
+    @app.get("/api/chat/settings")
+    def active_settings(request: Request):
+        actor(request)
+        from crawler.web.research_workbench import capabilities
+
+        config = settings(
+            store.snapshot, service.demo_mode, generation["metadata"] if generation else None
+        )
+        config["retrieval_ranking"]["methods"] = capabilities(service)
+        config["corpus_binding"] = getattr(service, "workbench_binding", None)
+        config["corpus_class"] = "SYNTHETIC" if service.demo_mode else "REAL_LOCAL_RESEARCH"
+        return config
+
+    @app.get("/api/chat/conversations/{cid}/visualization/{tid}")
+    def chart_data(cid: str, tid: str, request: Request):
+        turn = next((t for t in store.turns(actor(request), cid) if t["turn_id"] == tid), None)
+        if turn is None:
+            raise HTTPException(404, "Turn unavailable")
+        return visualization(turn)
+
     app.mount("/static", StaticFiles(directory=ASSETS), name="static")
 
     @app.get("/")
     @app.get("/research")
+    @app.get("/compare")
+    @app.get("/experiments")
+    @app.get("/graph")
+    @app.get("/visualizations")
+    @app.get("/settings")
+    @app.get("/coverage")
     def index():
         return FileResponse(ASSETS / "conversation.html")
 
     @app.get("/validation")
     def validation():
+        return FileResponse(ASSETS / "local_validation.html")
+
+    @app.get("/validation/protocol")
+    def independent_validation():
         return FileResponse(ASSETS / "conversation_validation.html")
+
+    from crawler.web.local_annotations import attach_local_notes
+
+    attach_local_notes(app, store, actor)
 
     from crawler.web.conversation_review import attach_conversation_review
 
@@ -662,6 +860,16 @@ def create_conversation_app(service=None, directory=None):
         technical=service.demo_mode,
         sources=app.state.review_sources,
     )
+    if service.demo_mode:
+        from crawler.web.conversation_demo import attach_demo_review
+
+        attach_demo_review(
+            app,
+            directory / "review",
+            app.state.conversation_review,
+            app.state.review_sources,
+            store,
+        )
     return app
 
 

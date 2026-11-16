@@ -1,0 +1,18 @@
+{
+  "schema": "SYNTHETIC_QUEUE_LOAD_V1",
+  "technical": true,
+  "human_gold": false,
+  "judgments": 0,
+  "objects": 400,
+  "page": 50,
+  "setup_seconds": 0.013519583008019254,
+  "queue_seconds": 0.005201166000915691,
+  "v1_queue_seconds_same_database": 4.447874959005276,
+  "database_sha256_before_after": "8777e38a1aa1d02014a1834ca8ea483e162779654d1de4ef965fa28aae7f34e2",
+  "protocol_sha256": "2169de9052552f06094eaf6e7c087d0746bfe00ba8593045209f836f5b92b900",
+  "scope": "repeated technical units, not documents or reviewer time",
+  "reference_status": "SYNTHETIC_MECHANICAL_NO_HUMAN_LABELS",
+  "baseline_commit": "0483eef9d8bb9c37559d8dcee0e0b06449d9a394",
+  "snapshot": "queue-load-fixture-v1",
+  "measurement_design": "one paired engineering observation, identical DB and returned queue, not a population latency estimate"
+}

@@ -15,10 +15,9 @@ from collections import Counter
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from research.experiments.e2_offline_20261024.kit.vendor import lexical
-
 from research.bavaria.federation import source_connection
 from research.bavaria.workspace.core import norm, roots
+from research.experiments.e2_offline_20261024.kit.vendor import lexical
 
 # Explicit exploratory query rules, never part of the frozen streaming baseline.
 LOCAL_EXPANSION = {
@@ -75,9 +74,11 @@ def binding(w):
 
 
 class LocalIndex:
-    def __init__(self, workspace, path):
+    def __init__(self, workspace, path, *, build_if_missing=True):
         self.workspace, self.path = workspace, Path(path).resolve()
         if not self.path.exists():
+            if not build_if_missing:
+                raise FileNotFoundError("Existing term index required; build disabled")
             self.build()
         with self.conn() as c:
             metadata = json.loads(

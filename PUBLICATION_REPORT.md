@@ -31,3 +31,27 @@ Offen: Nachweis der Rechte am lokal gelieferten E1-Kit für sechs Vendor-Dateien
 ## Hosted-CI-Korrektur
 
 Erster PR-Lauf [43729293811](https://github.com/Sven-Lutz/Klima_GraphRAG/actions/runs/43729293811): **FAIL**, Exit 4 bei Testauswahl. Ein aus macOS übernommener parametrischer Node-ID enthielt EADDRINUSE=48 statt Linux=98. Nur der Selektor in tests/public-tests.txt wurde auf die gesamte vorhandene Testfunktion umgestellt; beide unveränderten Parameterfälle werden ausgeführt. Keine Assertion oder fachliche Prüfung entfernt. Neuer Hosted-Lauf nach diesem Commit wird separat ausgewiesen.
+
+
+## Conversational V2 delta (16.11.2026)
+
+Public V1 base 0483eef9d8bb9c37559d8dcee0e0b06449d9a394. Architecture commit 729f55c; implementation d951d7e plus generation-audit binding 1e75042. Separate V2 own-code/MIT-library scope; no E1, original corpus, model weights, real accounts or Human labels. Canonical current limitations/results: docs/product/V2_QA_REPORT.md and V2_CHECKS.json. Historical intermediate receipt (superseded by final source receipt below): prior local full snapshot 414 PASS / 6 SKIP; latest full attempt 400 PASS / 7 FAIL / 8 ERROR / 6 SKIP at unchanged disk reserve gates. Current pure V2 contracts 22 PASS / 3 store cases deselected. No current complete local PASS, running server, qualified LLM or full programme completion. Hosted CI is checked separately after the authorized feature push. Historical numbers above remain historical.
+
+
+V2 Hosted-Zwischenstand: Run 44 am a324496 hat die saubere Linux-Installation, 422 PASS / 6 SKIP, statische/wissenschaftliche Checks und V1-Chrome bestätigt, scheiterte aber an der kleinen V2-Displayhöhe. Be0daf7 korrigiert das Layout; isolierte statische Layoutprüfung 18/18 PASS. Aktuelle reine V2-Verträge 23 PASS / 3 Storefälle abgewählt. Neuer Gesamt-Hosted-Status wird separat ausgewiesen; kein Grün aus dem fehlgeschlagenen Run abgeleitet.
+
+
+V2 Ressourcenwiederherstellung: der lokale Server läuft wieder ohne Gateänderung. Integrierter öffentlicher Lauf 427 PASS / 6 SKIP (12,54 s), vollständiger Chrome-Workflow einschließlich geöffneter mobiler Original-/Auditansicht PASS. Eine weitere atomare Löschregression besteht; finale Clean-Checkout-/Hosted-Nachweise folgen getrennt. Neuer Reviewer-Queuepfad ist paginiert, per-unit Enums bleiben getrennt, und 400 synthetische Objekte ohne Urteile wurden auf demselben unveränderten DB-Hash mit identischem Queueergebnis geprüft. Keine neue fachliche Accuracy, kein Human-Gold- oder Graphformatvorteil.
+
+Final source 00847c1: 431 PASS / 6 SKIP (7.82 s), zero failed/error; final V2 Chrome workflow PASS. Prior storage and hosted failures remain historical negative receipts, not the current local state. Clean reproduction and final hosted status are reported separately. No LLM inference, independent human labels or public original-corpus integration.
+
+
+## Research Workbench reorientation — current delta
+
+P0 session recovery, primary method choice/compare and account-free local notes implemented on V2. E1 code origin clarified by owner statement; six original code files restored with exact hashes and provenance record, no relabelled replacement. Real existing municipal corpus, FTS/dense indexes and resident ONNX encoder run locally read-only; no source/index changes, rebuild, model download or public original-data upload. Public suite 439 PASS / 6 SKIP (10.43 s); fresh source checkout checked separately. Synthetic and actual private real-source Chrome journeys pass, including owner-scoped hash-verified archived original; zero real human labels. Native graph extra-information confound explicit; no winner or independent answer quality inferred. Public source-only scan of this delta: 328,181 bytes, zero leaks. Current detailed acceptance: WORKBENCH_REORIENTATION.md and V2_QA_REPORT.md. Private real outputs never included in CI artifact paths. Final head CI is linked in PR19, without circular metadata commits.
+
+Workbench test-boundary re-audit: 197 formerly import-blocked technical cases reinstated after actual execution; 12 concrete missing-CANDIDATE_FACTS cases remain excluded. Expanded selection **636 PASS / 6 SKIP (23.59 s)**; raw audit **197 PASS / 12 FAIL**, no assertion weakening. Pinned Protego 0.7.0 added only for reproducible imports/fixtures, no crawl. Final public-only fresh environment and head CI are separately reported.
+
+Fresh public-boundary correction: the intermediate 636-owner run depended on five unchanged BM25 tests reading private-only git object b84db20. Fresh run: 631 PASS / 5 FAIL / 6 SKIP (21.80 s). Those five exact node IDs now have an explicit nonpublic-history exclusion; no private history/function substituted or published, no assertion weakened. Self-contained reinstated cases: 192. Current final public denominator is reported separately below.
+
+Current final public selection at 5bd258e: **631 PASS / 6 SKIP**, fresh public-only venv **20.47 s**, owner environment **23.14 s**. Static/compile/pip checks PASS. This supersedes the intermediate 636-owner-only boundary; failure receipts remain above.
