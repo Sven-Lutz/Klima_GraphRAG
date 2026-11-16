@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--legacy", action="store_true", help="Open the earlier research workbench")
     parser.add_argument("--directory", default="generated/conversational-local")
+    parser.add_argument("--answer-config", help="Explicit qualified local Ollama JSON; no fallback")
     args = parser.parse_args()
     if args.fixture:
         os.environ["KLIMA_UI_FIXTURE"] = "1"
@@ -26,7 +27,14 @@ def main() -> None:
 
         if args.host not in {"127.0.0.1", "localhost", "::1"}:
             parser.error("Conversational preview is loopback-only; external acceptance is separate")
-        app = create_conversation_app(None if args.fixture else _default_service(), args.directory)
+        generation = None
+        if args.answer_config:
+            from crawler.web.conversation_provider import load_generation
+
+            generation = load_generation(args.answer_config)
+        app = create_conversation_app(
+            None if args.fixture else _default_service(), args.directory, generation=generation
+        )
         uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 

@@ -81,6 +81,14 @@ def attach_conversation_review(app, directory, snapshot, *, technical, sources):
             e["role"] == who for e in protocol._events("original_opened", oid)
         ):
             raise HTTPException(422, "Open the bound original before submitting")
+        seconds = data.get("form", {}).get("interaction_seconds")
+        if seconds is not None:
+            if type(seconds) is not int or not 0 <= seconds <= 86400:
+                raise HTTPException(422, "Bounded interaction duration required")
+            call(protocol._event, who, oid, "interaction_timing", {
+                "seconds": seconds, "semantics": "SELF_REPORTED_UI_TIME_NOT_READING_PROOF",
+                "draft": bool(data.get("draft")),
+            })
         account = protocol.account(who)
         method = protocol.adjudicate if account["role"] == "adjudicator" else protocol.save
         if account["role"] == "adjudicator" and data.get("draft"):

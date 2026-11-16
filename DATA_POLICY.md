@@ -11,3 +11,6 @@ Private Originalarchive, Corpus-/Indexdateien, echte Review-/Annotator-Daten, To
 Eigene kurze numerische Aggregatberichte enthalten keine Quellenpassagen oder Personenurteile. Publizierte Aggregationen weisen die Grenzen fehlender Rohdaten und nicht unabhängig validierter Labels aus. Die veröffentlichten Test-Fixtures sind erfunden oder kleine gezielt formulierte technische Regressionen; reale Ortsnamen in solchen Fällen machen sie nicht zu authentischen Quellen oder Gold.
 
 Neue Daten benötigen vor Einchecken Herkunft, exakten Umfang, Lizenz-/Privacy-Nachweis und Provenienz. Öffentlich abrufbar bedeutet nicht frei redistribuierbar. Ungeklärte Artefakte bleiben lokal erhalten und werden in der Ausschlussliste begründet.
+
+
+V2 ergänzt markdown-it 14.1.0 aus dem öffentlichen npm-Paket als lokale Browserabhängigkeit. Originales MIT-Copyright und Lizenz liegen unverändert unter crawler/web/static/vendor/MARKDOWN-IT-LICENSE.txt; diese Datei ist keine eigene Implementierung. Kein E1-Code wurde ersetzt oder neu lizenziert. Neue Coverage-/Modellberichte enthalten ausschließlich eigene Bestandsmetadaten, keine kommunalen Textpassagen, Gewichte oder persönlichen Reviewdaten.

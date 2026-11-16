@@ -22,6 +22,12 @@
         Persönliche Erst-/Zweitprüfung bleiben getrennt. Öffnen allein beweist
         kein Lesen. Technische Tests und Chatfeedback erzeugen kein Human Gold.
       </p>
+      <div id="review-demo" hidden>
+        <p>Synthetische Bedienprobe ohne Human Gold. Keine Urteile werden automatisch erzeugt.</p>
+        <button type="button" data-demo="demo-a">Demo-Prüfkonto A</button>
+        <button type="button" data-demo="demo-b">Demo-Prüfkonto B</button>
+        <button type="button" data-demo="demo-adjudicator">Demo-Adjudikation</button>
+      </div>
       <form id="review-login">
         <label
           >Prüfkonto<input
@@ -44,12 +50,13 @@
             >Queue filtern<input
               id="review-filter"
               placeholder="Suchbegriff" /></label
-          ><button id="review-refresh">Queue laden</button>
+          ><button id="review-refresh">Queue laden</button><button id="review-back" type="button">Vorheriger Fall</button>
           <ul id="review-queue"></ul>
         </aside>
         <section id="review-case" hidden>
           <h2 id="review-title"></h2>
           <p id="review-kind"></p>
+          <p id="review-guide"></p>
           <p id="review-proposal"></p>
           <button id="review-open-original">Gebundenes Original öffnen</button>
           <blockquote id="review-original" tabindex="0"></blockquote>
@@ -66,7 +73,13 @@
                 <option>AMBIGUOUS</option>
                 <option>NEEDS_FURTHER_REVIEW</option>
               </select></label
-            ><label
+            ><details id="review-dimensions"><summary>Claim-Dimensionen separat prüfen</summary>
+              <label>Inhalt getragen<select data-metric="supported"><option value="">Nicht beurteilt</option><option value="true">Ja</option><option value="false">Nein</option></select></label>
+              <label>Zitat korrekt<select data-metric="citation_correct"><option value="">Nicht beurteilt</option><option value="true">Ja</option><option value="false">Nein</option></select></label>
+              <label>Gemeinde/Geltung korrekt<select data-metric="scope_correct"><option value="">Nicht beurteilt</option><option value="true">Ja</option><option value="false">Nein</option></select></label>
+              <label>Zeit korrekt<select data-metric="temporal_valid"><option value="">Nicht beurteilt</option><option value="true">Ja</option><option value="false">Nein</option></select></label>
+              <label>Unbelegte Behauptung<select data-metric="hallucinated"><option value="">Nicht beurteilt</option><option value="true">Ja</option><option value="false">Nein</option></select></label>
+            </details><label
               >Begründung / fehlende Aspekte<textarea
                 id="review-comment"
                 required
@@ -93,7 +106,7 @@
         </section>
       </div>
       <p>
-        Strg/⌘+S: Entwurf. Nach Abgabe unveränderlich; keine Sammelvalidierung.
+        Alt+1–6: Urteil wählen. Automatische Entwurfssicherung; Strg/⌘+S: sofort speichern. Nach Abgabe unveränderlich; keine Sammelvalidierung.
         Labels „Missing/Unknown“ bleiben unbewertet und sind keine negativen
         Fakten.
       </p>

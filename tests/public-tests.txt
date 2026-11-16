@@ -379,3 +379,4 @@ tests/test_worker_database_config.py::test_worker_module_imports
 tests/test_worker_database_config.py::test_worker_passes_one_database_to_engine_and_job_claiming
 tests/test_worker_database_config.py::test_worker_rejects_missing_selected_database
 tests/test_conversation.py
+tests/test_conversation_v2.py

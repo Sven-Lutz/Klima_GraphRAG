@@ -40,3 +40,12 @@ python -m crawler.web --fixture --directory generated/chat-demo --port 8825
 ```
 
 Öffnet die lokale synthetische Chatkomposition auf http://127.0.0.1:8825, sofern die unveränderte Speicherreserve erfüllt ist. Chat, Research und Validation bleiben getrennte Arbeitsräume. [Technische Übergabe und echte Grenzen](docs/product/CONVERSATIONAL_RESEARCH_HANDOFF.md), [Paper-Dossier](docs/paper/RESEARCH_DOSSIER.md). Keine neue fachliche Accuracy-/UX-Überlegenheit und kein externer Preview-Zugang behauptet. Vollcorpusintegration bleibt wegen E1-/Datenrechten eingeschränkt.
+
+
+## Conversational Research v2 (gestapelter Entwicklungsstand)
+
+```bash
+.venv/bin/python -m crawler.web --fixture --directory generated/chat-v2 --port 8825
+```
+
+Chat, eigener Antwortgraph, beleggebundene Einzelwerte/Datentabellen, Settings, Coverage-Status und direkt nutzbare synthetische Reviewqueues. **Erfundene technische Quellen, keine echte kommunale Recherche; kein qualifiziertes LLM aktiviert.** Start benötigt unverändert mindestens 15 GiB + 64 MiB freien Platz. Der letzte lokale Neustart wurde am Speichergate blockiert. [Ist-Architektur und Planung](docs/product/CONVERSATIONAL_V2.md), [Protokolle](docs/product/V2_PROTOCOLS.md), [aktueller QA-/Abnahmebericht mit echten FAIL/ERROR](docs/product/V2_QA_REPORT.md). V2 ist noch kein abgeschlossener Vollrelease.

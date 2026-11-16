@@ -3,10 +3,19 @@
 import csv
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PAPER = ROOT / "docs/paper"
+
+
+def bound_bytes(row, path):
+    ref = row.get("source_commit", "")
+    if ref:
+        assert re.fullmatch(r"[0-9a-f]{40}", ref)
+        return subprocess.check_output(["git", "-C", str(ROOT), "show", ref + ":" + path])
+    return (ROOT / path).read_bytes()
 
 
 def main():
@@ -28,13 +37,15 @@ def main():
     for row in csv.DictReader((PAPER / "ARTIFACT_MANIFEST.tsv").open(), delimiter="\t"):
         p = (ROOT / row["path"]).resolve()
         assert p.is_relative_to(ROOT) and p.is_file()
-        assert hashlib.sha256(p.read_bytes()).hexdigest() == row["sha256"], row["path"]
+        assert hashlib.sha256(bound_bytes(row, row["path"])).hexdigest() == row["sha256"], row[
+            "path"
+        ]
     claims = list(csv.DictReader((PAPER / "CLAIM_EVIDENCE_REGISTER.csv").open()))
     assert len({r["claim_id"] for r in claims}) == len(claims)
     for row in claims:
         assert row["status"] in {"VERIFIED", "PROVISIONAL", "NOT_EVALUATED", "CONTRADICTED"}
         assert row["independent_human_validation"] == "false"
-        assert hashlib.sha256((ROOT / row["source"]).read_bytes()).hexdigest() == row["sha256"]
+        assert hashlib.sha256(bound_bytes(row, row["source"])).hexdigest() == row["sha256"]
     for row in csv.DictReader((PAPER / "EXPERIMENT_MATRIX.csv").open()):
         if row["stage"] == "FUTURE EXPERIMENT":
             assert row["result"] == "NOT_EVALUATED" and row["reproduction_status"] == "NOT_EXECUTED"

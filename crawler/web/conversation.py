@@ -26,9 +26,11 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from crawler.core.retrieval import RetrievalMode
+from crawler.web.conversation_planning import plan
+from crawler.web.conversation_state import resolve
 from crawler.web.service import QueryOptions
 
-SCHEMA = "conversational-research-v1"
+SCHEMA = "conversational-research-v2"
 PROMPT = "verbatim-qualification-v1"
 RESERVE = 15 * 1024**3
 LIMIT = 64 * 1024**2
@@ -219,8 +221,9 @@ class ClosingConnection:
 
 
 class ConversationEngine:
-    def __init__(self, service, store):
+    def __init__(self, service, store, generation=None):
         self.service, self.store = service, store
+        self.generation = generation
         self.lock = threading.Lock()
 
     def answer(self, owner, cid, data):
@@ -232,50 +235,18 @@ class ConversationEngine:
         question = data.question.strip()
         if not question:
             raise HTTPException(422, "Nonempty question required")
-        scope = {
-            "municipality_ids": data.municipality_ids,
-            "reference_year": data.reference_year,
-            "source_ids": [],
-        }
-        inherited = False
-        clarification = None
-        if parent:
-            previous = parent["context_scope"]
-            if (
-                not data.municipality_ids
-                and previous["municipality_ids"]
-                and re.search(r"\b(?:in|für)\s+[A-ZÄÖÜ][a-zäöüß]+", question)
-            ):
-                clarification = (
-                    "Bitte den Ort der Anschlussfrage explizit bestätigen; "
-                    "keine stille Scope-Übernahme."
-                )
-            if (
-                not data.reference_year
-                and previous["reference_year"]
-                and any(
-                    y != str(previous["reference_year"])
-                    for y in re.findall(r"\b(?:19|20)\d{2}\b", question)
-                )
-            ):
-                clarification = "Neuer Zeitbezug: Welches Bezugsjahr soll gelten?"
-            scope["municipality_ids"] = data.municipality_ids or previous["municipality_ids"]
-            scope["reference_year"] = data.reference_year or previous["reference_year"]
-            inherited = not data.municipality_ids and bool(previous["municipality_ids"])
-            if re.search(r"ander\w* gemeinde|ander\w* ort|anderswo", question, re.I):
-                clarification = (
-                    "Welche andere Gemeinde meinen Sie? Bitte Ort oder Gemeinde-ID angeben."
-                )
-        # Bare deictic follow-ups need a real parent, never a guessed municipality.
-        if not parent and re.match(r"^(und |dort|dazu|wie viel davon)", question, re.I):
-            clarification = "Auf welche Frage und Gemeinde beziehen Sie sich?"
-        if not parent and words(question) <= {"leistung", "jahr", "wann", "umfang"}:
-            clarification = "Auf welche Quelle, Gemeinde und vorherige Frage beziehen Sie sich?"
-        effective = question
+        state, clarification = resolve(question, parent, data.municipality_ids, data.reference_year)
+        scope = state["scope"]
+        inherited = bool(parent and not data.municipality_ids and scope["municipality_ids"])
+        effective = state["effective_question"]
         if parent and words(question) <= {"leistung", "jahr", "wann", "wieviel", "umfang"}:
-            effective += " " + parent["question"]
+            effective = question + " " + state["topic_question"]
+            state["effective_question"] = effective
+        selected_mode, query_plan = plan(effective, data.mode, self.service.retriever)
         result = dict(
             schema=SCHEMA,
+            conversation_state=state,
+            query_plan=query_plan,
             turn_id=secrets.token_hex(16),
             conversation_id=cid,
             parent_turn_id=data.parent_turn_id,
@@ -300,22 +271,19 @@ class ConversationEngine:
             trace=None,
             graph={"nodes": [], "edges": []},
         )
-        if not clarification:
+        if not clarification and not state["unresolved_place"]:
             if not self.lock.acquire(blocking=False):
                 raise HTTPException(429, "Research worker busy; retry later")
             try:
                 payload = self.service.execute(
                     QueryOptions(
                         question=effective,
-                        mode=data.mode
-                        or (
-                            RetrievalMode.GRAPH
-                            if re.search(r"\bwer\b.*(?:plant|erstellt|betreibt)", question, re.I)
-                            else RetrievalMode.SEMANTIC
-                        ),
+                        mode=selected_mode,
                         generate_answer=False,
-                        municipality_ids=(),
-                        reference_year=None,
+                        municipality_ids=(
+                            () if self.service.demo_mode else tuple(scope["municipality_ids"])
+                        ),
+                        reference_year=None if self.service.demo_mode else scope["reference_year"],
                         top_k=8,
                         max_evidence_items=8,
                         max_evidence_characters=24000,
@@ -323,6 +291,11 @@ class ConversationEngine:
                 )
             finally:
                 self.lock.release()
+            state["retrieval_filter_policy"] = (
+                "FIXTURE_POSTFILTER_ONLY_TOPK_NOT_COMPLETE"
+                if self.service.demo_mode
+                else "SCOPE_BOUND_IN_RETRIEVAL_REQUEST"
+            )
             result["method_trace_id"] = payload["result_id"]
             result["trace"] = payload
             for e in payload["evidence"][:8]:
@@ -404,6 +377,52 @@ class ConversationEngine:
                 result["missing_aspects"] = [
                     "Keine zum gefragten Aspekt passende Quellenpassage qualifiziert."
                 ]
+        if self.generation and result["claims"]:
+            from crawler.web.conversation_generation import PROMPT as GENERATION_PROMPT
+            from crawler.web.conversation_generation import synthesize
+
+            result["generation_provider"] = self.generation["metadata"]["provider"]
+            result["prompt_version"] = GENERATION_PROMPT
+            result["model_version"] = self.generation["metadata"]["model"]
+            if not self.lock.acquire(blocking=False):
+                raise HTTPException(429, "Research worker busy")
+            try:
+                generated, receipt = synthesize(
+                    self.generation["provider"],
+                    self.generation["metadata"]["model"],
+                    effective,
+                    result["claims"],
+                )
+                result["generation_receipt"] = receipt
+                result["claims"] = generated
+                result["missing_aspects"] = [
+                    "Semantische Tragfähigkeit und vollständige Aspektabdeckung "
+                    "nicht unabhängig geprüft."
+                ]
+                generated_ids = {e["evidence_id"] for c in generated for e in c["evidence"]}
+                result["graph"]["edges"] = [
+                    e
+                    for e in result["graph"].get("edges", [])
+                    if set(e.get("evidence_ids", [])) <= generated_ids
+                ]
+                retained_ids = {
+                    n for e in result["graph"]["edges"] for n in (e["source"], e["target"])
+                }
+                result["graph"]["nodes"] = [
+                    n for n in result["graph"].get("nodes", []) if n["id"] in retained_ids
+                ]
+                result["answer"] = "\n".join(c["text"] for c in generated)
+                result["answer_status"] = "PARTIAL" if generated else "INSUFFICIENT_EVIDENCE"
+                if not generated:
+                    result["answer"] = "Das Modell konnte keine beleggebundene Antwort formulieren."
+            except Exception:
+                result["claims"] = []
+                result["graph"] = {"nodes": [], "edges": []}
+                result["answer_status"] = "ERROR"
+                result["answer"] = "Generierung fehlgeschlagen; keine Modellantwort freigegeben."
+                result["generation_receipt"] = {"status": "FAILED", "fallback": False}
+            finally:
+                self.lock.release()
         result["finished_at_utc"] = now()
         result["elapsed_seconds"] = time.perf_counter() - started
         result["implementation_file_sha256"] = hashlib.sha256(
@@ -413,7 +432,7 @@ class ConversationEngine:
         return result
 
 
-def create_conversation_app(service=None, directory=None):
+def create_conversation_app(service=None, directory=None, generation=None):
     """Loopback-only composition. External deployment requires a separate reviewed gateway."""
     if directory is None:
         directory = Path("generated/conversational-local")
@@ -429,7 +448,16 @@ def create_conversation_app(service=None, directory=None):
             else create_fixture_service(fixture_dir)
         )
     store = ChatStore(directory, service.database_snapshot_id)
-    engine = ConversationEngine(service, store)
+    if generation:
+        metadata = generation["metadata"]
+        if (
+            metadata.get("qualification") != "EXPLICITLY_QUALIFIED"
+            or metadata.get("execution") != "local"
+            or not metadata.get("qualification_artifact")
+            or not metadata.get("digest")
+        ):
+            raise ValueError("Explicit local model qualification and digest required")
+    engine = ConversationEngine(service, store, generation)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_store, app.state.chat_engine = store, engine
     app.state.research_service = service
@@ -505,7 +533,9 @@ def create_conversation_app(service=None, directory=None):
                 "snapshot": store.snapshot,
                 "fixture": service.demo_mode,
                 "notice": service.demo_notice,
-                "provider": "deterministic_extractive",
+                "provider": (
+                    generation["metadata"]["provider"] if generation else "deterministic_extractive"
+                ),
                 "retention": (
                     "Session 24h; logical deletion on expiry/logout or explicit delete; "
                     "backups excluded"
@@ -533,14 +563,23 @@ def create_conversation_app(service=None, directory=None):
         return response
 
     @app.get("/api/chat/conversations")
-    def chats(request: Request):
+    def chats(request: Request, q: str = ""):
         owner = actor(request)
+        if len(q) > 200:
+            raise HTTPException(422, "Bounded search required")
         with store.conn() as c:
+            c.create_function("casefold", 1, lambda value: str(value or "").casefold())
             return [
                 dict(r)
                 for r in c.execute(
-                    "SELECT id,at FROM chats WHERE owner=? AND snapshot=? ORDER BY at DESC",
-                    (owner, store.snapshot),
+                    "SELECT id,at,(SELECT json_extract(payload,'$.question') FROM turns t "
+                    "WHERE t.chat=chats.id AND t.owner=chats.owner ORDER BY at,id LIMIT 1) title "
+                    "FROM chats WHERE owner=? AND snapshot=? AND (?='' OR EXISTS ("
+                    "SELECT 1 FROM turns t WHERE t.chat=chats.id AND t.owner=chats.owner AND "
+                    "(instr(casefold(json_extract(payload,'$.question')),casefold(?))>0 OR "
+                    "instr(casefold(json_extract(payload,'$.answer')),casefold(?))>0))) "
+                    "ORDER BY at DESC",
+                    (owner, store.snapshot, q, q, q),
                 )
             ]
 
@@ -626,10 +665,30 @@ def create_conversation_app(service=None, directory=None):
                         return anchor
         raise HTTPException(404, "Evidence unavailable")
 
+    from crawler.web.conversation_workspaces import settings, visualization
+
+    @app.get("/api/chat/settings")
+    def active_settings(request: Request):
+        actor(request)
+        return settings(
+            store.snapshot, service.demo_mode, generation["metadata"] if generation else None
+        )
+
+    @app.get("/api/chat/conversations/{cid}/visualization/{tid}")
+    def chart_data(cid: str, tid: str, request: Request):
+        turn = next((t for t in store.turns(actor(request), cid) if t["turn_id"] == tid), None)
+        if turn is None:
+            raise HTTPException(404, "Turn unavailable")
+        return visualization(turn)
+
     app.mount("/static", StaticFiles(directory=ASSETS), name="static")
 
     @app.get("/")
     @app.get("/research")
+    @app.get("/graph")
+    @app.get("/visualizations")
+    @app.get("/settings")
+    @app.get("/coverage")
     def index():
         return FileResponse(ASSETS / "conversation.html")
 
@@ -662,6 +721,16 @@ def create_conversation_app(service=None, directory=None):
         technical=service.demo_mode,
         sources=app.state.review_sources,
     )
+    if service.demo_mode:
+        from crawler.web.conversation_demo import attach_demo_review
+
+        attach_demo_review(
+            app,
+            directory / "review",
+            app.state.conversation_review,
+            app.state.review_sources,
+            store,
+        )
     return app
 
 
