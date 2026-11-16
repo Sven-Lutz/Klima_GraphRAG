@@ -90,6 +90,8 @@ def test_generation_preserves_quotes_and_discloses_check_limit():
     )
     claims, receipt = synthesize(Provider(text), "test", "Solar?", evidence())
     assert claims[0]["evidence"][0]["offset_start"] == 0
+    assert claims[0]["evidence_kind"] == "PLAN"
+    assert claims[0]["generation_status"] == "GENERATED_UNVERIFIED"
     assert receipt["semantic_entailment"] == "NOT_EVALUATED"
     assert "NOT_SEMANTIC_ENTAILMENT" in claims[0]["support_status"]
 

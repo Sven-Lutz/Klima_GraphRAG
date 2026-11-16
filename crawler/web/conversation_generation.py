@@ -103,7 +103,8 @@ def synthesize(provider, model, question, claims):
                 claim_id="generated:" + str(len(generated)),
                 text=text,
                 evidence=[bound],
-                evidence_kind="GENERATED_UNVERIFIED",
+                evidence_kind=modalities[row["evidence_id"]],
+                generation_status="GENERATED_UNVERIFIED",
                 support_status="SPAN_AND_NUMBER_CHECK_ONLY_NOT_SEMANTIC_ENTAILMENT",
                 validation_origin="AUTOMATED_NOT_HUMAN_VALIDATED",
             )
