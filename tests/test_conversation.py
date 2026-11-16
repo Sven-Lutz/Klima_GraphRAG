@@ -86,7 +86,11 @@ def test_idor_csrf_session_fixation_and_host(app):
     assert a.get("/api/chat/session", headers={"Host": "evil.test"}).status_code == 403
     attacker = TestClient(app)
     attacker.cookies.set("klima_chat", "chosen-by-attacker")
-    assert attacker.get("/api/chat/session").status_code == 401
+    recovered = attacker.get("/api/chat/session")
+    assert recovered.status_code == 200 and recovered.json()["recovered"] is True
+    assert app.state.chat_store.session("chosen-by-attacker") is None
+    assert attacker.get("/api/chat/conversations/" + cid).status_code == 404
+    assert attacker.post("/api/chat/conversations").status_code == 403
     assert a.post(f"/api/chat/conversations/{cid}/turns", content="x" * 25000).status_code == 413
 
 

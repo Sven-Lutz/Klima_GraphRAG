@@ -20,15 +20,45 @@ const labels = {
   CLARIFICATION_REQUIRED: "Rückfrage nötig",
   ERROR: "Kontrollierter Fehler",
 };
-async function api(path, method = "GET", body, signal) {
+let recovery = null;
+async function renewSession() {
+  if (!recovery) recovery = (async () => {
+    const r = await fetch("/api/chat/session", {cache: "no-store"});
+    if (!r.ok) throw Error("Die lokale Sitzung ist derzeit nicht verfügbar. Bitte erneut versuchen.");
+    const session = await r.json();
+    session.recovered = session.recovered || (session.created && Boolean(csrf));
+    csrf = session.csrf;
+    if (session.recovered) {
+      epoch++; cid = null; turns = []; render();
+      if (workspaceGraph) workspaceGraph.destroy(); workspaceGraph = null;
+      $("chats").replaceChildren();
+      message("Neue lokale Sitzung gestartet. Der abgelaufene Verlauf wurde gemäß Aufbewahrungsregel gelöscht.");
+    }
+    return session;
+  })().finally(() => { recovery = null; });
+  return recovery;
+}
+async function api(path, method = "GET", body, signal, retried = false) {
   const r = await fetch("/api/chat/" + path, {
-    method,
-    signal,
+    method, signal,
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const d = await r.json();
-  if (!r.ok) throw Error(d.detail || d.error || "Anfrage nicht verfügbar");
+  if (!r.ok && !retried && (r.status === 401 ||
+      (r.status === 403 && d.error === "csrf_or_session_required"))) {
+    const session = await renewSession();
+    if (session.recovered && path.startsWith("conversations/")) {
+      const error = Error("Die Sitzung wurde erneuert. Eine neue Unterhaltung ist bereit.");
+      error.sessionRenewed = true; throw error;
+    }
+    return api(path, method, body, signal, true);
+  }
+  if (!r.ok) throw Error(r.status === 429
+    ? "Die Recherche ist noch beschäftigt. Bitte gleich erneut versuchen."
+    : r.status === 404 || r.status === 410
+      ? "Dieser lokale Verlauf ist nicht mehr verfügbar. Bitte eine neue Unterhaltung starten."
+      : "Die Anfrage konnte nicht abgeschlossen werden. Bitte Eingabe und verfügbare Methode prüfen.");
   return d;
 }
 function message(text) {
@@ -250,7 +280,7 @@ async function inspect(t, e) {
     );
   }
 }
-async function send(question, parent) {
+async function send(question, parent, retried = false) {
   if (controller) return;
   if (!cid) await create();
   const id = cid,
@@ -259,6 +289,7 @@ async function send(question, parent) {
   $("send").disabled = true;
   $("cancel").hidden = false;
   message("Belege werden abgerufen und qualifiziert …");
+  let retryRecovered = false;
   try {
     const d = await api(
       `conversations/${id}/turns`,
@@ -284,6 +315,7 @@ async function send(question, parent) {
       "Quellengebundene Antwort abgeschlossen · kein Streaming, keine Humanvalidierung.",
     );
   } catch (e) {
+    retryRecovered = e.sessionRenewed === true;
     message(
       e.name === "AbortError"
         ? "Anzeige abgebrochen. Der Server kann den Turn noch abschließen; Verlauf später neu laden."
@@ -294,6 +326,7 @@ async function send(question, parent) {
     $("send").disabled = false;
     $("cancel").hidden = true;
   }
+  if (retryRecovered && !retried) await send(question, null, true);
 }
 $("composer").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -342,7 +375,7 @@ document.querySelectorAll("[data-question]").forEach((b) =>
     $("question").focus();
   }),
 );
-api("session")
+renewSession()
   .then(async (s) => {
     csrf = s.csrf;
     $("dataset-notice").textContent = s.fixture

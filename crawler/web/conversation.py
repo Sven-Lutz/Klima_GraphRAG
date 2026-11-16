@@ -497,7 +497,9 @@ def create_conversation_app(service=None, directory=None, generation=None):
             return JSONResponse({"error": "local_same_origin_only"}, status_code=403)
         if request.method in {"POST", "DELETE", "PUT", "PATCH"}:
             session = store.session(request.cookies.get("klima_chat"))
-            if not session or not hmac.compare_digest(
+            if not session:
+                return JSONResponse({"error": "session_expired"}, status_code=401)
+            if not hmac.compare_digest(
                 request.headers.get("x-csrf-token", ""), session["csrf"]
             ):
                 return JSONResponse({"error": "csrf_or_session_required"}, status_code=403)
@@ -545,13 +547,15 @@ def create_conversation_app(service=None, directory=None, generation=None):
     def bootstrap(request: Request):
         token = request.cookies.get("klima_chat")
         s = store.session(token)
-        if token and not s:
-            raise HTTPException(401, "Expired session; clear local site data")
+        created = not s
+        recovered = bool(token and created)
         if not s:
             token, s = store.create_session()
         response = JSONResponse(
             {
                 "csrf": s["csrf"],
+                "recovered": recovered,
+                "created": created,
                 "schema": SCHEMA,
                 "snapshot": store.snapshot,
                 "fixture": service.demo_mode,

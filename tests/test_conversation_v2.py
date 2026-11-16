@@ -548,3 +548,31 @@ def test_currency_symbols_and_spaced_negative_values_are_not_misread():
     )
     with pytest.raises(ValueError, match="numeric"):
         synthesize(Provider(body), "test", "Solar?", evidence())
+
+
+def test_expired_session_rotates_without_replaying_or_exposing_old_owner(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crawler.web.conversation import create_conversation_app
+
+    app = create_conversation_app(directory=tmp_path / "expiry")
+    client = TestClient(app)
+    initial = client.get("/api/chat/session").json()
+    client.headers["X-CSRF-Token"] = initial["csrf"]
+    cid = client.post("/api/chat/conversations").json()["id"]
+    original_cookie = client.cookies.get("klima_chat")
+    with app.state.chat_store.conn() as conn:
+        conn.execute("UPDATE sessions SET expires=0")
+    assert client.post("/api/chat/conversations").status_code == 401
+    assert (
+        client.get("/api/chat/session", headers={"Origin": "https://evil.test"}).status_code == 403
+    )
+    renewed = client.get("/api/chat/session")
+    assert renewed.status_code == 200 and renewed.json()["recovered"] is True
+    assert client.cookies.get("klima_chat") != original_cookie
+    assert renewed.json()["csrf"] != initial["csrf"]
+    assert client.get("/api/chat/conversations").json() == []
+    assert client.get(f"/api/chat/conversations/{cid}").status_code == 404
+    assert client.post("/api/chat/conversations").status_code == 403
+    client.headers["X-CSRF-Token"] = renewed.json()["csrf"]
+    assert client.post("/api/chat/conversations").status_code == 200
