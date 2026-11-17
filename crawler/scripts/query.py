@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from pathlib import Path
 
-from crawler.core.answer_context import EvidenceBudget
+from crawler.core.answer_context import CANONICAL_ANSWER_PROMPT_VERSION, POLICY_CLASSIFICATION_PROMPT_VERSION, POLICY_CLASSIFICATION_PROMPT_VERSION_V3, POLICY_CLASSIFICATION_PROMPT_VERSION_V4, EvidenceBudget
 from crawler.core.answer_generation import (
     AnswerGenerationError,
     AnswerRequest,
@@ -19,6 +20,8 @@ from crawler.core.answer_generation import (
 )
 from crawler.core.config import LLM_SEED, LLM_TEMPERATURE, OLLAMA_MODEL, OLLAMA_URL
 from crawler.core.query_embedding import SentenceTransformerQueryEmbedder
+from crawler.core.question_intent import extract_question_intent
+from crawler.core.retrieval_query_expansion import build_retrieval_query
 from crawler.core.retrieval import (
     CanonicalRetriever,
     Neo4jReadBackend,
@@ -35,6 +38,38 @@ from crawler.scripts.generate_embeddings import (
     DEFAULT_PREPROCESSING_ID,
     DEFAULT_PROVIDER,
 )
+
+
+def _resolve_municipality_scope(
+    explicit_ids: tuple[str, ...],
+    inferred_id: str | None,
+    *,
+    answer_enabled: bool,
+) -> tuple[str, ...]:
+    """Fail closed on ambiguous city-specific answers.
+
+    The user may supply --municipality-id or the intent parser may detect a city.
+    They must never silently disagree. Retrieval-only mode may compare cities,
+    but a Yes/No policy answer must be grounded in exactly one municipality.
+    """
+    if any(not re.fullmatch(r"[0-9]{8}", mid) for mid in explicit_ids):
+        raise ValueError("--municipality-id must be an eight-digit AGS identifier")
+    if len(set(explicit_ids)) != len(explicit_ids):
+        raise ValueError("Duplicate --municipality-id supplied")
+    if inferred_id and not re.fullmatch(r"[0-9]{8}", inferred_id):
+        raise ValueError("The detected municipality has no valid eight-digit AGS")
+    if inferred_id and explicit_ids and inferred_id not in explicit_ids:
+        raise ValueError(
+            "The municipality detected in the question conflicts with "
+            "--municipality-id. Refusing a potentially wrong-city answer."
+        )
+    selected = explicit_ids or ((inferred_id,) if inferred_id else ())
+    if answer_enabled and len(selected) != 1:
+        raise ValueError(
+            "Policy answers require exactly one municipality. "
+            "Supply one --municipality-id AGS or ask an unambiguous city question."
+        )
+    return selected
 
 
 def _graph_backend(args: argparse.Namespace) -> Neo4jReadBackend:
@@ -70,6 +105,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--db", required=True, help="Manifested SQLite snapshot file")
     parser.add_argument("--manifest", required=True, help="Validated snapshot manifest")
     parser.add_argument(
+        "--lexical-db",
+        help="Read-only SQLite FTS5 index bound to the same snapshot",
+    )
+    parser.add_argument(
         "--mode",
         choices=[mode.value for mode in RetrievalMode],
         default=RetrievalMode.SEMANTIC.value,
@@ -90,6 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         default="ollama",
     )
     parser.add_argument("--generation-model", default=OLLAMA_MODEL)
+    parser.add_argument("--prompt-version", choices=[CANONICAL_ANSWER_PROMPT_VERSION, POLICY_CLASSIFICATION_PROMPT_VERSION, POLICY_CLASSIFICATION_PROMPT_VERSION_V3, POLICY_CLASSIFICATION_PROMPT_VERSION_V4], default=POLICY_CLASSIFICATION_PROMPT_VERSION_V4)
     parser.add_argument("--generation-temperature", type=float, default=LLM_TEMPERATURE)
     parser.add_argument("--generation-seed", type=int, default=LLM_SEED)
     parser.add_argument("--max-output-tokens", type=int, default=1024)
@@ -139,9 +179,20 @@ def main(argv: list[str] | None = None) -> None:
             vector_dimension=args.embedding_dimension,
             preprocessing_id=args.preprocessing_id,
         )
-        if mode in {RetrievalMode.SEMANTIC, RetrievalMode.HYBRID}
+        if mode in {
+            RetrievalMode.SEMANTIC,
+            RetrievalMode.SEMANTIC_LEXICAL,
+            RetrievalMode.HYBRID,
+        }
         else None
     )
+    lexical_db = None
+    if mode in {RetrievalMode.LEXICAL, RetrievalMode.SEMANTIC_LEXICAL}:
+        if not args.lexical_db:
+            parser.error("Lexical retrieval requires an explicit --lexical-db")
+        lexical_db = Path(args.lexical_db).expanduser().resolve()
+        if not lexical_db.is_file():
+            parser.error(f"Lexical index does not exist: {lexical_db}")
     backend = None
     answer_result = None
     result = None
@@ -150,15 +201,30 @@ def main(argv: list[str] | None = None) -> None:
             if not args.neo4j_user:
                 parser.error("Graph retrieval requires an explicit --neo4j-user")
             backend = _graph_backend(args)
-        retriever = CanonicalRetriever(embedder=embedder, graph_backend=backend)
+        retriever = CanonicalRetriever(
+            embedder=embedder,
+            graph_backend=backend,
+            lexical_database=lexical_db,
+        )
+        question_intent = extract_question_intent(args.query)
+        retrieval_query = build_retrieval_query(question_intent) if (question_intent.policy_family or question_intent.municipality_id or question_intent.support_type.value != "unspecified") else args.query
+        try:
+            municipality_ids = _resolve_municipality_scope(
+                tuple(args.municipality_id),
+                question_intent.municipality_id,
+                answer_enabled=args.answer,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+
         retrieval_request = RetrievalRequest(
-            query=args.query,
+            query=retrieval_query,
             manifest_path=args.manifest,
             mode=mode,
             top_k=args.top_k,
             projection_id=args.projection_id,
             extraction_run_ids=tuple(args.extraction_run_id),
-            municipality_ids=tuple(args.municipality_id),
+            municipality_ids=municipality_ids,
         )
         if args.answer:
             provider = OllamaGenerationProvider(args.ollama_url)
@@ -174,6 +240,7 @@ def main(argv: list[str] | None = None) -> None:
                     database_snapshot_id=str(binding.database.snapshot_id),
                     generation_provider=args.generation_provider,
                     generation_model=args.generation_model,
+                    prompt_version=args.prompt_version,
                     generation_parameters=GenerationParameters(
                         temperature=args.generation_temperature,
                         max_output_tokens=args.max_output_tokens,

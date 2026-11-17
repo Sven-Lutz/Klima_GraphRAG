@@ -6,7 +6,13 @@ Downstream-Stages (resolve_entities, Neo4j-Export, Visualisierung).
 import pytest
 from pydantic import ValidationError
 
-from crawler.scripts.extract_graph_ollama import Entity, KnowledgeGraph, Relationship
+from crawler.scripts.extract_graph_ollama import (
+    Entity,
+    KnowledgeGraph,
+    MalformedProviderResponseError,
+    Relationship,
+    _validate_extracted_graph,
+)
 
 VALID_ENTITY = {
     "name": "Stadtwerke Augsburg",
@@ -72,3 +78,28 @@ def test_llm_json_roundtrip():
     kg = KnowledgeGraph(entities=[VALID_ENTITY], relationships=[VALID_REL])
     restored = KnowledgeGraph.model_validate_json(kg.model_dump_json())
     assert restored == kg
+
+
+def test_extracted_graph_validation_accepts_grounded_complete_relationship():
+    target = Entity(name="PV-Anlage Messehalle", type="Infrastruktur", category="Strom", status="Geplant")
+    kg = KnowledgeGraph(entities=[Entity.model_validate(VALID_ENTITY), target], relationships=[Relationship.model_validate(VALID_REL)])
+    assert _validate_extracted_graph(kg, VALID_REL["evidence"]) == kg
+
+def test_extracted_graph_validation_rejects_missing_endpoint():
+    kg = KnowledgeGraph(entities=[Entity.model_validate(VALID_ENTITY)], relationships=[Relationship.model_validate(VALID_REL)])
+    with pytest.raises(MalformedProviderResponseError, match="endpoint"):
+        _validate_extracted_graph(kg, VALID_REL["evidence"])
+
+def test_extracted_graph_validation_rejects_ungrounded_evidence():
+    target = Entity(name="PV-Anlage Messehalle", type="Infrastruktur", category="Strom", status="Geplant")
+    relationship = Relationship.model_validate({**VALID_REL, "evidence": "Dieser Beleg steht nicht im Quelltext."})
+    kg = KnowledgeGraph(entities=[Entity.model_validate(VALID_ENTITY), target], relationships=[relationship])
+    with pytest.raises(MalformedProviderResponseError, match="not grounded"):
+        _validate_extracted_graph(kg, VALID_REL["evidence"])
+
+def test_extracted_graph_validation_rejects_blank_evidence():
+    target = Entity(name="PV-Anlage Messehalle", type="Infrastruktur", category="Strom", status="Geplant")
+    relationship = Relationship.model_validate({**VALID_REL, "evidence": "   "})
+    kg = KnowledgeGraph(entities=[Entity.model_validate(VALID_ENTITY), target], relationships=[relationship])
+    with pytest.raises(MalformedProviderResponseError, match="must not be empty"):
+        _validate_extracted_graph(kg, VALID_REL["evidence"])

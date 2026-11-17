@@ -58,6 +58,70 @@ KLIMA_KEYWORDS = {
         "kfw",
         "eu-mittel",
         "efre",
+        "klimaanpassung",
+        "klimaneutral",
+        "treibhausgas",
+        "emission",
+        "klimaschutzkonzept",
+        "klimaplan",
+        "klimafahrplan",
+        "erneuerbar",
+        "balkonkraftwerk",
+        "steckersolar",
+        "windenergie",
+        "wasserkraft",
+        "biogas",
+        "wasserstoff",
+        "speicher",
+        "waerme",
+        "wärme",
+        "fernwaerme",
+        "fernwärme",
+        "nahwaerme",
+        "nahwärme",
+        "waermenetz",
+        "wärmenetz",
+        "waermepumpe",
+        "wärmepumpe",
+        "geothermie",
+        "sanierung",
+        "daemmung",
+        "dämmung",
+        "energieeffizienz",
+        "gebaeude",
+        "gebäude",
+        "quartier",
+        "mobilitaet",
+        "mobilität",
+        "elektromobilitaet",
+        "elektromobilität",
+        "ladesaeule",
+        "ladesäule",
+        "ladeinfrastruktur",
+        "wallbox",
+        "radverkehr",
+        "fahrrad",
+        "oepnv",
+        "öpnv",
+        "carsharing",
+        "foerderung",
+        "förderung",
+        "foerderprogramm",
+        "förderprogramm",
+        "zuschuesse",
+        "zuschüsse",
+        "richtlinie",
+        "massnahme",
+        "maßnahme",
+        "hitzeschutz",
+        "hochwasser",
+        "starkregen",
+        "klimaresilienz",
+        "entsiegelung",
+        "stadtgruen",
+        "stadtgrün",
+        "begruenung",
+        "begrünung",
         "beschluss",
         "vorlage",
     ],
@@ -86,16 +150,52 @@ KLIMA_LIMITS = EngineLimits(
 # Additional seed paths — enqueued alongside each homepage to discover
 # relevant climate/energy pages that may not be well-linked
 SEED_ADDITIONAL_PATHS = [
+    # Policy/evidence entry points
     "/klima",
     "/klimaschutz",
     "/energie",
+    "/solar",
+    "/photovoltaik",
     "/waermeplanung",
     "/umwelt",
+    "/foerderung",
+    "/foerderungen",
+    "/foerderprogramme",
+    "/zuschuesse",
+    "/klimaanpassung",
+    "/klimaschutzkonzept",
+    "/klimaplan",
+    "/energiekonzept",
+    "/wind",
+    "/erneuerbare-energien",
+    "/waerme",
+    "/fernwaerme",
+    "/energieeffizienz",
+    "/sanierung",
+    "/gebaeude",
+    "/quartier",
+    "/elektromobilitaet",
+    "/ladeinfrastruktur",
+    "/radverkehr",
+    "/oepnv",
+    "/richtlinien",
+    "/massnahmen",
+    "/hitzeschutz",
+    "/hochwasser",
+    "/starkregen",
+    "/begruenung",
+    # Source-discovery entry points: these often contain links to utilities,
+    # municipal companies or council systems whose domains are otherwise opaque.
+    "/stadtwerke",
+    "/versorgung",
+    "/beteiligungen",
+    "/eigenbetriebe",
+    "/kommunalunternehmen",
+    "/daseinsvorsorge",
+    # Broader governance/context entry points
     "/mobilitaet",
     "/verkehr",
     "/bauen",
-    "/foerderung",
-    "/foerderprogramme",
     "/haushalt",
     "/ratsinfo",
     "/bekanntmachungen",
@@ -143,6 +243,7 @@ def _worker_loop(
     limit_counter: dict,
     limit_lock: threading.Lock,
     shutdown: threading.Event,
+    limits: EngineLimits = KLIMA_LIMITS,
 ) -> int:
     """Ein Worker-Thread: claimt Jobs und crawlt Kommunen, bis keine mehr da sind.
 
@@ -154,7 +255,7 @@ def _worker_loop(
 
     engine = Engine(
         keywords=KLIMA_KEYWORDS,
-        limits=KLIMA_LIMITS,
+        limits=limits,
         allowed_domains_by_muni=allowed,
         worker_id=worker_id,
         seed_additional_paths=SEED_ADDITIONAL_PATHS,
@@ -228,6 +329,24 @@ def main(argv: list[str] | None = None) -> None:
         default=1,
         help="Parallele Kommunen (je 1 Thread; Politeness pro Host bleibt erhalten)",
     )
+    ap.add_argument(
+        "--max-pages",
+        type=int,
+        default=KLIMA_LIMITS.max_pages_per_muni,
+        help="Maximum successfully stored documents per municipality",
+    )
+    ap.add_argument(
+        "--max-depth",
+        type=int,
+        default=KLIMA_LIMITS.max_depth,
+        help="Maximum crawl depth",
+    )
+    ap.add_argument(
+        "--source-min-pages",
+        type=int,
+        default=KLIMA_LIMITS.source_min_explore_pages,
+        help="Early exploration target for each newly validated authoritative source",
+    )
     args = ap.parse_args(argv)
 
     database = resolve_worker_database(args.db)
@@ -236,6 +355,16 @@ def main(argv: list[str] | None = None) -> None:
         validate_worker_preflight(db_path)
     except PreflightError as exc:
         ap.error(str(exc))
+
+    limits = EngineLimits(
+        max_depth=max(1, args.max_depth),
+        max_pages_per_muni=max(1, args.max_pages),
+        max_file_size_mb=KLIMA_LIMITS.max_file_size_mb,
+        source_min_explore_pages=max(0, args.source_min_pages),
+        source_sitemap_max_urls=KLIMA_LIMITS.source_sitemap_max_urls,
+        source_sitemap_max_files=KLIMA_LIMITS.source_sitemap_max_files,
+        ris_soft_cap_ratio=KLIMA_LIMITS.ris_soft_cap_ratio,
+    )
 
     _, allowed = load_seeds_from_sqlite()
 
@@ -261,6 +390,7 @@ def main(argv: list[str] | None = None) -> None:
                 limit_counter,
                 limit_lock,
                 shutdown,
+                limits,
             )
         else:
             from concurrent.futures import ThreadPoolExecutor
@@ -276,6 +406,7 @@ def main(argv: list[str] | None = None) -> None:
                         limit_counter,
                         limit_lock,
                         shutdown,
+                        limits,
                     )
                     for i in range(args.workers)
                 ]

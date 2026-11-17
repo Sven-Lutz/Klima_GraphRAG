@@ -604,6 +604,7 @@ def test_ollama_adapter_preserves_message_boundaries_and_usage(monkeypatch):
     assert observed["payload"]["options"] == {
         "temperature": 0.2,
         "num_predict": 99,
+            "num_ctx": 8192,
         "seed": 7,
     }
     assert observed["timeout"] == 3
@@ -850,3 +851,49 @@ def test_jsonl_run_log_concurrent_appends_remain_complete_and_parseable(tmp_path
 def test_jsonl_run_log_rejects_missing_parent(tmp_path):
     with pytest.raises(AnswerRunPersistenceError, match="parent directory"):
         JsonlAnswerRunRecorder(tmp_path / "missing" / "runs.jsonl")
+
+
+def test_v3_suppresses_same_document_contained_evidence_only(tmp_path):
+    _source, binding, _plan, _artifact_id = _fixture(tmp_path)
+    retrieval = CanonicalRetriever(embedder=FixtureEmbedder()).retrieve(_request(binding))
+    base = retrieval.items[0]
+    longer_text = "Municipal funding is available. Federal funding is unavailable."
+    shorter_text = "Federal funding is unavailable."
+    longer = replace(
+        base,
+        evidence_text=longer_text,
+        evidence_id=evidence_id_for(
+            base.source_type,
+            base.source_id + "-longer",
+            hashlib.sha256(longer_text.encode()).hexdigest(),
+        ),
+    )
+    shorter = replace(
+        base,
+        source_id=base.source_id + "-shorter",
+        evidence_text=shorter_text,
+        evidence_id=evidence_id_for(
+            base.source_type,
+            base.source_id + "-shorter",
+            hashlib.sha256(shorter_text.encode()).hexdigest(),
+        ),
+    )
+    paired = replace(retrieval, items=(longer, shorter))
+
+    v3 = build_answer_context(
+        paired,
+        budget=EvidenceBudget(8, 24_000),
+        prompt_version="grounded-answer-v3",
+    )
+    v2 = build_answer_context(
+        paired,
+        budget=EvidenceBudget(8, 24_000),
+        prompt_version="grounded-answer-v2",
+    )
+
+    assert v3.selected_evidence_ids == (longer.evidence_id,)
+    assert v3.excluded_evidence == (
+        type(v3.excluded_evidence[0])(shorter.evidence_id, "redundant_contained"),
+    )
+    assert v2.selected_evidence_ids == (longer.evidence_id, shorter.evidence_id)
+    assert v2.excluded_evidence == ()
